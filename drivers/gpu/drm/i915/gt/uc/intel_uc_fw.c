@@ -44,7 +44,6 @@ void intel_uc_fw_change_status(struct intel_uc_fw *uc_fw,
  * List of required GuC and HuC binaries per-platform.
  * Must be ordered based on platform + revid, from newer to older.
  *
-<<<<<<< HEAD
  * TGL 35.2 is interface-compatible with 33.0 for previous Gens. The deltas
  * between 33.0 and 35.2 are only related to new additions to support new Gen12
  * features.

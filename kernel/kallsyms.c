@@ -167,22 +167,21 @@ static unsigned long kallsyms_sym_address(int idx)
 #if defined(CONFIG_CFI_CLANG) && defined(CONFIG_LTO_CLANG_THIN)
 /*
  * LLVM appends a hash to static function names when ThinLTO and CFI are
- * both enabled, i.e. foo() becomes foo$707af9a22804d33c81801f27dcfe489b.
- * This causes confusion and potentially breaks user space tools, so we
- * strip the suffix from expanded symbol names.
+ * both enabled, which causes confusion and potentially breaks user space
+ * tools, so we will strip the postfix from expanded symbol names.
  */
-static inline bool cleanup_symbol_name(char *s)
+static inline char *cleanup_symbol_name(char *s)
 {
-	char *res;
+	char *res = NULL;
 
 	res = strrchr(s, '$');
 	if (res)
 		*res = '\0';
 
-	return res != NULL;
+	return res;
 }
 #else
-static inline bool cleanup_symbol_name(char *s) { return false; }
+static inline char *cleanup_symbol_name(char *s) { return NULL; }
 #endif
 
 /* Lookup the address for this symbol. Returns 0 if not found. */

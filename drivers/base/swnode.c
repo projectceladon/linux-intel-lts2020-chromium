@@ -670,7 +670,7 @@ swnode_register(const struct software_node *node, struct swnode *parent,
 	swnode->parent = parent;
 	swnode->allocated = allocated;
 	swnode->kobj.kset = swnode_kset;
-	swnode->fwnode.ops = &software_node_ops;
+	fwnode_init(&swnode->fwnode, &software_node_ops);
 
 	ida_init(&swnode->child_ids);
 	INIT_LIST_HEAD(&swnode->entry);
@@ -866,25 +866,42 @@ EXPORT_SYMBOL_GPL(fwnode_remove_software_node);
 /**
  * device_add_software_node - Assign software node to a device
  * @dev: The device the software node is meant for.
- * @swnode: The software node.
+ * @node: The software node.
  *
- * This function will register @swnode and make it the secondary firmware node
- * pointer of @dev. If @dev has no primary node, then @swnode will become the primary
- * node.
+ * This function will make @node the secondary firmware node pointer of @dev. If
+ * @dev has no primary node, then @node will become the primary node. The
+ * function will register @node automatically if it wasn't already registered.
  */
-int device_add_software_node(struct device *dev, const struct software_node *swnode)
+int device_add_software_node(struct device *dev, const struct software_node *node)
 {
+	struct swnode *swnode;
 	int ret;
 
 	/* Only one software node per device. */
 	if (dev_to_swnode(dev))
 		return -EBUSY;
 
-	ret = software_node_register(swnode);
-	if (ret)
-		return ret;
+	swnode = software_node_to_swnode(node);
+	if (swnode) {
+		kobject_get(&swnode->kobj);
+	} else {
+		ret = software_node_register(node);
+		if (ret)
+			return ret;
 
-	set_secondary_fwnode(dev, software_node_fwnode(swnode));
+		swnode = software_node_to_swnode(node);
+	}
+
+	set_secondary_fwnode(dev, &swnode->fwnode);
+
+	/*
+	 * If the device has been fully registered by the time this function is
+	 * called, software_node_notify() must be called separately so that the
+	 * symlinks get created and the reference count of the node is kept in
+	 * balance.
+	 */
+	if (device_is_registered(dev))
+		software_node_notify(dev, KOBJ_ADD);
 
 	return 0;
 }
@@ -904,7 +921,8 @@ void device_remove_software_node(struct device *dev)
 	if (!swnode)
 		return;
 
-	software_node_notify(dev, KOBJ_REMOVE);
+	if (device_is_registered(dev))
+		software_node_notify(dev, KOBJ_REMOVE);
 	set_secondary_fwnode(dev, NULL);
 	kobject_put(&swnode->kobj);
 }
@@ -921,8 +939,7 @@ int software_node_notify(struct device *dev, unsigned long action)
 
 	switch (action) {
 	case KOBJ_ADD:
-		ret = sysfs_create_link(&dev->kobj, &swnode->kobj,
-					"software_node");
+		ret = sysfs_create_link(&dev->kobj, &swnode->kobj, "software_node");
 		if (ret)
 			break;
 

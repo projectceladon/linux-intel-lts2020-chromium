@@ -15,7 +15,8 @@
 #include "format.h"
 #include "data_mgmt.h"
 
-struct backing_file_context *incfs_alloc_bfc(struct file *backing_file)
+struct backing_file_context *incfs_alloc_bfc(struct mount_info *mi,
+					     struct file *backing_file)
 {
 	struct backing_file_context *result = NULL;
 
@@ -24,6 +25,7 @@ struct backing_file_context *incfs_alloc_bfc(struct file *backing_file)
 		return ERR_PTR(-ENOMEM);
 
 	result->bc_file = get_file(backing_file);
+	result->bc_cred = mi->mi_owner;
 	mutex_init(&result->bc_mutex);
 	return result;
 }
@@ -92,7 +94,7 @@ static int truncate_backing_file(struct backing_file_context *bfc,
 static int write_to_bf(struct backing_file_context *bfc, const void *buf,
 			size_t count, loff_t pos)
 {
-	ssize_t res = incfs_kwrite(bfc->bc_file, buf, count, pos);
+	ssize_t res = incfs_kwrite(bfc, buf, count, pos);
 
 	if (res < 0)
 		return res;
@@ -244,7 +246,8 @@ int incfs_write_blockmap_to_backing_file(struct backing_file_context *bfc,
 }
 
 int incfs_write_signature_to_backing_file(struct backing_file_context *bfc,
-					  struct mem_range sig, u32 tree_size)
+					struct mem_range sig, u32 tree_size,
+					loff_t *tree_offset, loff_t *sig_offset)
 {
 	struct incfs_file_signature sg = {};
 	int result = 0;
@@ -263,12 +266,10 @@ int incfs_write_signature_to_backing_file(struct backing_file_context *bfc,
 	sg.sg_header.h_record_size = cpu_to_le16(sizeof(sg));
 	sg.sg_header.h_next_md_offset = cpu_to_le64(0);
 	if (sig.data != NULL && sig.len > 0) {
-		loff_t pos = incfs_get_end_offset(bfc->bc_file);
-
 		sg.sg_sig_size = cpu_to_le32(sig.len);
-		sg.sg_sig_offset = cpu_to_le64(pos);
+		sg.sg_sig_offset = cpu_to_le64(rollback_pos);
 
-		result = write_to_bf(bfc, sig.data, sig.len, pos);
+		result = write_to_bf(bfc, sig.data, sig.len, rollback_pos);
 		if (result)
 			goto err;
 	}
@@ -304,6 +305,13 @@ err:
 	if (result)
 		/* Error, rollback file changes */
 		truncate_backing_file(bfc, rollback_pos);
+	else {
+		if (tree_offset)
+			*tree_offset = tree_area_pos;
+		if (sig_offset)
+			*sig_offset = rollback_pos;
+	}
+
 	return result;
 }
 
@@ -322,9 +330,6 @@ static int write_new_status_to_backing_file(struct backing_file_context *bfc,
 		.is_hash_blocks_written = cpu_to_le32(hash_blocks_written),
 	};
 
-	if (!bfc)
-		return -EFAULT;
-
 	LOCK_REQUIRED(bfc->bc_mutex);
 	rollback_pos = incfs_get_end_offset(bfc->bc_file);
 	result = append_md_to_backing_file(bfc, &is.is_header);
@@ -342,21 +347,64 @@ int incfs_write_status_to_backing_file(struct backing_file_context *bfc,
 	struct incfs_status is;
 	int result;
 
+	if (!bfc)
+		return -EFAULT;
+
 	if (status_offset == 0)
 		return write_new_status_to_backing_file(bfc,
 				data_blocks_written, hash_blocks_written);
 
-	result = incfs_kread(bfc->bc_file, &is, sizeof(is), status_offset);
+	result = incfs_kread(bfc, &is, sizeof(is), status_offset);
 	if (result != sizeof(is))
 		return -EIO;
 
 	is.is_data_blocks_written = cpu_to_le32(data_blocks_written);
 	is.is_hash_blocks_written = cpu_to_le32(hash_blocks_written);
-	result = incfs_kwrite(bfc->bc_file, &is, sizeof(is), status_offset);
+	result = incfs_kwrite(bfc, &is, sizeof(is), status_offset);
 	if (result != sizeof(is))
 		return -EIO;
 
 	return 0;
+}
+
+int incfs_write_verity_signature_to_backing_file(
+		struct backing_file_context *bfc, struct mem_range signature,
+		loff_t *offset)
+{
+	struct incfs_file_verity_signature vs = {};
+	int result;
+	loff_t pos;
+
+	/* No verity signature section is equivalent to an empty section */
+	if (signature.data == NULL || signature.len == 0)
+		return 0;
+
+	pos = incfs_get_end_offset(bfc->bc_file);
+
+	vs = (struct incfs_file_verity_signature) {
+		.vs_header = (struct incfs_md_header) {
+			.h_md_entry_type = INCFS_MD_VERITY_SIGNATURE,
+			.h_record_size = cpu_to_le16(sizeof(vs)),
+			.h_next_md_offset = cpu_to_le64(0),
+		},
+		.vs_size = cpu_to_le32(signature.len),
+		.vs_offset = cpu_to_le64(pos),
+	};
+
+	result = write_to_bf(bfc, signature.data, signature.len, pos);
+	if (result)
+		goto err;
+
+	result = append_md_to_backing_file(bfc, &vs.vs_header);
+	if (result)
+		goto err;
+
+	*offset = pos;
+err:
+	if (result)
+		/* Error, rollback file changes */
+		truncate_backing_file(bfc, pos);
+	return result;
 }
 
 /*
@@ -539,8 +587,7 @@ int incfs_read_blockmap_entries(struct backing_file_context *bfc,
 	if (start_index < 0 || bm_base_off <= 0)
 		return -ENODATA;
 
-	result = incfs_kread(bfc->bc_file, entries, bytes_to_read,
-			     bm_entry_off);
+	result = incfs_kread(bfc, entries, bytes_to_read, bm_entry_off);
 	if (result < 0)
 		return result;
 	return result / sizeof(*entries);
@@ -556,7 +603,7 @@ int incfs_read_file_header(struct backing_file_context *bfc,
 	if (!bfc || !first_md_off)
 		return -EFAULT;
 
-	bytes_read = incfs_kread(bfc->bc_file, &fh, sizeof(fh), 0);
+	bytes_read = incfs_kread(bfc, &fh, sizeof(fh), 0);
 	if (bytes_read < 0)
 		return bytes_read;
 
@@ -607,8 +654,8 @@ int incfs_read_next_metadata_record(struct backing_file_context *bfc,
 		return -EPERM;
 
 	memset(&handler->md_buffer, 0, max_md_size);
-	bytes_read = incfs_kread(bfc->bc_file, &handler->md_buffer,
-				 max_md_size, handler->md_record_offset);
+	bytes_read = incfs_kread(bfc, &handler->md_buffer, max_md_size,
+				 handler->md_record_offset);
 	if (bytes_read < 0)
 		return bytes_read;
 	if (bytes_read < sizeof(*md_hdr))
@@ -659,6 +706,11 @@ int incfs_read_next_metadata_record(struct backing_file_context *bfc,
 			res = handler->handle_status(
 				&handler->md_buffer.status, handler);
 		break;
+	case INCFS_MD_VERITY_SIGNATURE:
+		if (handler->handle_verity_signature)
+			res = handler->handle_verity_signature(
+				&handler->md_buffer.verity_signature, handler);
+		break;
 	default:
 		res = -ENOTSUPP;
 		break;
@@ -679,12 +731,22 @@ int incfs_read_next_metadata_record(struct backing_file_context *bfc,
 	return res;
 }
 
-ssize_t incfs_kread(struct file *f, void *buf, size_t size, loff_t pos)
+ssize_t incfs_kread(struct backing_file_context *bfc, void *buf, size_t size,
+		    loff_t pos)
 {
-	return kernel_read(f, buf, size, &pos);
+	const struct cred *old_cred = override_creds(bfc->bc_cred);
+	int ret = kernel_read(bfc->bc_file, buf, size, &pos);
+
+	revert_creds(old_cred);
+	return ret;
 }
 
-ssize_t incfs_kwrite(struct file *f, const void *buf, size_t size, loff_t pos)
+ssize_t incfs_kwrite(struct backing_file_context *bfc, const void *buf,
+		     size_t size, loff_t pos)
 {
-	return kernel_write(f, buf, size, &pos);
+	const struct cred *old_cred = override_creds(bfc->bc_cred);
+	int ret = kernel_write(bfc->bc_file, buf, size, &pos);
+
+	revert_creds(old_cred);
+	return ret;
 }

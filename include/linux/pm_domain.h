@@ -60,6 +60,7 @@
  * GENPD_FLAG_SUSPEND_ON:	Instructs genpd to keep the PM domain powered
  *				on during suspend and runtime PM controlled
  *				otherwise.
+ *
  * GENPD_FLAG_MIN_RESIDENCY:	Enable the genpd governor to consider its
  *				components' next wakeup when determining the
  *				optimal idle state.
@@ -298,11 +299,11 @@ static inline void dev_pm_genpd_set_next_wakeup(struct device *dev, ktime_t next
 #endif
 
 #ifdef CONFIG_PM_GENERIC_DOMAINS_SLEEP
-void pm_genpd_syscore_poweroff(struct device *dev);
-void pm_genpd_syscore_poweron(struct device *dev);
+void dev_pm_genpd_suspend(struct device *dev);
+void dev_pm_genpd_resume(struct device *dev);
 #else
-static inline void pm_genpd_syscore_poweroff(struct device *dev) {}
-static inline void pm_genpd_syscore_poweron(struct device *dev) {}
+static inline void dev_pm_genpd_suspend(struct device *dev) {}
+static inline void dev_pm_genpd_resume(struct device *dev) {}
 #endif
 
 /* OF PM domain providers */

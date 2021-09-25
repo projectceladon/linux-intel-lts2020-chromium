@@ -12,6 +12,7 @@
 #include <linux/property.h>
 #include <linux/slab.h>
 #include <linux/usb/pd_vdo.h>
+#include <linux/android_kabi.h>
 
 #include "bus.h"
 
@@ -20,6 +21,7 @@ struct typec_plug {
 	enum typec_plug_index		index;
 	struct ida			mode_ids;
 	int				num_altmodes;
+	ANDROID_KABI_RESERVE(1);
 };
 
 struct typec_cable {
@@ -28,6 +30,7 @@ struct typec_cable {
 	struct usb_pd_identity		*identity;
 	unsigned int			active:1;
 	u16				pd_revision; /* 0300H = "3.0" */
+	ANDROID_KABI_RESERVE(1);
 };
 
 struct typec_partner {
@@ -38,6 +41,8 @@ struct typec_partner {
 	struct ida			mode_ids;
 	int				num_altmodes;
 	u16				pd_revision; /* 0300H = "3.0" */
+	enum usb_pd_svdm_ver		svdm_version;
+	ANDROID_KABI_RESERVE(1);
 };
 
 struct typec_port {
@@ -59,6 +64,7 @@ struct typec_port {
 
 	const struct typec_capability	*cap;
 	const struct typec_operations   *ops;
+	ANDROID_KABI_RESERVE(1);
 };
 
 #define to_typec_port(_dev_) container_of(_dev_, struct typec_port, dev)
@@ -88,7 +94,7 @@ static const char * const typec_accessory_modes[] = {
 
 /* Product types defined in USB PD Specification R3.0 V2.0 */
 static const char * const product_type_ufp[8] = {
-	[IDH_PTYPE_UNDEF]		= "undefined",
+	[IDH_PTYPE_NOT_UFP]		= "not_ufp",
 	[IDH_PTYPE_HUB]			= "hub",
 	[IDH_PTYPE_PERIPH]		= "peripheral",
 	[IDH_PTYPE_PSD]			= "psd",
@@ -96,17 +102,17 @@ static const char * const product_type_ufp[8] = {
 };
 
 static const char * const product_type_dfp[8] = {
-	[IDH_PTYPE_DFP_UNDEF]		= "undefined",
+	[IDH_PTYPE_NOT_DFP]		= "not_dfp",
 	[IDH_PTYPE_DFP_HUB]		= "hub",
 	[IDH_PTYPE_DFP_HOST]		= "host",
 	[IDH_PTYPE_DFP_PB]		= "power_brick",
-	[IDH_PTYPE_DFP_AMC]		= "amc",
 };
 
 static const char * const product_type_cable[8] = {
-	[IDH_PTYPE_UNDEF]		= "undefined",
+	[IDH_PTYPE_NOT_CABLE]		= "not_cable",
 	[IDH_PTYPE_PCABLE]		= "passive",
 	[IDH_PTYPE_ACABLE]		= "active",
+	[IDH_PTYPE_VPD]			= "vpd",
 };
 
 static struct usb_pd_identity *get_pd_identity(struct device *dev)
@@ -181,7 +187,7 @@ static ssize_t product_type_vdo1_show(struct device *dev, struct device_attribut
 {
 	struct usb_pd_identity *id = get_pd_identity(dev);
 
-	return sprintf(buf, "0x%08x\n", id->vdo[0]);
+	return sysfs_emit(buf, "0x%08x\n", id->vdo[0]);
 }
 static DEVICE_ATTR_RO(product_type_vdo1);
 
@@ -190,7 +196,7 @@ static ssize_t product_type_vdo2_show(struct device *dev, struct device_attribut
 {
 	struct usb_pd_identity *id = get_pd_identity(dev);
 
-	return sprintf(buf, "0x%08x\n", id->vdo[1]);
+	return sysfs_emit(buf, "0x%08x\n", id->vdo[1]);
 }
 static DEVICE_ATTR_RO(product_type_vdo2);
 
@@ -199,7 +205,7 @@ static ssize_t product_type_vdo3_show(struct device *dev, struct device_attribut
 {
 	struct usb_pd_identity *id = get_pd_identity(dev);
 
-	return sprintf(buf, "0x%08x\n", id->vdo[2]);
+	return sysfs_emit(buf, "0x%08x\n", id->vdo[2]);
 }
 static DEVICE_ATTR_RO(product_type_vdo3);
 
@@ -507,7 +513,7 @@ static umode_t typec_altmode_attr_is_visible(struct kobject *kobj,
 	return attr->mode;
 }
 
-static struct attribute_group typec_altmode_group = {
+static const struct attribute_group typec_altmode_group = {
 	.is_visible = typec_altmode_attr_is_visible,
 	.attrs = typec_altmode_attrs,
 };
@@ -680,7 +686,7 @@ static ssize_t number_of_alternate_modes_show(struct device *dev, struct device_
 		return 0;
 	}
 
-	return sprintf(buf, "%d\n", num_altmodes);
+	return sysfs_emit(buf, "%d\n", num_altmodes);
 }
 static DEVICE_ATTR_RO(number_of_alternate_modes);
 
@@ -709,7 +715,7 @@ static umode_t typec_partner_attr_is_visible(struct kobject *kobj, struct attrib
 	return attr->mode;
 }
 
-static struct attribute_group typec_partner_group = {
+static const struct attribute_group typec_partner_group = {
 	.is_visible = typec_partner_attr_is_visible,
 	.attrs = typec_partner_attrs
 };
@@ -827,6 +833,20 @@ typec_partner_register_altmode(struct typec_partner *partner,
 EXPORT_SYMBOL_GPL(typec_partner_register_altmode);
 
 /**
+ * typec_partner_set_svdm_version - Set negotiated Structured VDM (SVDM) Version
+ * @partner: USB Type-C Partner that supports SVDM
+ * @svdm_version: Negotiated SVDM Version
+ *
+ * This routine is used to save the negotiated SVDM Version.
+ */
+void typec_partner_set_svdm_version(struct typec_partner *partner,
+				   enum usb_pd_svdm_ver svdm_version)
+{
+	partner->svdm_version = svdm_version;
+}
+EXPORT_SYMBOL_GPL(typec_partner_set_svdm_version);
+
+/**
  * typec_register_partner - Register a USB Type-C Partner
  * @port: The USB Type-C Port the partner is connected to
  * @desc: Description of the partner
@@ -850,6 +870,7 @@ struct typec_partner *typec_register_partner(struct typec_port *port,
 	partner->accessory = desc->accessory;
 	partner->num_altmodes = -1;
 	partner->pd_revision = desc->pd_revision;
+	partner->svdm_version = port->cap->svdm_version;
 
 	if (desc->identity) {
 		/*
@@ -917,7 +938,7 @@ static umode_t typec_plug_attr_is_visible(struct kobject *kobj, struct attribute
 	return attr->mode;
 }
 
-static struct attribute_group typec_plug_group = {
+static const struct attribute_group typec_plug_group = {
 	.is_visible = typec_plug_attr_is_visible,
 	.attrs = typec_plug_attrs
 };
@@ -1613,7 +1634,7 @@ static umode_t typec_attr_is_visible(struct kobject *kobj,
 	return attr->mode;
 }
 
-static struct attribute_group typec_group = {
+static const struct attribute_group typec_group = {
 	.is_visible = typec_attr_is_visible,
 	.attrs = typec_attrs,
 };
@@ -1895,6 +1916,33 @@ int typec_set_mode(struct typec_port *port, int mode)
 EXPORT_SYMBOL_GPL(typec_set_mode);
 
 /* --------------------------------------- */
+
+/**
+ * typec_get_negotiated_svdm_version - Get negotiated SVDM Version
+ * @port: USB Type-C Port.
+ *
+ * Get the negotiated SVDM Version. The Version is set to the port default
+ * value stored in typec_capability on partner registration, and updated after
+ * a successful Discover Identity if the negotiated value is less than the
+ * default value.
+ *
+ * Returns usb_pd_svdm_ver if the partner has been registered otherwise -ENODEV.
+ */
+int typec_get_negotiated_svdm_version(struct typec_port *port)
+{
+	enum usb_pd_svdm_ver svdm_version;
+	struct device *partner_dev;
+
+	partner_dev = device_find_child(&port->dev, NULL, partner_match);
+	if (!partner_dev)
+		return -ENODEV;
+
+	svdm_version = to_typec_partner(partner_dev)->svdm_version;
+	put_device(partner_dev);
+
+	return svdm_version;
+}
+EXPORT_SYMBOL_GPL(typec_get_negotiated_svdm_version);
 
 /**
  * typec_get_drvdata - Return private driver data pointer

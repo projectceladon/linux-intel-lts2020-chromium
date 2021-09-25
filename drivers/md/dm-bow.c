@@ -1266,6 +1266,7 @@ static int dm_bow_iterate_devices(struct dm_target *ti,
 static struct target_type bow_target = {
 	.name   = "bow",
 	.version = {1, 2, 0},
+	.features = DM_TARGET_PASSES_CRYPTO,
 	.module = THIS_MODULE,
 	.ctr    = dm_bow_ctr,
 	.dtr    = dm_bow_dtr,

@@ -18,7 +18,14 @@
 
 /* ===== constants ===== */
 #define INCFS_NAME "incremental-fs"
-#define INCFS_MAGIC_NUMBER (unsigned long)(0x5346434e49ul)
+
+/*
+ * Magic number used in file header and in memory superblock
+ * Note that it is a 5 byte unsigned long. Thus on 32 bit kernels, it is
+ * truncated to a 4 byte number
+ */
+#define INCFS_MAGIC_NUMBER (0x5346434e49ul & ULONG_MAX)
+
 #define INCFS_DATA_FILE_BLOCK_SIZE 4096
 #define INCFS_HEADER_VER 1
 
@@ -28,12 +35,15 @@
 #define INCFS_MAX_HASH_SIZE 32
 #define INCFS_MAX_FILE_ATTR_SIZE 512
 
+#define INCFS_INDEX_NAME ".index"
+#define INCFS_INCOMPLETE_NAME ".incomplete"
 #define INCFS_PENDING_READS_FILENAME ".pending_reads"
 #define INCFS_LOG_FILENAME ".log"
 #define INCFS_BLOCKS_WRITTEN_FILENAME ".blocks_written"
 #define INCFS_XATTR_ID_NAME (XATTR_USER_PREFIX "incfs.id")
 #define INCFS_XATTR_SIZE_NAME (XATTR_USER_PREFIX "incfs.size")
 #define INCFS_XATTR_METADATA_NAME (XATTR_USER_PREFIX "incfs.metadata")
+#define INCFS_XATTR_VERITY_NAME (XATTR_USER_PREFIX "incfs.verity")
 
 #define INCFS_MAX_SIGNATURE_SIZE 8096
 #define INCFS_SIGNATURE_VERSION 2
@@ -124,6 +134,13 @@
 #define INCFS_IOC_SET_READ_TIMEOUTS \
 	_IOW(INCFS_IOCTL_BASE_CODE, 38, struct incfs_set_read_timeouts_args)
 
+/*
+ * Get last read error
+ * May only be called on .pending_reads file
+ */
+#define INCFS_IOC_GET_LAST_READ_ERROR \
+	_IOW(INCFS_IOCTL_BASE_CODE, 39, struct incfs_get_last_read_error_args)
+
 /* ===== sysfs feature flags ===== */
 /*
  * Each flag is represented by a file in /sys/fs/incremental-fs/features
@@ -137,9 +154,20 @@
 #define INCFS_FEATURE_FLAG_COREFS "corefs"
 
 /*
- * report_uid mount option is supported
+ * zstd compression support
  */
-#define INCFS_FEATURE_FLAG_REPORT_UID "report_uid"
+#define INCFS_FEATURE_FLAG_ZSTD "zstd"
+
+/*
+ * v2 feature set support. Covers:
+ *   INCFS_IOC_CREATE_MAPPED_FILE
+ *   INCFS_IOC_GET_BLOCK_COUNT
+ *   INCFS_IOC_GET_READ_TIMEOUTS/INCFS_IOC_SET_READ_TIMEOUTS
+ *   .blocks_written status file
+ *   .incomplete folder
+ *   report_uid mount option
+ */
+#define INCFS_FEATURE_FLAG_V2 "v2"
 
 enum incfs_compression_alg {
 	COMPRESSION_NONE = 0,
@@ -479,24 +507,24 @@ struct incfs_per_uid_read_timeouts {
 	__u32 uid;
 
 	/*
-	 * Min time to read any block. Note that this doesn't apply to reads
-	 * which are satisfied from the page cache.
+	 * Min time in microseconds to read any block. Note that this doesn't
+	 * apply to reads which are satisfied from the page cache.
 	 */
-	__u32 min_time_ms;
+	__u32 min_time_us;
 
 	/*
-	 * Min time to satisfy a pending read. Must be >= min_time_ms. Any
-	 * pending read which is filled before this time will be delayed so
-	 * that the total read time >= this value.
+	 * Min time in microseconds to satisfy a pending read. Any pending read
+	 * which is filled before this time will be delayed so that the total
+	 * read time >= this value.
 	 */
-	__u32 min_pending_time_ms;
+	__u32 min_pending_time_us;
 
 	/*
-	 * Max time to satisfy a pending read before the read times out.
-	 * If set to U32_MAX, defaults to mount options read_timeout_ms=
-	 * Must be >= min_pending_time_ms
+	 * Max time in microseconds to satisfy a pending read before the read
+	 * times out. If set to U32_MAX, defaults to mount options
+	 * read_timeout_ms * 1000. Must be >= min_pending_time_us
 	 */
-	__u32 max_pending_time_ms;
+	__u32 max_pending_time_us;
 };
 
 /*
@@ -535,5 +563,28 @@ struct incfs_set_read_timeouts_args {
 	__u32 timeouts_array_size;
 };
 
+/*
+ * Get last read error struct
+ * Arguments for INCFS_IOC_GET_LAST_READ_ERROR
+ */
+struct incfs_get_last_read_error_args {
+	/* File id of last file that had a read error */
+	incfs_uuid_t	file_id_out;
+
+	/* Time of last read error, in us, from CLOCK_MONOTONIC */
+	__u64	time_us_out;
+
+	/* Index of page that was being read at last read error */
+	__u32	page_out;
+
+	/* errno of last read error */
+	__u32	errno_out;
+
+	/* uid of last read error */
+	__u32	uid_out;
+
+	__u32	reserved1;
+	__u64	reserved2;
+};
 
 #endif /* _UAPI_LINUX_INCREMENTALFS_H */

@@ -4,6 +4,7 @@
 #define __LINUX_USB_TYPEC_H
 
 #include <linux/types.h>
+#include <linux/android_kabi.h>
 
 /* USB Type-C Specification releases */
 #define USB_TYPEC_REV_1_0	0x100 /* 1.0 */
@@ -215,6 +216,13 @@ struct typec_operations {
 	int (*vconn_set)(struct typec_port *port, enum typec_role role);
 	int (*port_type_set)(struct typec_port *port,
 			     enum typec_port_type type);
+	ANDROID_KABI_RESERVE(1);
+};
+
+enum usb_pd_svdm_ver {
+	SVDM_VER_1_0 = 0,
+	SVDM_VER_2_0 = 1,
+	SVDM_VER_MAX = SVDM_VER_2_0,
 };
 
 /*
@@ -223,6 +231,7 @@ struct typec_operations {
  * @data: Supported data role of the port
  * @revision: USB Type-C Specification release. Binary coded decimal
  * @pd_revision: USB Power Delivery Specification revision if supported
+ * @svdm_version: USB PD Structured VDM version if supported
  * @prefer_role: Initial role preference (DRP ports).
  * @accessory: Supported Accessory Modes
  * @fwnode: Optional fwnode of the port
@@ -236,6 +245,7 @@ struct typec_capability {
 	enum typec_port_data	data;
 	u16			revision; /* 0120H = "1.2" */
 	u16			pd_revision; /* 0300H = "3.0" */
+	enum usb_pd_svdm_ver	svdm_version;
 	int			prefer_role;
 	enum typec_accessory	accessory[TYPEC_MAX_ACCESSORY];
 	unsigned int		orientation_aware:1;
@@ -244,6 +254,7 @@ struct typec_capability {
 	void			*driver_data;
 
 	const struct typec_operations	*ops;
+	ANDROID_KABI_RESERVE(1);
 };
 
 /* Specific to try_role(). Indicates the user want's to clear the preference. */
@@ -286,4 +297,8 @@ int typec_find_orientation(const char *name);
 int typec_find_port_power_role(const char *name);
 int typec_find_power_role(const char *name);
 int typec_find_port_data_role(const char *name);
+
+void typec_partner_set_svdm_version(struct typec_partner *partner,
+				    enum usb_pd_svdm_ver svdm_version);
+int typec_get_negotiated_svdm_version(struct typec_port *port);
 #endif /* __LINUX_USB_TYPEC_H */

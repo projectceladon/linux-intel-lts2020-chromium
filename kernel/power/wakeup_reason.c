@@ -211,6 +211,7 @@ void log_threaded_irq_wakeup_reason(int irq, int parent_irq)
 
 	spin_unlock_irqrestore(&wakeup_reason_lock, flags);
 }
+EXPORT_SYMBOL_GPL(log_threaded_irq_wakeup_reason);
 
 static void __log_abort_or_abnormal_wake(bool abort, const char *fmt,
 					 va_list args)
@@ -243,6 +244,7 @@ void log_suspend_abort_reason(const char *fmt, ...)
 	__log_abort_or_abnormal_wake(true, fmt, args);
 	va_end(args);
 }
+EXPORT_SYMBOL_GPL(log_suspend_abort_reason);
 
 void log_abnormal_wakeup_reason(const char *fmt, ...)
 {
@@ -252,6 +254,7 @@ void log_abnormal_wakeup_reason(const char *fmt, ...)
 	__log_abort_or_abnormal_wake(false, fmt, args);
 	va_end(args);
 }
+EXPORT_SYMBOL_GPL(log_abnormal_wakeup_reason);
 
 void clear_wakeup_reasons(void)
 {

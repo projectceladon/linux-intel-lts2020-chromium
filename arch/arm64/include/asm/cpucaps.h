@@ -20,8 +20,9 @@
 #define ARM64_ALT_PAN_NOT_UAO			10
 #define ARM64_HAS_VIRT_HOST_EXTN		11
 #define ARM64_WORKAROUND_CAVIUM_27456		12
-#define ARM64_HAS_32BIT_EL0			13
-#define ARM64_HARDEN_EL2_VECTORS		14
+/* Unreliable: use system_supports_32bit_el0() instead. */
+#define ARM64_HAS_32BIT_EL0_DO_NOT_USE		13
+#define ARM64_SPECTRE_V3A			14
 #define ARM64_HAS_CNP				15
 #define ARM64_HAS_NO_FPSIMD			16
 #define ARM64_WORKAROUND_REPEAT_TLBI		17
@@ -68,6 +69,10 @@
 #define ARM64_WORKAROUND_1508412		58
 #define ARM64_HW_AF				59
 
-#define ARM64_NCAPS				60
+#define ARM64_HAS_LDAPR				60
+#define ARM64_KVM_PROTECTED_MODE		61
+
+/* kabi: reserve 62 - 76 for future cpu capabilities */
+#define ARM64_NCAPS				76
 
 #endif /* __ASM_CPUCAPS_H */

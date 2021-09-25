@@ -2367,6 +2367,7 @@ static size_t iommu_pgsize(struct iommu_domain *domain, unsigned long iova,
 	if (!count)
 		return pgsize;
 
+
 	/* Find the next biggest support page size, if it exists */
 	pgsizes = domain->pgsize_bitmap & ~GENMASK(pgsize_idx, 0);
 	if (!pgsizes)
@@ -2607,6 +2608,18 @@ static size_t __iommu_map_sg(struct iommu_domain *domain, unsigned long iova,
 	phys_addr_t start;
 	unsigned int i = 0;
 	int ret;
+
+	if (ops->map_sg) {
+		ret = ops->map_sg(domain, iova, sg, nents, prot, gfp, &mapped);
+
+		if (ops->iotlb_sync_map)
+			ops->iotlb_sync_map(domain, iova, mapped);
+
+		if (ret)
+			goto out_err;
+
+		return mapped;
+	}
 
 	while (i <= nents) {
 		phys_addr_t s_phys = sg_phys(sg);
