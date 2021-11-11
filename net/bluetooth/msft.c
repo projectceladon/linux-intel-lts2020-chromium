@@ -181,45 +181,29 @@ static void reregister_monitor_on_restart(struct hci_dev *hdev, int handle)
 
 void msft_do_open(struct hci_dev *hdev)
 {
-	struct msft_data *msft;
+	struct msft_data *msft = hdev->msft_data;
 
-	/* Skip if opcode is not supported or MSFT has been initiatlized */
-	if (hdev->msft_opcode == HCI_OP_NOP || hdev->msft_data)
+	if (hdev->msft_opcode == HCI_OP_NOP)
 		return;
 
-	bt_dev_dbg(hdev, "Initialize MSFT extension");
-
-	msft = kzalloc(sizeof(*msft), GFP_KERNEL);
-	if (!msft)
-		return;
-
-	if (!read_supported_features(hdev, msft)) {
-		kfree(msft);
+	if (!msft) {
+		bt_dev_err(hdev, "MSFT extension not registered");
 		return;
 	}
 
-	INIT_LIST_HEAD(&msft->handle_map);
-	hdev->msft_data = msft;
-}
+	bt_dev_dbg(hdev, "Initialize MSFT extension");
 
-void msft_do_close(struct hci_dev *hdev)
-{
-	struct msft_data *msft = hdev->msft_data;
-
-	if (!msft)
-		return;
-
-	bt_dev_dbg(hdev, "Cleanup of MSFT extension");
-
-	hdev->msft_data = NULL;
-
+	/* Reset existing MSFT data before re-reading */
 	kfree(msft->evt_prefix);
-	kfree(msft);
-}
+	msft->evt_prefix = NULL;
+	msft->evt_prefix_len = 0;
+	msft->features = 0;
 
-void msft_power_on(struct hci_dev *hdev)
-{
-	struct msft_data *msft = hdev->msft_data;
+	if (!read_supported_features(hdev, msft)) {
+		hdev->msft_data = NULL;
+		kfree(msft);
+		return;
+	}
 
 	if (msft_monitor_supported(hdev)) {
 		msft->reregistering = true;
@@ -231,7 +215,7 @@ void msft_power_on(struct hci_dev *hdev)
 	}
 }
 
-void msft_power_off(struct hci_dev *hdev)
+void msft_do_close(struct hci_dev *hdev)
 {
 	struct msft_data *msft = hdev->msft_data;
 	struct msft_monitor_advertisement_handle_data *handle_data, *tmp;
@@ -239,6 +223,8 @@ void msft_power_off(struct hci_dev *hdev)
 
 	if (!msft)
 		return;
+
+	bt_dev_dbg(hdev, "Cleanup of MSFT extension");
 
 	/* The controller will silently remove all monitors on power off.
 	 * Therefore, remove handle_data mapping and reset monitor state.
@@ -253,6 +239,37 @@ void msft_power_off(struct hci_dev *hdev)
 		list_del(&handle_data->list);
 		kfree(handle_data);
 	}
+}
+
+void msft_register(struct hci_dev *hdev)
+{
+	struct msft_data *msft = NULL;
+
+	bt_dev_dbg(hdev, "Register MSFT extension");
+
+	msft = kzalloc(sizeof(*msft), GFP_KERNEL);
+	if (!msft) {
+		bt_dev_err(hdev, "Failed to register MSFT extension");
+		return;
+	}
+
+	INIT_LIST_HEAD(&msft->handle_map);
+	hdev->msft_data = msft;
+}
+
+void msft_unregister(struct hci_dev *hdev)
+{
+	struct msft_data *msft = hdev->msft_data;
+
+	if (!msft)
+		return;
+
+	bt_dev_dbg(hdev, "Unregister MSFT extension");
+
+	hdev->msft_data = NULL;
+
+	kfree(msft->evt_prefix);
+	kfree(msft);
 }
 
 void msft_vendor_evt(struct hci_dev *hdev, struct sk_buff *skb)

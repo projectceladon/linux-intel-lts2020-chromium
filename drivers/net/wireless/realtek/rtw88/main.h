@@ -336,8 +336,6 @@ enum rtw_trx_desc_rate {
 	DESC_RATE_MAX,
 };
 
-#define RTW_REGION_INVALID 0xff
-
 enum rtw_regulatory_domains {
 	RTW_REGD_FCC		= 0,
 	RTW_REGD_MKK		= 1,
@@ -370,6 +368,7 @@ enum rtw_flags {
 	RTW_FLAG_BUSY_TRAFFIC,
 	RTW_FLAG_WOWLAN,
 	RTW_FLAG_RESTARTING,
+	RTW_FLAG_RESTART_TRIGGERING,
 	RTW_FLAG_USE_LOWEST_RATE,
 
 	NUM_OF_RTW_FLAGS,
@@ -821,9 +820,22 @@ struct rtw_vif {
 
 struct rtw_regulatory {
 	char alpha2[2];
-	u8 chplan;
-	u8 txpwr_regd;
-	enum nl80211_dfs_regions region;
+	u8 txpwr_regd_2g;
+	u8 txpwr_regd_5g;
+};
+
+enum rtw_regd_state {
+	RTW_REGD_STATE_WORLDWIDE,
+	RTW_REGD_STATE_PROGRAMMED,
+	RTW_REGD_STATE_SETTING,
+
+	RTW_REGD_STATE_NR,
+};
+
+struct rtw_regd {
+	enum rtw_regd_state state;
+	const struct rtw_regulatory *regulatory;
+	enum nl80211_dfs_regions dfs_region;
 };
 
 struct rtw_chip_ops {
@@ -1548,20 +1560,6 @@ struct rtw_iqk_info {
 	} result;
 };
 
-#define EDCCA_TH_L2H_IDX 0
-#define EDCCA_TH_H2L_IDX 1
-#define EDCCA_TH_L2H_LB 48
-#define EDCCA_ADC_BACKOFF 12
-#define EDCCA_IGI_BASE 50
-#define EDCCA_IGI_L2H_DIFF 8
-#define EDCCA_L2H_H2L_DIFF 7
-#define EDCCA_L2H_H2L_DIFF_NORMAL 8
-
-enum rtw_edcca_mode {
-	RTW_EDCCA_NORMAL	= 0,
-	RTW_EDCCA_ADAPTIVITY	= 1,
-};
-
 enum rtw_rf_band {
 	RF_BAND_2G_CCK,
 	RF_BAND_2G_OFDM,
@@ -1582,6 +1580,20 @@ struct rtw_gapk_info {
 	s8 fianl_offset[RF_GAIN_NUM][RTW_RF_PATH_MAX];
 	u8 read_txgain;
 	u8 channel;
+};
+
+#define EDCCA_TH_L2H_IDX 0
+#define EDCCA_TH_H2L_IDX 1
+#define EDCCA_TH_L2H_LB 48
+#define EDCCA_ADC_BACKOFF 12
+#define EDCCA_IGI_BASE 50
+#define EDCCA_IGI_L2H_DIFF 8
+#define EDCCA_L2H_H2L_DIFF 7
+#define EDCCA_L2H_H2L_DIFF_NORMAL 8
+
+enum rtw_edcca_mode {
+	RTW_EDCCA_NORMAL	= 0,
+	RTW_EDCCA_ADAPTIVITY	= 1,
 };
 
 struct rtw_cfo_track {
@@ -1673,11 +1685,11 @@ struct rtw_dm_info {
 
 	u32 dm_flags; /* enum rtw_dm_cap */
 	struct rtw_iqk_info iqk;
-	s8 l2h_th_ini;
-	enum rtw_edcca_mode edcca_mode;
 	struct rtw_gapk_info gapk;
 	bool is_bt_iqk_timeout;
 
+	s8 l2h_th_ini;
+	enum rtw_edcca_mode edcca_mode;
 	u8 scan_density;
 };
 
@@ -1690,7 +1702,6 @@ struct rtw_efuse {
 	u8 addr[ETH_ALEN];
 	u8 channel_plan;
 	u8 country_code[2];
-	bool country_worldwide;
 	u8 rf_board_option;
 	u8 rfe_option;
 	u8 power_track_type;
@@ -1887,7 +1898,7 @@ struct rtw_dev {
 	struct rtw_efuse efuse;
 	struct rtw_sec_desc sec;
 	struct rtw_traffic_stats stats;
-	struct rtw_regulatory regd;
+	struct rtw_regd regd;
 	struct rtw_bf_info bf_info;
 
 	struct rtw_dm_info dm_info;

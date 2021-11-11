@@ -82,7 +82,6 @@ struct mt7915_sta {
 
 	struct mt7915_sta_key_conf bip;
 };
-
 struct mt7915_vif {
 	u16 idx;
 	u8 omac_idx;

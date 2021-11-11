@@ -8559,19 +8559,22 @@ static bool update_nohz_stats(struct rq *rq, bool force)
  * @dst_cpu:	Destination CPU of the load balancing
  * @sds:	Load-balancing data with statistics of the local group
  * @sgs:	Load-balancing statistics of the candidate busiest group
- * @sg:		The candidate busiet group
+ * @sg:		The candidate busiest group
  *
  * Check the state of the SMT siblings of both @sds::local and @sg and decide
- * if @dst_cpu can pull tasks. If @dst_cpu does not have SMT siblings, it can
- * pull tasks if two or more of the SMT siblings of @sg are busy. If only one
- * CPU in @sg is busy, pull tasks only if @dst_cpu has higher priority.
+ * if @dst_cpu can pull tasks.
  *
- * If both @dst_cpu and @sg have SMT siblings, even the number of idle CPUs
- * between @sds::local and @sg. Thus, pull tasks from @sg if the difference
- * between the number of busy CPUs is 2 or more. If the difference is of 1,
- * only pull if @dst_cpu has higher priority. If @sg does not have SMT siblings
- * only pull tasks if all of the SMT siblings of @dst_cpu are idle and @sg
- * has lower priority.
+ * If @dst_cpu does not have SMT siblings, it can pull tasks if two or more of
+ * the SMT siblings of @sg are busy. If only one CPU in @sg is busy, pull tasks
+ * only if @dst_cpu has higher priority.
+ *
+ * If both @dst_cpu and @sg have SMT siblings, and @sg has exactly one more
+ * busy CPU than @sds::local, let @dst_cpu pull tasks if it has higher priority.
+ * Bigger imbalances in the number of busy CPUs will be dealt with in
+ * update_sd_pick_busiest().
+ *
+ * If @sg does not have SMT siblings, only pull tasks if all of the SMT siblings
+ * of @dst_cpu are idle and @sg has lower priority.
  */
 static bool asym_smt_can_pull_tasks(int dst_cpu, struct sd_lb_stats *sds,
 				    struct sg_lb_stats *sgs,
@@ -8592,16 +8595,16 @@ static bool asym_smt_can_pull_tasks(int dst_cpu, struct sd_lb_stats *sds,
 		 * siblings. Pull tasks if candidate group has two or more
 		 * busy CPUs.
 		 */
-		if (sg_is_smt && sg_busy_cpus >= 2)
+		if (sg_busy_cpus >= 2) /* implies sg_is_smt */
 			return true;
 
 		/*
 		 * @dst_cpu does not have SMT siblings. @sg may have SMT
 		 * siblings and only one is busy. In such case, @dst_cpu
-		 * can help if it has higher priority and is idle.
+		 * can help if it has higher priority and is idle (i.e.,
+		 * it has no running tasks).
 		 */
-		return !sds->local_stat.group_util &&
-		       sched_asym_prefer(dst_cpu, sg->asym_prefer_cpu);
+		return sched_asym_prefer(dst_cpu, sg->asym_prefer_cpu);
 	}
 
 	/* @dst_cpu has SMT siblings. */
@@ -8611,13 +8614,8 @@ static bool asym_smt_can_pull_tasks(int dst_cpu, struct sd_lb_stats *sds,
 				      sds->local_stat.idle_cpus;
 		int busy_cpus_delta = sg_busy_cpus - local_busy_cpus;
 
-		/* Local can always help to even the number busy CPUs. */
-		if (busy_cpus_delta >= 2)
-			return true;
-
 		if (busy_cpus_delta == 1)
-			return sched_asym_prefer(dst_cpu,
-						 sg->asym_prefer_cpu);
+			return sched_asym_prefer(dst_cpu, sg->asym_prefer_cpu);
 
 		return false;
 	}
@@ -8625,10 +8623,9 @@ static bool asym_smt_can_pull_tasks(int dst_cpu, struct sd_lb_stats *sds,
 	/*
 	 * @sg does not have SMT siblings. Ensure that @sds::local does not end
 	 * up with more than one busy SMT sibling and only pull tasks if there
-	 * are not busy CPUs. As CPUs move in and out of idle state frequently,
-	 * also check the group utilization to smoother the decision.
+	 * are not busy CPUs (i.e., no CPU has running tasks).
 	 */
-	if (!sds->local_stat.group_util)
+	if (!sds->local_stat.sum_nr_running)
 		return sched_asym_prefer(dst_cpu, sg->asym_prefer_cpu);
 
 	return false;
