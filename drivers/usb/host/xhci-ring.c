@@ -657,7 +657,6 @@ static int xhci_move_dequeue_past_td(struct xhci_hcd *xhci,
 	hw_dequeue = xhci_get_hw_deq(xhci, dev, ep_index, stream_id);
 	new_seg = ep_ring->deq_seg;
 	new_deq = ep_ring->dequeue;
-	new_cycle = hw_dequeue & 0x1;
 
 	/*
 	 * Quirk: xHC write-back of the DCS field in the hardware dequeue
@@ -675,8 +674,7 @@ static int xhci_move_dequeue_past_td(struct xhci_hcd *xhci,
 		halted_trb = &halted_seg->trbs[index];
 		new_cycle = halted_trb->generic.field[3] & 0x1;
 		xhci_dbg(xhci, "Endpoint DCS = %d TRB index = %d cycle = %d\n",
-			 (u8)(hw_dequeue & 0x1), index,
-			 new_cycle);
+			 (u8)(hw_dequeue & 0x1), index, new_cycle);
 	} else {
 		new_cycle = hw_dequeue & 0x1;
 	}
