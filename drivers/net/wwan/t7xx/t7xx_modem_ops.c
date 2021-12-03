@@ -3,103 +3,62 @@
  * Copyright (c) 2021, MediaTek Inc.
  * Copyright (c) 2021, Intel Corporation.
  */
+
 #include <linux/acpi.h>
+#include <linux/bitfield.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 
+#include "t7xx_hif_cldma.h"
+#include "t7xx_mhccif.h"
 #include "t7xx_modem_ops.h"
 #include "t7xx_monitor.h"
+#include "t7xx_netdev.h"
+#include "t7xx_pci.h"
+#include "t7xx_pcie_mac.h"
 #include "t7xx_port.h"
 #include "t7xx_port_proxy.h"
-#include "t7xx_pci.h"
-#include "t7xx_isr.h"
-#include "t7xx_netdev.h"
 
-void ccci_md_reset(struct ccci_modem *md)
-{
-	if (!md) {
-		pr_err("Invalid arguments\n");
-		return;
-	}
+#define RGU_RESET_DELAY_US	20
+#define PORT_RESET_DELAY_US	2000
 
-	md->md_init_finish = 0;
-}
-
-struct ccci_modem *ccci_md_alloc(struct mtk_pci_dev *mtk_dev)
-{
-	struct ccci_modem *md = kzalloc(sizeof(*md), GFP_KERNEL);
-
-	if (!md)
-		return NULL;
-
-	md->md_info = kzalloc(sizeof(*md->md_info), GFP_KERNEL);
-	if (!md->md_info) {
-		kfree(md);
-		return NULL;
-	}
-	md->mtk_dev = mtk_dev;
-	mtk_dev->md = md;
-
-	return md;
-}
-
-int ccci_md_register(struct device *dev, struct ccci_modem *md)
-{
-	if (md->ops->init)
-		md->ops->init(md);
-
-	return ccci_fsm_init(md);
-}
-
-void ccci_md_unregister(struct ccci_modem *md)
-{
-	ccci_port_uninit();
-	ccci_fsm_uninit();
-	if (md->ops->uninit)
-		md->ops->uninit(md);
-}
-
-int ccci_md_start(struct ccci_modem *md)
-{
-	int ret;
-
-	if (md && md->ops->start) {
-		ret = md->ops->start(md);
-	} else {
-		pr_err("Callback Fail,Pmd:%p\n", md);
-		ret = -EINVAL;
-	}
-
-	return ret;
-}
-
-void ccci_md_exception_handshake(struct ccci_modem *md, int timeout)
-{
-	if (md && md->ops->ee_handshake)
-		md->ops->ee_handshake(md, timeout);
-	else
-		pr_err("Callback Fail,Pmd:%p\n", md);
-}
+enum mtk_feature_support_type {
+	MTK_FEATURE_DOES_NOT_EXIST,
+	MTK_FEATURE_NOT_SUPPORTED,
+	MTK_FEATURE_MUST_BE_SUPPORTED,
+};
 
 static inline unsigned int get_interrupt_status(struct mtk_pci_dev *mtk_dev)
 {
 	return mhccif_read_sw_int_sts(mtk_dev) & D2H_SW_INT_MASK;
 }
 
+/**
+ * mtk_pci_mhccif_isr() - Process MHCCIF interrupts
+ * @mtk_dev: MTK device
+ *
+ * Check the interrupt status, and queue commands accordingly
+ *
+ * Returns: 0 on success or -EINVAL on failure
+ */
 int mtk_pci_mhccif_isr(struct mtk_pci_dev *mtk_dev)
 {
-	struct ccci_modem *md = mtk_dev->md;
-	struct md_sys1_info *md_info = md->md_info;
-	struct ccci_fsm_ctl *ctl = fsm_get_entry();
+	struct md_sys_info *md_info;
+	struct ccci_fsm_ctl *ctl;
+	struct mtk_modem *md;
 	unsigned int int_sta;
 	unsigned long flags;
 	u32 mask;
 
+	md = mtk_dev->md;
+	ctl = fsm_get_entry();
 	if (!ctl) {
-		dev_err(&mtk_dev->pdev->dev, "Invalid Arguments. ccci_fsm_ctl is null");
+		dev_err(&mtk_dev->pdev->dev,
+			"process MHCCIF interrupt before modem monitor was initialized\n");
 		return -EINVAL;
 	}
 
+	md_info = md->md_info;
 	spin_lock_irqsave(&md_info->exp_spinlock, flags);
 	int_sta = get_interrupt_status(mtk_dev);
 	md_info->exp_id |= int_sta;
@@ -107,24 +66,23 @@ int mtk_pci_mhccif_isr(struct mtk_pci_dev *mtk_dev)
 	if (md_info->exp_id & D2H_INT_PORT_ENUM) {
 		md_info->exp_id &= ~D2H_INT_PORT_ENUM;
 		if (ctl->curr_state == CCCI_FSM_INIT ||
-		    ctl->curr_state == CCCI_FSM_PRE_STARTING ||
+		    ctl->curr_state == CCCI_FSM_PRE_START ||
 		    ctl->curr_state == CCCI_FSM_STOPPED)
 			ccci_fsm_recv_md_interrupt(MD_IRQ_PORT_ENUM);
 	}
 
 	if (md_info->exp_id & D2H_INT_EXCEPTION_INIT) {
-		if (ctl->md_state == INVALID /*Added for MD early EE */ ||
-		    ctl->md_state == BOOT_WAITING_FOR_HS1 ||
-		    ctl->md_state == BOOT_WAITING_FOR_HS2 ||
-		    ctl->md_state == READY) {
+		if (ctl->md_state == MD_STATE_INVALID ||
+		    ctl->md_state == MD_STATE_WAITING_FOR_HS1 ||
+		    ctl->md_state == MD_STATE_WAITING_FOR_HS2 ||
+		    ctl->md_state == MD_STATE_READY) {
 			md_info->exp_id &= ~D2H_INT_EXCEPTION_INIT;
 			ccci_fsm_recv_md_interrupt(MD_IRQ_CCIF_EX);
 		}
-	} else if (ctl->md_state == BOOT_WAITING_FOR_HS1) {
+	} else if (ctl->md_state == MD_STATE_WAITING_FOR_HS1) {
 		/* start handshake if MD not assert */
 		mask = mhccif_mask_get(mtk_dev);
-		if ((md_info->exp_id & D2H_INT_ASYNC_MD_HK) &&
-		    !(mask & D2H_INT_ASYNC_MD_HK)) {
+		if ((md_info->exp_id & D2H_INT_ASYNC_MD_HK) && !(mask & D2H_INT_ASYNC_MD_HK)) {
 			md_info->exp_id &= ~D2H_INT_ASYNC_MD_HK;
 			queue_work(md->handshake_wq, &md->handshake_work);
 		}
@@ -137,9 +95,10 @@ int mtk_pci_mhccif_isr(struct mtk_pci_dev *mtk_dev)
 
 static void clr_device_irq_via_pcie(struct mtk_pci_dev *mtk_dev)
 {
-	struct mtk_addr_base *pbase_addr = &mtk_dev->base_addr;
+	struct mtk_addr_base *pbase_addr;
 	void __iomem *rgu_pciesta_reg;
 
+	pbase_addr = &mtk_dev->base_addr;
 	rgu_pciesta_reg = pbase_addr->pcie_ext_reg_base + TOPRGU_CH_PCIE_IRQ_STA -
 			  pbase_addr->pcie_dev_reg_trsl_addr;
 
@@ -152,16 +111,18 @@ void mtk_clear_rgu_irq(struct mtk_pci_dev *mtk_dev)
 	/* clear L2 */
 	clr_device_irq_via_pcie(mtk_dev);
 	/* clear L1 */
-	mtk_clear_int_status(mtk_dev, SAP_RGU_INT);
+	mtk_pcie_mac_clear_int_status(mtk_dev, SAP_RGU_INT);
 }
 
 static int mtk_acpi_reset(struct mtk_pci_dev *mtk_dev, char *fn_name)
 {
 #ifdef CONFIG_ACPI
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	struct device *dev = &mtk_dev->pdev->dev;
 	acpi_status acpi_ret;
+	struct device *dev;
 	acpi_handle handle;
+
+	dev = &mtk_dev->pdev->dev;
 
 	if (acpi_disabled) {
 		dev_err(dev, "acpi function isn't enabled\n");
@@ -181,8 +142,7 @@ static int mtk_acpi_reset(struct mtk_pci_dev *mtk_dev, char *fn_name)
 
 	acpi_ret = acpi_evaluate_object(handle, fn_name, NULL, &buffer);
 	if (ACPI_FAILURE(acpi_ret)) {
-		dev_err(dev, "%s method fail: %s\n", fn_name,
-			acpi_format_exception(acpi_ret));
+		dev_err(dev, "%s method fail: %s\n", fn_name, acpi_format_exception(acpi_ret));
 		return -EFAULT;
 	}
 #endif
@@ -191,90 +151,80 @@ static int mtk_acpi_reset(struct mtk_pci_dev *mtk_dev, char *fn_name)
 
 int mtk_acpi_fldr_func(struct mtk_pci_dev *mtk_dev)
 {
-	return mtk_acpi_reset(mtk_dev, "_RST");
+	return mtk_acpi_reset(mtk_dev, "._RST");
 }
 
 static void reset_device_via_pmic(struct mtk_pci_dev *mtk_dev)
 {
 	unsigned int val;
 
-	/*[27:26] 1:cold reset, 2: warm reset, others: cold reset */
-	val = mtk_dummy_reg_get(mtk_dev);
+	val = ioread32(IREG_BASE(mtk_dev) + PCIE_MISC_DEV_STATUS);
 
-	if (val & DUMMY_7_RST_TYPE_PLDR)
+	if (val & MISC_RESET_TYPE_PLDR)
 		mtk_acpi_reset(mtk_dev, "MRST._RST");
-	else if (val & DUMMY_7_RST_TYPE_FLDR)
+	else if (val & MISC_RESET_TYPE_FLDR)
 		mtk_acpi_fldr_func(mtk_dev);
-
-	/* fix me, cold reset */
 }
 
-static void rgu_irq_work_fn(struct work_struct *work)
+static irqreturn_t rgu_isr_thread(int irq, void *data)
 {
-	struct delayed_work *irq_work;
 	struct mtk_pci_dev *mtk_dev;
-	struct ccci_modem *modem;
+	struct mtk_modem *modem;
 
-	irq_work = to_delayed_work(work);
-	modem = container_of(irq_work, struct ccci_modem, rgu_irq_work);
-	mtk_dev = (struct mtk_pci_dev *)modem->mtk_dev;
+	mtk_dev = data;
+	modem = mtk_dev->md;
 
-	msleep(20);
-	reset_device_via_pmic(mtk_dev);
+	msleep(RGU_RESET_DELAY_US);
+	reset_device_via_pmic(modem->mtk_dev);
+	return IRQ_HANDLED;
 }
 
-static int rgu_handler_func(void *data)
+static irqreturn_t rgu_isr_handler(int irq, void *data)
 {
-	struct mtk_pci_dev *mtk_dev = (struct mtk_pci_dev *)data;
-	struct ccci_modem *modem;
+	struct mtk_pci_dev *mtk_dev;
+	struct mtk_modem *modem;
 
+	mtk_dev = data;
 	modem = mtk_dev->md;
 
 	mtk_clear_rgu_irq(mtk_dev);
 
-	if (atomic_read(&mtk_dev->rgu_pci_irq_en) == 0) {
-		atomic_set(&modem->rgu_irq_asserted_in_suspend, 1);
-		goto exit;
-	}
+	if (!mtk_dev->rgu_pci_irq_en)
+		return IRQ_HANDLED;
 
 	atomic_set(&modem->rgu_irq_asserted, 1);
-	mtk_clear_set_int_type(mtk_dev, SAP_RGU_INT, true);
-	queue_delayed_work(modem->rgu_workqueue, &modem->rgu_irq_work,
-			   msecs_to_jiffies(0));
-
-exit:
-	return IRQ_HANDLED;
+	mtk_pcie_mac_clear_int(mtk_dev, SAP_RGU_INT);
+	return IRQ_WAKE_THREAD;
 }
 
 static void mtk_pcie_register_rgu_isr(struct mtk_pci_dev *mtk_dev)
 {
-	struct ccci_modem *modem;
-
-	modem = mtk_dev->md;
-
-	modem->rgu_workqueue = create_singlethread_workqueue("rgu_workqueue");
-	INIT_DELAYED_WORK(&modem->rgu_irq_work, rgu_irq_work_fn);
-
 	/* registers RGU callback isr with PCIe driver */
-	mtk_clear_set_int_type(mtk_dev, SAP_RGU_INT, true);
-	mtk_clear_int_status(mtk_dev, SAP_RGU_INT);
+	mtk_pcie_mac_clear_int(mtk_dev, SAP_RGU_INT);
+	mtk_pcie_mac_clear_int_status(mtk_dev, SAP_RGU_INT);
 
-	mtk_dev->intr_callback[SAP_RGU_INT] = rgu_handler_func;
+	mtk_dev->intr_handler[SAP_RGU_INT] = rgu_isr_handler;
+	mtk_dev->intr_thread[SAP_RGU_INT] = rgu_isr_thread;
 	mtk_dev->callback_param[SAP_RGU_INT] = mtk_dev;
-	mtk_clear_set_int_type(mtk_dev, SAP_RGU_INT, false);
+	mtk_pcie_mac_set_int(mtk_dev, SAP_RGU_INT);
 }
 
-static void md_exception(struct ccci_modem *md, enum hif_ex_stage stage)
+static void md_exception(struct mtk_modem *md, enum hif_ex_stage stage)
 {
-	struct mtk_pci_dev *mtk_dev = md->mtk_dev;
+	struct mtk_pci_dev *mtk_dev;
+
+	mtk_dev = md->mtk_dev;
 
 	if (stage == HIF_EX_CLEARQ_DONE) {
-		/* give DHL some time to flush data */
-		msleep(2000);
-		port_reset();
+		/* give DHL time to flush data.
+		 * this is an empirical value that assure
+		 * that DHL have enough time to flush all the date.
+		 */
+		msleep(PORT_RESET_DELAY_US);
+		port_proxy_reset(&mtk_dev->pdev->dev);
 	}
 
-	ccci_cldma_exception(ID_CLDMA1, stage);
+	cldma_exception(ID_CLDMA1, stage);
 
 	if (stage == HIF_EX_INIT)
 		mhccif_h2d_swint_trigger(mtk_dev, H2D_CH_EXCEPTION_ACK);
@@ -282,68 +232,40 @@ static void md_exception(struct ccci_modem *md, enum hif_ex_stage stage)
 		mhccif_h2d_swint_trigger(mtk_dev, H2D_CH_EXCEPTION_CLEARQ_ACK);
 }
 
-static int wait_hif_ex_hk_event(struct ccci_modem *md, int event_id)
+static int wait_hif_ex_hk_event(struct mtk_modem *md, int event_id)
 {
-	struct md_sys1_info *md_info = md->md_info;
-	int time_once = 10;
-	int cnt = 500; /* MD timeout is 10s */
+	struct md_sys_info *md_info;
+	int sleep_time = 10;
+	int retries = 500; /* MD timeout is 5s */
 
-	while (cnt > 0) {
+	md_info = md->md_info;
+	do {
 		if (md_info->exp_id & event_id)
 			return 0;
-		msleep(time_once);
-		cnt--;
-	}
+
+		msleep(sleep_time);
+	} while (--retries);
+
 	return -EFAULT;
 }
 
-static int md_ee_handshake(struct ccci_modem *md, int timeout)
+static void md_sys_sw_init(struct mtk_pci_dev *mtk_dev)
 {
-	struct mtk_pci_dev *mtk_dev = md->mtk_dev;
-	int ret;
-
-	md_exception(md, HIF_EX_INIT);
-	ret = wait_hif_ex_hk_event(md, D2H_INT_EXCEPTION_INIT_DONE);
-	if (ret)
-		dev_err(&mtk_dev->pdev->dev, "EX CCIF HS timeout, RCH 0x%lx\n",
-			D2H_INT_EXCEPTION_INIT_DONE);
-
-	md_exception(md, HIF_EX_INIT_DONE);
-
-	ret = wait_hif_ex_hk_event(md, D2H_INT_EXCEPTION_CLEARQ_DONE);
-	if (ret)
-		dev_err(&mtk_dev->pdev->dev, "EX CCIF HS timeout, RCH 0x%lx\n",
-			D2H_INT_EXCEPTION_CLEARQ_DONE);
-
-	md_exception(md, HIF_EX_CLEARQ_DONE);
-
-	ret = wait_hif_ex_hk_event(md, D2H_INT_EXCEPTION_ALLQ_RESET);
-	if (ret)
-		dev_err(&mtk_dev->pdev->dev, "EX CCIF HS timeout, RCH 0x%lx\n",
-			D2H_INT_EXCEPTION_ALLQ_RESET);
-
-	md_exception(md, HIF_EX_ALLQ_RESET);
-
-	return 0;
-}
-
-static void md_sys1_sw_init(struct mtk_pci_dev *mtk_dev)
-{
-	/* register the mhccif isr for md exception, port enum and
-	 * async handshake notifications
+	/* Register the MHCCIF isr for MD exception, port enum and
+	 * async handshake notifications.
 	 */
 	mhccif_mask_set(mtk_dev, D2H_SW_INT_MASK);
 	mtk_dev->mhccif_bitmask = D2H_SW_INT_MASK;
 	mhccif_mask_clr(mtk_dev, D2H_INT_PORT_ENUM);
 
-	/* register rgu irq handler for sAP exception notification */
-	atomic_set(&mtk_dev->rgu_pci_irq_en, 1);
-	mtk_pcie_register_rgu_isr((void *)mtk_dev);
+	/* register RGU irq handler for sAP exception notification */
+	mtk_dev->rgu_pci_irq_en = true;
+	mtk_pcie_register_rgu_isr(mtk_dev);
 }
 
 struct feature_query {
 	u32 head_pattern;
-	struct ccci_feature_support feature_set[FEATURE_COUNT];
+	u8 feature_set[FEATURE_COUNT];
 	u32 tail_pattern;
 };
 
@@ -353,21 +275,23 @@ static void prepare_host_rt_data_query(struct core_sys_info *core)
 	struct feature_query *ft_query;
 	struct ccci_header *ccci_h;
 	struct sk_buff *skb;
-	int packet_size;
+	size_t packet_size;
 
 	packet_size = sizeof(struct ccci_header) +
 		      sizeof(struct ctrl_msg_header) +
 		      sizeof(struct feature_query);
-	skb = ccci_alloc_skb(packet_size, 0, 1);
+	skb = ccci_alloc_skb(packet_size, GFS_BLOCKING);
 	if (!skb)
 		return;
+
 	skb_put(skb, packet_size);
-	/* fill ccci header */
+	/* fill CCCI header */
 	ccci_h = (struct ccci_header *)skb->data;
 	ccci_h->data[0] = 0;
 	ccci_h->data[1] = packet_size;
-	ccci_h->channel = core->ctl_port->tx_ch;
-	ccci_h->seq_num = 0;
+	ccci_h->status &= ~HDR_FLD_CHN;
+	ccci_h->status |= FIELD_PREP(HDR_FLD_CHN, core->ctl_port->tx_ch);
+	ccci_h->status &= ~HDR_FLD_SEQ;
 	ccci_h->reserved = 0;
 	/* fill control message */
 	ctrl_msg_h = (struct ctrl_msg_header *)(skb->data +
@@ -379,18 +303,17 @@ static void prepare_host_rt_data_query(struct core_sys_info *core)
 	ft_query = (struct feature_query *)(skb->data +
 					    sizeof(struct ccci_header) +
 					    sizeof(struct ctrl_msg_header));
-	ft_query->head_pattern = MD_FEATURE_QUERY_PATTERN;
-	memcpy(ft_query->feature_set, core->feature_set,
-	       sizeof(struct ccci_feature_support) * FEATURE_COUNT);
-	ft_query->tail_pattern = MD_FEATURE_QUERY_PATTERN;
-	/* send HS1 msg to device */
-	ccci_port_send_hif(core->ctl_port, skb, 0, 1);
+	ft_query->head_pattern = MD_FEATURE_QUERY_ID;
+	memcpy(ft_query->feature_set, core->feature_set, FEATURE_COUNT);
+	ft_query->tail_pattern = MD_FEATURE_QUERY_ID;
+	/* send HS1 message to device */
+	port_proxy_send_skb(core->ctl_port, skb, 0);
 }
 
 static int prepare_device_rt_data(struct core_sys_info *core, struct device *dev,
 				  void *data, int data_length)
 {
-	struct ccci_runtime_feature rt_feature;
+	struct mtk_runtime_feature rt_feature;
 	struct ctrl_msg_header *ctrl_msg_h;
 	struct feature_query *md_feature;
 	struct ccci_header *ccci_h;
@@ -399,144 +322,97 @@ static int prepare_device_rt_data(struct core_sys_info *core, struct device *dev
 	char *rt_data;
 	int i;
 
-	skb = ccci_alloc_skb(SKB_4K, 0, 1);
+	skb = ccci_alloc_skb(MTK_SKB_4K, GFS_BLOCKING);
 	if (!skb)
 		return -EFAULT;
 
-	/* fill ccci header */
+	/* fill CCCI header */
 	ccci_h = (struct ccci_header *)skb->data;
 	ccci_h->data[0] = 0;
-	ccci_h->channel = core->ctl_port->tx_ch;
-	ccci_h->seq_num = 0;
+	ccci_h->status &= ~HDR_FLD_CHN;
+	ccci_h->status |= FIELD_PREP(HDR_FLD_CHN, core->ctl_port->tx_ch);
+	ccci_h->status &= ~HDR_FLD_SEQ;
 	ccci_h->reserved = 0;
 	/* fill control message header */
-	ctrl_msg_h = (struct ctrl_msg_header *)
-				 (skb->data + sizeof(struct ccci_header));
+	ctrl_msg_h = (struct ctrl_msg_header *)(skb->data + sizeof(struct ccci_header));
 	ctrl_msg_h->ctrl_msg_id = CTL_ID_HS3_MSG;
 	ctrl_msg_h->reserved = 0;
-	rt_data = (skb->data + sizeof(struct ccci_header) +
-		   sizeof(struct ctrl_msg_header));
+	rt_data = (skb->data + sizeof(struct ccci_header) + sizeof(struct ctrl_msg_header));
 
-	/* parse md runtime data query */
-	md_feature = (struct feature_query *)data;
-	if (md_feature->head_pattern != MD_FEATURE_QUERY_PATTERN ||
-	    md_feature->tail_pattern != MD_FEATURE_QUERY_PATTERN) {
+	/* parse MD runtime data query */
+	md_feature = data;
+	if (md_feature->head_pattern != MD_FEATURE_QUERY_ID ||
+	    md_feature->tail_pattern != MD_FEATURE_QUERY_ID) {
 		dev_err(dev, "md_feature pattern is wrong: head 0x%x, tail 0x%x\n",
 			md_feature->head_pattern, md_feature->tail_pattern);
 		return -EINVAL;
 	}
+
 	/* fill runtime feature */
 	for (i = 0; i < FEATURE_COUNT; i++) {
-		memset(&rt_feature, 0, sizeof(struct ccci_runtime_feature));
+		u8 md_feature_mask = FIELD_GET(FEATURE_MSK, md_feature->feature_set[i]);
+
+		memset(&rt_feature, 0, sizeof(rt_feature));
 		rt_feature.feature_id = i;
-		if (md_feature->feature_set[i].support_mask ==
-			CCCI_FEATURE_NOT_EXIST) {
+		switch (md_feature_mask) {
+		case MTK_FEATURE_DOES_NOT_EXIST:
+		case MTK_FEATURE_MUST_BE_SUPPORTED:
 			rt_feature.support_info = md_feature->feature_set[i];
-		} else if (md_feature->feature_set[i].support_mask ==
-			CCCI_FEATURE_MUST_SUPPORT) {
-			rt_feature.support_info = md_feature->feature_set[i];
-		} else if (md_feature->feature_set[i].support_mask ==
-			CCCI_FEATURE_OPTIONAL_SUPPORT) {
-			if (md_feature->feature_set[i].version ==
-				core->support_feature_set[i].version &&
-				core->support_feature_set[i].support_mask >=
-				CCCI_FEATURE_MUST_SUPPORT) {
-				rt_feature.support_info.support_mask =
-					CCCI_FEATURE_MUST_SUPPORT;
-				rt_feature.support_info.version =
-					core->support_feature_set[i].version;
-			} else {
-				rt_feature.support_info.support_mask =
-					CCCI_FEATURE_NOT_SUPPORT;
-				rt_feature.support_info.version =
-					core->support_feature_set[i].version;
-			}
-		} else if (md_feature->feature_set[i].support_mask ==
-			CCCI_FEATURE_SUPPORT_BACKWARD_COMPAT) {
-			if (md_feature->feature_set[i].version >=
-				core->support_feature_set[i].version) {
-				rt_feature.support_info.support_mask =
-					CCCI_FEATURE_MUST_SUPPORT;
-				rt_feature.support_info.version =
-					core->support_feature_set[i].version;
-			} else {
-				rt_feature.support_info.support_mask =
-					CCCI_FEATURE_NOT_SUPPORT;
-				rt_feature.support_info.version =
-					core->support_feature_set[i].version;
-			}
+			break;
+
+		default:
+			break;
 		}
-		if (rt_feature.support_info.support_mask !=
-			CCCI_FEATURE_MUST_SUPPORT) {
+
+		if (FIELD_GET(FEATURE_MSK, rt_feature.support_info) !=
+		    MTK_FEATURE_MUST_BE_SUPPORTED) {
 			rt_feature.data_len = 0;
-			memcpy(rt_data, &rt_feature, sizeof(struct ccci_runtime_feature));
-			rt_data += sizeof(struct ccci_runtime_feature);
+			memcpy(rt_data, &rt_feature, sizeof(struct mtk_runtime_feature));
+			rt_data += sizeof(struct mtk_runtime_feature);
 		}
-		packet_size += (sizeof(struct ccci_runtime_feature) + rt_feature.data_len);
+
+		packet_size += (sizeof(struct mtk_runtime_feature) + rt_feature.data_len);
 	}
+
 	ctrl_msg_h->data_length = packet_size;
 	ccci_h->data[1] = packet_size + sizeof(struct ctrl_msg_header) +
 			  sizeof(struct ccci_header);
 	skb_put(skb, ccci_h->data[1]);
-	/* send HS3 msg to device */
-	ccci_port_send_hif(core->ctl_port, skb, 0, 1);
+	/* send HS3 message to device */
+	port_proxy_send_skb(core->ctl_port, skb, 0);
 	return 0;
 }
 
 static int parse_host_rt_data(struct core_sys_info *core, struct device *dev,
 			      void *data, int data_length)
 {
-	struct ccci_runtime_feature *rt_feature;
-	unsigned char ft_spt_st, ft_spt_cfg, cur_ft_spt = 0;
-	unsigned char *rt_ft_data, *ft_data;
-	int ft_id_index, offset;
-	int ret = 0;
+	enum mtk_feature_support_type ft_spt_st, ft_spt_cfg;
+	struct mtk_runtime_feature *rt_feature;
+	int i, offset;
 
 	offset = sizeof(struct feature_query);
-	for (ft_id_index = 0;
-		 ft_id_index < FEATURE_COUNT && offset < data_length;
-		 ft_id_index++) {
-		rt_ft_data = data + offset;
-		rt_feature = (struct ccci_runtime_feature *)rt_ft_data;
-		ft_spt_st = rt_feature->support_info.support_mask;
-		ft_spt_cfg = core->feature_set[ft_id_index].support_mask;
-		ft_data = rt_feature->data;
-		if (ft_spt_cfg == CCCI_FEATURE_NOT_EXIST ||
-		    ft_spt_cfg == CCCI_FEATURE_NOT_SUPPORT) {
-			offset += sizeof(struct ccci_runtime_feature)
-				+ rt_feature->data_len;
-			continue;
-		}
-		if (ft_spt_cfg == CCCI_FEATURE_MUST_SUPPORT) {
-			if (ft_spt_st != CCCI_FEATURE_MUST_SUPPORT) {
-				dev_err(dev, "mismatch: runtime feature%d (%d,%d)\n",
-					ft_id_index, ft_spt_cfg, ft_spt_st);
-				ret = -1;
-				break;
-			}
-			cur_ft_spt = CCCI_FEATURE_MUST_SUPPORT;
-		} else if (ft_spt_cfg == CCCI_FEATURE_OPTIONAL_SUPPORT) {
-			cur_ft_spt = ft_spt_cfg;
-		} else if (ft_spt_cfg == CCCI_FEATURE_SUPPORT_BACKWARD_COMPAT) {
-			if (ft_spt_st == CCCI_FEATURE_MUST_SUPPORT) {
-				cur_ft_spt = CCCI_FEATURE_MUST_SUPPORT;
-			} else {
-				dev_err(dev, "mismatch: runtime feature%d (%d,%d)\n",
-					ft_id_index, ft_spt_cfg, ft_spt_st);
-				ret = -1;
-				break;
-			}
-		}
+	for (i = 0; i < FEATURE_COUNT && offset < data_length; i++) {
+		rt_feature = (struct mtk_runtime_feature *)(data + offset);
+		ft_spt_st = FIELD_GET(FEATURE_MSK, rt_feature->support_info);
+		ft_spt_cfg = FIELD_GET(FEATURE_MSK, core->feature_set[i]);
+		offset += sizeof(struct mtk_runtime_feature) + rt_feature->data_len;
 
-		if (cur_ft_spt == CCCI_FEATURE_MUST_SUPPORT && ft_id_index == RT_ID_MD_PORT_ENUM)
-			ccci_port_node_control(ft_data);
+		if (ft_spt_cfg == MTK_FEATURE_MUST_BE_SUPPORTED) {
+			if (ft_spt_st != MTK_FEATURE_MUST_BE_SUPPORTED) {
+				dev_err(dev, "mismatch: runtime feature%d (%d,%d)\n",
+					i, ft_spt_cfg, ft_spt_st);
+				return -EINVAL;
+			}
 
-		offset += sizeof(struct ccci_runtime_feature) + rt_feature->data_len;
+			if ((i == RT_ID_MD_PORT_ENUM) || (i == RT_ID_SAP_PORT_ENUM))
+				port_proxy_node_control(dev, (struct port_msg *)rt_feature->data);
+		}
 	}
-	return ret;
+
+	return 0;
 }
 
-static void core_reset(struct ccci_modem *md)
+static void core_reset(struct mtk_modem *md)
 {
 	struct ccci_fsm_ctl *fsm_ctl;
 
@@ -544,29 +420,114 @@ static void core_reset(struct ccci_modem *md)
 	fsm_ctl = fsm_get_entry();
 
 	if (!fsm_ctl) {
-		dev_err(&md->mtk_dev->pdev->dev, "fsm ctrl isn't initialized\n");
+		dev_err(&md->mtk_dev->pdev->dev, "fsm ctl is not initialized\n");
 		return;
 	}
-	/* Append HS2 EXIT event to exit the work "core_hk_handler" if the last
-	 * handshake wasn't done yet.
-	 * Remember to clear this event before entering the work "core_hk_handler".
-	 */
-	if (atomic_read(&md->core_md.handshake_ongoing) == 1)
+
+	/* append HS2_EXIT event to cancel the ongoing handshake in core_hk_handler() */
+	if (atomic_read(&md->core_md.handshake_ongoing))
 		fsm_append_event(fsm_ctl, CCCI_EVENT_MD_HS2_EXIT, NULL, 0);
+
 	atomic_set(&md->core_md.handshake_ongoing, 0);
 }
 
-static void core_hk_handler(struct ccci_modem *md,
+static void core_hk_handler(struct mtk_modem *md, struct ccci_fsm_ctl *ctl,
+			    enum ccci_fsm_event_state event_id,
+			    enum ccci_fsm_event_state err_detect)
+{
+	struct core_sys_info *core_info;
+	struct ccci_fsm_event *event, *event_next;
+	unsigned long flags;
+	struct device *dev;
+	int ret;
+
+	core_info = &md->core_md;
+	dev = &md->mtk_dev->pdev->dev;
+	prepare_host_rt_data_query(core_info);
+	while (!kthread_should_stop()) {
+		bool event_received = false;
+
+		spin_lock_irqsave(&ctl->event_lock, flags);
+		list_for_each_entry_safe(event, event_next, &ctl->event_queue, entry) {
+			if (event->event_id == err_detect) {
+				list_del(&event->entry);
+				spin_unlock_irqrestore(&ctl->event_lock, flags);
+				dev_err(dev, "core handshake error event received\n");
+				goto exit;
+			}
+
+			if (event->event_id == event_id) {
+				list_del(&event->entry);
+				event_received = true;
+				break;
+			}
+		}
+
+		spin_unlock_irqrestore(&ctl->event_lock, flags);
+
+		if (event_received)
+			break;
+
+		wait_event_interruptible(ctl->event_wq, !list_empty(&ctl->event_queue) ||
+					 kthread_should_stop());
+		if (kthread_should_stop())
+			goto exit;
+	}
+
+	if (atomic_read(&ctl->exp_flg))
+		goto exit;
+
+	ret = parse_host_rt_data(core_info, dev, event->data, event->length);
+	if (ret) {
+		dev_err(dev, "host runtime data parsing fail:%d\n", ret);
+		goto exit;
+	}
+
+	if (atomic_read(&ctl->exp_flg))
+		goto exit;
+
+	ret = prepare_device_rt_data(core_info, dev, event->data, event->length);
+	if (ret) {
+		dev_err(dev, "device runtime data parsing fail:%d", ret);
+		goto exit;
+	}
+
+	atomic_set(&core_info->ready, 1);
+	atomic_set(&core_info->handshake_ongoing, 0);
+	wake_up(&ctl->async_hk_wq);
+exit:
+	kfree(event);
+}
+
+static void md_hk_wq(struct work_struct *work)
+{
+	struct ccci_fsm_ctl *ctl;
+	struct mtk_modem *md;
+
+	ctl = fsm_get_entry();
+
+	/* clear the HS2 EXIT event appended in core_reset() */
+	fsm_clear_event(ctl, CCCI_EVENT_MD_HS2_EXIT);
+	cldma_switch_cfg(ID_CLDMA1, HIF_CFG1);
+	cldma_start(ID_CLDMA1);
+	fsm_broadcast_state(ctl, MD_STATE_WAITING_FOR_HS2);
+	md = container_of(work, struct mtk_modem, handshake_work);
+	atomic_set(&md->core_md.handshake_ongoing, 1);
+	core_hk_handler(md, ctl, CCCI_EVENT_MD_HS2, CCCI_EVENT_MD_HS2_EXIT);
+}
+
+static void core_sap_handler(struct mtk_modem *md,
 			    struct ccci_fsm_ctl *ctl, enum ccci_fsm_event_state event_id,
 			    enum ccci_fsm_event_state err_detect)
 {
-	struct core_sys_info *core_info = &md->core_md;
+	struct core_sys_info *core_info = &md->core_sap;
 	struct device *dev = &md->mtk_dev->pdev->dev;
 	struct ccci_fsm_event *event;
 	unsigned long flags;
 	int ret;
 
 	prepare_host_rt_data_query(core_info);
+
 	while (1) {
 		spin_lock_irqsave(&ctl->event_lock, flags);
 		if (list_empty(&ctl->event_queue)) {
@@ -578,6 +539,7 @@ static void core_hk_handler(struct ccci_modem *md,
 
 		event = list_first_entry(&ctl->event_queue,
 					 struct ccci_fsm_event, entry);
+
 		if (event->event_id == err_detect) {
 			list_del(&event->entry);
 			dev_err(dev, "core handshake 2 exit\n");
@@ -597,7 +559,7 @@ static void core_hk_handler(struct ccci_modem *md,
 
 	ret = parse_host_rt_data(core_info, dev, event->data, event->length);
 	if (ret) {
-		dev_err(dev, "core handshake 2 fail:%d\n", ret);
+		dev_err(dev, "core handshake 2 fail for the SAP :%d\n", ret);
 		goto exit;
 	}
 	if (atomic_read(&ctl->exp_flg))
@@ -616,62 +578,37 @@ exit:
 	kfree(event);
 }
 
-static void md_hk_wq(struct work_struct *work)
+static void sap_hk_wq(struct work_struct *work)
 {
-	struct ccci_modem *md = container_of(work, struct ccci_modem, handshake_work);
-	struct ccci_fsm_ctl *ctl = fsm_get_entry();
+	struct mtk_modem *md = container_of(work, struct mtk_modem, sap_handshake_work);
+        struct core_sys_info *core_info;
+        struct ccci_fsm_ctl *ctl = fsm_get_entry ();
 
-	if (!ctl) {
-		dev_err(&md->mtk_dev->pdev->dev, "Invalid Arguments. ccci_fsm_ctl is null");
-		return;
-	}
-
-	/* Clear the HS2 EXIT event appended in core_reset(). */
-	fsm_clear_event(ctl, CCCI_EVENT_MD_HS2_EXIT);
-	ccci_cldma_switch_cfg(ID_CLDMA1);
-	ccci_cldma_start(ID_CLDMA1);
-	fsm_broadcast_state(ctl, BOOT_WAITING_FOR_HS2);
-	atomic_set(&md->core_md.handshake_ongoing, 1);
-	core_hk_handler(md, ctl, CCCI_EVENT_MD_HS2, CCCI_EVENT_MD_HS2_EXIT);
+	core_info = &(md->core_sap);
+        fsm_clear_event(ctl, CCCI_EVENT_AP_HS2_EXIT);
+	cldma_switch_cfg(ID_CLDMA0, HIF_CFG_DEF);
+	cldma_start(ID_CLDMA0);
+        atomic_set(&core_info->handshake_ongoing, 1);
+        core_sap_handler(md, ctl, CCCI_EVENT_SAP_HS2, CCCI_EVENT_AP_HS2_EXIT);
 }
 
-static int md_init(struct ccci_modem *md)
-{
-	atomic_set(&md->core_md.ready, 0);
-	atomic_set(&md->core_md.handshake_ongoing, 0);
-	md->handshake_wq =
-		alloc_workqueue("%s", WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI, 0, "md_hk_wq");
-	INIT_WORK(&md->handshake_work, md_hk_wq);
-	md->core_md.feature_set[RT_ID_MD_PORT_ENUM].support_mask = CCCI_FEATURE_MUST_SUPPORT;
 
-	return 0;
-}
-
-static int md_uninit(struct ccci_modem *md)
+void mtk_md_event_notify(struct mtk_modem *md, enum md_event_id evt_id)
 {
-	destroy_workqueue(md->handshake_wq);
-	destroy_workqueue(md->rgu_workqueue);
-	return 0;
-}
-
-static int md_start(struct ccci_modem *md)
-{
-	atomic_set(&md->reset_on_going, 0);
-	return 0;
-}
-
-static int md_evt_notify_hd(struct ccci_modem *md, enum md_event_id evt_id)
-{
-	struct ccci_fsm_ctl *ctl = fsm_get_entry();
-	struct md_sys1_info *md_info = md->md_info;
+	struct md_sys_info *md_info;
 	void __iomem *mhccif_base;
-	unsigned long flags;
+	struct ccci_fsm_ctl *ctl;
 	unsigned int int_sta;
+	unsigned long flags;
+
+	ctl = fsm_get_entry();
+	md_info = md->md_info;
 
 	switch (evt_id) {
 	case FSM_PRE_START:
 		mhccif_mask_clr(md->mtk_dev, D2H_INT_PORT_ENUM);
 		break;
+
 	case FSM_START:
 		mhccif_mask_set(md->mtk_dev, D2H_INT_PORT_ENUM);
 		spin_lock_irqsave(&md_info->exp_spinlock, flags);
@@ -681,20 +618,30 @@ static int md_evt_notify_hd(struct ccci_modem *md, enum md_event_id evt_id)
 			atomic_set(&ctl->exp_flg, 1);
 			md_info->exp_id &= ~D2H_INT_EXCEPTION_INIT;
 			md_info->exp_id &= ~D2H_INT_ASYNC_MD_HK;
-
 		} else if (atomic_read(&ctl->exp_flg)) {
 			md_info->exp_id &= ~D2H_INT_ASYNC_MD_HK;
-
 		} else if (md_info->exp_id & D2H_INT_ASYNC_MD_HK) {
 			queue_work(md->handshake_wq, &md->handshake_work);
 			md_info->exp_id &= ~D2H_INT_ASYNC_MD_HK;
 			mhccif_base = md->mtk_dev->base_addr.mhccif_rc_base;
-			iowrite32(D2H_INT_ASYNC_MD_HK,
-				  mhccif_base + REG_EP2RC_SW_INT_ACK);
+			iowrite32(D2H_INT_ASYNC_MD_HK, mhccif_base + REG_EP2RC_SW_INT_ACK);
 			mhccif_mask_set(md->mtk_dev, D2H_INT_ASYNC_MD_HK);
 		} else {
 			/* unmask async handshake interrupt */
 			mhccif_mask_clr(md->mtk_dev, D2H_INT_ASYNC_MD_HK);
+		}
+		
+		if (md_info->exp_id & D2H_INT_ASYNC_SAP_HK) {
+			queue_work(md->sap_handshake_wq, &md->sap_handshake_work);
+			md_info->exp_id &= ~D2H_INT_ASYNC_SAP_HK;
+			mhccif_base = md->mtk_dev->base_addr.mhccif_rc_base;
+			iowrite32(D2H_INT_ASYNC_SAP_HK,
+				  mhccif_base + REG_EP2RC_SW_INT_ACK);
+			mhccif_mask_set(md->mtk_dev, D2H_INT_ASYNC_SAP_HK);
+		} else {
+			/* unmask async handshake interrupt */
+			mhccif_mask_clr(md->mtk_dev, D2H_INT_ASYNC_MD_HK);
+			mhccif_mask_clr(md->mtk_dev, D2H_INT_ASYNC_SAP_HK);
 		}
 
 		spin_unlock_irqrestore(&md_info->exp_spinlock, flags);
@@ -705,101 +652,125 @@ static int md_evt_notify_hd(struct ccci_modem *md, enum md_event_id evt_id)
 				D2H_INT_EXCEPTION_CLEARQ_DONE |
 				D2H_INT_EXCEPTION_ALLQ_RESET);
 		break;
+
 	case FSM_READY:
 		/* mask async handshake interrupt */
 		mhccif_mask_set(md->mtk_dev, D2H_INT_ASYNC_MD_HK);
+		mhccif_mask_set(md->mtk_dev, D2H_INT_ASYNC_SAP_HK);
 		break;
-	}
-	return 0;
-}
 
-static struct ccci_modem_ops md_ops = {
-	.init = &md_init,
-	.uninit = &md_uninit,
-	.start = &md_start,
-	.ee_handshake = &md_ee_handshake,
-	.md_event_notify = &md_evt_notify_hd,
-};
-
-static void start_device(struct mtk_pci_dev *mtk_dev)
-{
-	struct ccci_fsm_ctl *fsm_ctl = fsm_get_entry();
-	u32 dummy_register;
-
-	if (!fsm_ctl) {
-		dev_err(&mtk_dev->pdev->dev, "fsm ctrl isn't initialized\n");
-		return;
-	}
-
-	/* read PCIe Dummy Register */
-	dummy_register = mtk_dummy_reg_get(mtk_dev);
-
-	if (dummy_register == 0xffffffff) {
-		dev_err(&mtk_dev->pdev->dev, "failed to read PCIe register\n");
-		return;
-	}
-
-	ccci_port_init(mtk_dev->md);
-	fsm_append_command(fsm_ctl, CCCI_COMMAND_PRE_START, 0);
-}
-
-static void md_structure_reset(struct ccci_modem *md)
-{
-	struct md_sys1_info *md_info;
-
-	md->ops = &md_ops;
-	/* initial modem private data */
-	md_info = md->md_info;
-	md_info->exp_id = 0;
-	spin_lock_init(&md_info->exp_spinlock);
-	atomic_set(&md->reset_on_going, 1);
-	/* IRQ is default enabled after request_irq */
-	atomic_set(&md->wdt_enabled, 1);
-}
-
-int mtk_pci_event_handler(struct mtk_pci_dev *mtk_dev, u32 event)
-{
-	struct ccci_fsm_ctl *fsm_ctl = fsm_get_entry();
-	int ret = 0;
-
-	switch (event) {
-	case PCIE_EVENT_L3ENTER:
-		ret = fsm_append_command(fsm_ctl, CCCI_COMMAND_STOP, 1);
-		break;
-	case PCIE_EVENT_L3EXIT:
-		mtk_clear_set_int_type(mtk_dev, SAP_RGU_INT, true);
-		mtk_clear_int_status(mtk_dev, SAP_RGU_INT);
-		atomic_set(&mtk_dev->rgu_pci_irq_en, 1);
-		mtk_clear_set_int_type(mtk_dev, SAP_RGU_INT, false);
-		ret = fsm_append_command(fsm_ctl, CCCI_COMMAND_PRE_START, 0);
-		break;
 	default:
 		break;
 	}
+}
+
+static void md_structure_reset(struct mtk_modem *md)
+{
+	struct md_sys_info *md_info;
+
+	md_info = md->md_info;
+	md_info->exp_id = 0;
+	spin_lock_init(&md_info->exp_spinlock);
+}
+
+void mtk_md_exception_handshake(struct mtk_modem *md)
+{
+	struct mtk_pci_dev *mtk_dev;
+	int ret;
+
+	mtk_dev = md->mtk_dev;
+	md_exception(md, HIF_EX_INIT);
+	ret = wait_hif_ex_hk_event(md, D2H_INT_EXCEPTION_INIT_DONE);
 
 	if (ret)
-		dev_err(&mtk_dev->pdev->dev, "Error %d handling mtk event %u\n", ret, event);
-	return ret;
+		dev_err(&mtk_dev->pdev->dev, "EX CCIF HS timeout, RCH 0x%lx\n",
+			D2H_INT_EXCEPTION_INIT_DONE);
+
+	md_exception(md, HIF_EX_INIT_DONE);
+	ret = wait_hif_ex_hk_event(md, D2H_INT_EXCEPTION_CLEARQ_DONE);
+	if (ret)
+		dev_err(&mtk_dev->pdev->dev, "EX CCIF HS timeout, RCH 0x%lx\n",
+			D2H_INT_EXCEPTION_CLEARQ_DONE);
+
+	md_exception(md, HIF_EX_CLEARQ_DONE);
+	ret = wait_hif_ex_hk_event(md, D2H_INT_EXCEPTION_ALLQ_RESET);
+	if (ret)
+		dev_err(&mtk_dev->pdev->dev, "EX CCIF HS timeout, RCH 0x%lx\n",
+			D2H_INT_EXCEPTION_ALLQ_RESET);
+
+	md_exception(md, HIF_EX_ALLQ_RESET);
 }
 
-int ccci_modem_reset(struct mtk_pci_dev *mtk_dev)
+static struct mtk_modem *ccci_md_alloc(struct mtk_pci_dev *mtk_dev)
 {
-	struct ccci_modem *md = mtk_dev->md;
+	struct mtk_modem *md;
 
-	ccci_md_reset(md);
+	md = devm_kzalloc(&mtk_dev->pdev->dev, sizeof(*md), GFP_KERNEL);
+	if (!md)
+		return NULL;
+
+	md->md_info = devm_kzalloc(&mtk_dev->pdev->dev, sizeof(*md->md_info), GFP_KERNEL);
+	if (!md->md_info)
+		return NULL;
+
+	md->mtk_dev = mtk_dev;
+	mtk_dev->md = md;
+	atomic_set(&md->core_md.ready, 0);
+	atomic_set(&md->core_md.handshake_ongoing, 0);
+	md->handshake_wq = alloc_workqueue("%s",
+					   WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI,
+					   0, "md_hk_wq");
+	if (!md->handshake_wq)
+		return NULL;
+
+	INIT_WORK(&md->handshake_work, md_hk_wq);
+	md->core_md.feature_set[RT_ID_MD_PORT_ENUM] &= ~FEATURE_MSK;
+	md->core_md.feature_set[RT_ID_MD_PORT_ENUM] |=
+		FIELD_PREP(FEATURE_MSK, MTK_FEATURE_MUST_BE_SUPPORTED);
+
+	atomic_set(&md->core_sap.ready, 0);
+	atomic_set(&md->core_sap.handshake_ongoing, 0);
+	md->sap_handshake_wq =
+		alloc_workqueue("%s", WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI, 
+					   0, "sap_hk_wq");
+	if (!md->sap_handshake_wq)
+		return NULL;
+	INIT_WORK(&md->sap_handshake_work, sap_hk_wq);
+	md->core_sap.feature_set[RT_ID_SAP_PORT_ENUM] &= ~FEATURE_MSK;
+	md->core_sap.feature_set[RT_ID_SAP_PORT_ENUM] |= 
+		FIELD_PREP(FEATURE_MSK, MTK_FEATURE_MUST_BE_SUPPORTED);
+
+	return md;
+}
+
+void mtk_md_reset(struct mtk_pci_dev *mtk_dev)
+{
+	struct mtk_modem *md;
+
+	md = mtk_dev->md;
+	md->md_init_finish = false;
 	md_structure_reset(md);
 	ccci_fsm_reset();
-	ccci_cldma_reset();
-	port_reset();
-	md->md_init_finish = 1;
+	cldma_reset(ID_CLDMA1);
+	cldma_reset(ID_CLDMA0);
+	port_proxy_reset(&mtk_dev->pdev->dev);
+	md->md_init_finish = true;
 	core_reset(md);
-
-	return 0;
 }
 
-int ccci_modem_init(struct mtk_pci_dev *mtk_dev)
+/**
+ * mtk_md_init() - Initialize modem
+ * @mtk_dev: MTK device
+ *
+ * Allocate and initialize MD ctrl block, and initialize data path
+ * Register MHCCIF ISR and RGU ISR, and start the state machine
+ *
+ * Return: 0 on success or -ENOMEM on allocation failure
+ */
+int mtk_md_init(struct mtk_pci_dev *mtk_dev)
 {
-	struct ccci_modem *md;
+	struct ccci_fsm_ctl *fsm_ctl;
+	struct mtk_modem *md;
 	int ret;
 
 	/* allocate and initialize md ctrl memory */
@@ -807,73 +778,80 @@ int ccci_modem_init(struct mtk_pci_dev *mtk_dev)
 	if (!md)
 		return -ENOMEM;
 
-	ret = ccci_cldma_alloc(mtk_dev);
+	ret = cldma_alloc(ID_CLDMA1, mtk_dev);
 	if (ret)
-		goto err_cldma_alloc;
+		goto err_alloc;
+
+	ret = cldma_alloc(ID_CLDMA0, mtk_dev);
+	if (ret)
+		goto err_alloc;
 
 	/* initialize md ctrl block */
 	md_structure_reset(md);
 
-	ret = ccci_md_register(&mtk_dev->pdev->dev, md);
+	ret = ccci_fsm_init(md);
 	if (ret)
-		goto err_md_register;
+		goto err_alloc;
 
 	/* init the data path */
 	ret = ccmni_init(mtk_dev);
 	if (ret)
+		goto err_fsm_init;
+
+	ret = cldma_init(ID_CLDMA1);
+	if (ret)
 		goto err_ccmni_init;
 
-	ret = ccci_cldma_init(ID_CLDMA1);
+	ret = cldma_init(ID_CLDMA0);
 	if (ret)
 		goto err_cldma_init;
 
-	start_device(mtk_dev);
-	md_sys1_sw_init(mtk_dev);
+	ret = port_proxy_init(mtk_dev->md);
+	if (ret)
+		goto err_cldma_init;
 
-	md->md_init_finish = 1;
+	fsm_ctl = fsm_get_entry();
+	fsm_append_command(fsm_ctl, CCCI_COMMAND_START, 0);
+
+	md_sys_sw_init(mtk_dev);
+
+	md->md_init_finish = true;
 	return 0;
 
 err_cldma_init:
-	ccmni_exit(mtk_dev);
+	cldma_exit(ID_CLDMA1);
 err_ccmni_init:
-	ccci_md_unregister(md);
-err_md_register:
-	ccci_cldma_exit(ID_CLDMA1);
-err_cldma_alloc:
-	kfree(md->md_info);
-	kfree(md);
+	ccmni_exit(mtk_dev);
+err_fsm_init:
+	ccci_fsm_uninit();
+err_alloc:
+	destroy_workqueue(md->handshake_wq);
+	destroy_workqueue(md->sap_handshake_wq);
 
-	dev_err(&mtk_dev->pdev->dev, "modem init failed.\n");
-
+	dev_err(&mtk_dev->pdev->dev, "modem init failed\n");
 	return ret;
 }
 
-int ccci_modem_exit(struct mtk_pci_dev *mtk_dev)
+void mtk_md_exit(struct mtk_pci_dev *mtk_dev)
 {
-	struct ccci_modem *md = mtk_dev->md;
+	struct mtk_modem *md = mtk_dev->md;
 	struct ccci_fsm_ctl *fsm_ctl;
 
-	if (!md)
-		return 0;
+	md = mtk_dev->md;
 
-	mtk_clear_set_int_type(mtk_dev, SAP_RGU_INT, true);
+	mtk_pcie_mac_clear_int(mtk_dev, SAP_RGU_INT);
 
-	if (md->md_init_finish) {
-		fsm_ctl = fsm_get_entry();
-		/* change fsm state, stopping will auto jump to stopped */
-		fsm_append_command(fsm_ctl, CCCI_COMMAND_PRE_STOP, 1);
+	if (!md->md_init_finish)
+		return;
 
-		/* remove the data path */
-		ccmni_exit(mtk_dev);
-
-		ccci_md_unregister(md);
-
-		ccci_cldma_exit(ID_CLDMA1);
-	}
-
-	mtk_dev->md = NULL;
-	kfree_sensitive(md->md_info);
-	kfree_sensitive(md);
-
-	return 0;
+	fsm_ctl = fsm_get_entry();
+	/* change FSM state, will auto jump to stopped */
+	fsm_append_command(fsm_ctl, CCCI_COMMAND_PRE_STOP, 1);
+	port_proxy_uninit();
+	cldma_exit(ID_CLDMA0);
+	cldma_exit(ID_CLDMA1);
+	ccmni_exit(mtk_dev);
+	ccci_fsm_uninit();
+	destroy_workqueue(md->handshake_wq);
+	destroy_workqueue(md->sap_handshake_wq);
 }

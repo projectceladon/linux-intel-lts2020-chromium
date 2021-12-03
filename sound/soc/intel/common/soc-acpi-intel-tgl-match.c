@@ -320,7 +320,7 @@ static const struct snd_soc_acpi_codecs tgl_rt1011_amp = {
 	.codecs = {"10EC1011"}
 };
 
-static struct snd_soc_acpi_codecs tgl_rt5682_rt5682s_hp = {
+static const struct snd_soc_acpi_codecs tgl_rt5682_rt5682s_hp = {
 	.num_codecs = 2,
 	.codecs = {"10EC5682", "RTL5682"},
 };
@@ -328,7 +328,7 @@ static struct snd_soc_acpi_codecs tgl_rt5682_rt5682s_hp = {
 struct snd_soc_acpi_mach snd_soc_acpi_intel_tgl_machines[] = {
 	{
 		.comp_ids = &tgl_rt5682_rt5682s_hp,
-		.drv_name = "tgl_mx98357a_rt5682",
+		.drv_name = "tgl_mx98357_rt5682",
 		.machine_quirk = snd_soc_acpi_codec_list,
 		.quirk_data = &tgl_codecs,
 		.sof_fw_filename = "sof-tgl.ri",

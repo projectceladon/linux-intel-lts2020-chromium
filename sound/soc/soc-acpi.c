@@ -10,7 +10,7 @@
 
 static bool snd_soc_acpi_id_present(struct snd_soc_acpi_mach *machine)
 {
-	struct snd_soc_acpi_codecs *comp_ids = machine->comp_ids;
+	const struct snd_soc_acpi_codecs *comp_ids = machine->comp_ids;
 	int i;
 
 	if (machine->id[0]) {

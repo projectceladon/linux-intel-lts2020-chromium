@@ -234,6 +234,7 @@ struct oob_data {
 
 struct adv_info {
 	struct list_head list;
+	bool enabled;
 	bool pending;
 	__u8	instance;
 	__u32	flags;
@@ -577,8 +578,6 @@ struct hci_dev {
 	__u8			cur_adv_instance;
 	__u16			adv_instance_timeout;
 	struct delayed_work	adv_instance_expire;
-	/* We can have a single directed advertisement using adv handle 0 */
-	bool			ext_directed_advertising;
 
 	struct idr		adv_monitors_idr;
 	unsigned int		adv_monitors_cnt;
@@ -651,6 +650,7 @@ struct hci_conn {
 	__u8		init_addr_type;
 	bdaddr_t	resp_addr;
 	__u8		resp_addr_type;
+	__u8		adv_instance;
 	__u16		handle;
 	__u16		state;
 	__u8		mode;
