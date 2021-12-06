@@ -2251,6 +2251,7 @@
   smp_call_function
   smp_call_function_any
   smp_call_function_single
+  smp_call_function_single_async
   snd_card_free
   snd_card_new
   snd_card_register
@@ -2569,6 +2570,7 @@
   __traceiter_android_vh_logbuf_pr_cont
   __traceiter_android_vh_printk_hotplug
   __traceiter_android_vh_rproc_recovery
+  __traceiter_android_vh_rproc_recovery_set
   __traceiter_android_vh_scheduler_tick
   __traceiter_android_vh_show_max_freq
   __traceiter_android_vh_show_resume_epoch_val
@@ -2686,6 +2688,7 @@
   __tracepoint_android_vh_psi_event
   __tracepoint_android_vh_psi_group
   __tracepoint_android_vh_rproc_recovery
+  __tracepoint_android_vh_rproc_recovery_set
   __tracepoint_android_vh_scheduler_tick
   __tracepoint_android_vh_shmem_alloc_page
   __tracepoint_android_vh_show_max_freq

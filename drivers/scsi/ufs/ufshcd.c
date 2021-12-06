@@ -202,7 +202,8 @@ ufs_get_desired_pm_lvl_for_dev_link_state(enum ufs_dev_pwr_mode dev_state,
 static struct ufs_dev_fix ufs_fixups[] = {
 	/* UFS cards deviations table */
 	UFS_FIX(UFS_VENDOR_MICRON, UFS_ANY_MODEL,
-		UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM),
+		UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM |
+		UFS_DEVICE_QUIRK_SWAP_L2P_ENTRY_FOR_HPB_READ),
 	UFS_FIX(UFS_VENDOR_SAMSUNG, UFS_ANY_MODEL,
 		UFS_DEVICE_QUIRK_DELAY_BEFORE_LPM |
 		UFS_DEVICE_QUIRK_HOST_PA_TACTIVATE |
@@ -2930,12 +2931,7 @@ static int ufshcd_exec_dev_cmd(struct ufs_hba *hba,
 
 	down_read(&hba->clk_scaling_lock);
 
-	/*
-	 * Get free slot, sleep if slots are unavailable.
-	 * Even though we use wait_event() which sleeps indefinitely,
-	 * the maximum wait time is bounded by SCSI request timeout.
-	 */
-	req = blk_get_request(q, REQ_OP_DRV_OUT, 0);
+	req = blk_mq_alloc_request(q, REQ_OP_DRV_OUT, BLK_MQ_REQ_RESERVED);
 	if (IS_ERR(req)) {
 		err = PTR_ERR(req);
 		goto out_unlock;
@@ -4902,11 +4898,7 @@ static int ufshcd_slave_alloc(struct scsi_device *sdev)
  */
 static int ufshcd_change_queue_depth(struct scsi_device *sdev, int depth)
 {
-	struct ufs_hba *hba = shost_priv(sdev->host);
-
-	if (depth > hba->nutrs)
-		depth = hba->nutrs;
-	return scsi_change_queue_depth(sdev, depth);
+	return scsi_change_queue_depth(sdev, min(depth, sdev->host->can_queue));
 }
 
 static void ufshcd_hpb_destroy(struct ufs_hba *hba, struct scsi_device *sdev)
@@ -6369,6 +6361,7 @@ static irqreturn_t ufshcd_check_errors(struct ufs_hba *hba, u32 intr_status)
  */
 static irqreturn_t ufshcd_tmc_handler(struct ufs_hba *hba)
 {
+	struct request **tmf_rqs = ufs_hba_add_info(hba)->tmf_rqs;
 	unsigned long flags, pending, issued;
 	irqreturn_t ret = IRQ_NONE;
 	int tag;
@@ -6378,7 +6371,7 @@ static irqreturn_t ufshcd_tmc_handler(struct ufs_hba *hba)
 	spin_lock_irqsave(hba->host->host_lock, flags);
 	issued = hba->outstanding_tasks & ~pending;
 	for_each_set_bit(tag, &issued, hba->nutmrs) {
-		struct request *req = hba->tmf_rqs[tag];
+		struct request *req = tmf_rqs[tag];
 		struct completion *c = req->end_io_data;
 
 		complete(c);
@@ -6512,7 +6505,7 @@ static int __ufshcd_issue_tm_cmd(struct ufs_hba *hba,
 	spin_lock_irqsave(host->host_lock, flags);
 
 	task_tag = req->tag;
-	hba->tmf_rqs[req->tag] = req;
+	tmf_rqs[req->tag] = req;
 	treq->req_header.dword_0 |= cpu_to_be32(task_tag);
 
 	memcpy(hba->utmrdl_base_addr + task_tag, treq, sizeof(*treq));
@@ -6551,7 +6544,7 @@ static int __ufshcd_issue_tm_cmd(struct ufs_hba *hba,
 	}
 
 	spin_lock_irqsave(hba->host->host_lock, flags);
-	hba->tmf_rqs[req->tag] = NULL;
+	tmf_rqs[req->tag] = NULL;
 	__clear_bit(task_tag, &hba->outstanding_tasks);
 	spin_unlock_irqrestore(hba->host->host_lock, flags);
 
@@ -9395,9 +9388,9 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 		err = PTR_ERR(hba->tmf_queue);
 		goto free_tmf_tag_set;
 	}
-	hba->tmf_rqs = devm_kcalloc(hba->dev, hba->nutmrs,
-				    sizeof(*hba->tmf_rqs), GFP_KERNEL);
-	if (!hba->tmf_rqs) {
+	*tmf_rqs = devm_kcalloc(hba->dev, hba->nutmrs, sizeof(**tmf_rqs),
+				GFP_KERNEL);
+	if (!*tmf_rqs) {
 		err = -ENOMEM;
 		goto free_tmf_queue;
 	}

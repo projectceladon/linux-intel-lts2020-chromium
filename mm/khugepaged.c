@@ -458,7 +458,7 @@ static bool hugepage_vma_check(struct vm_area_struct *vma,
 	/* Only regular file is valid */
 	if (IS_ENABLED(CONFIG_READ_ONLY_THP_FOR_FS) && vma->vm_file &&
 	    !inode_is_open_for_write(vma->vm_file->f_inode) &&
-	    (vm_flags & VM_DENYWRITE)) {
+	    (vm_flags & VM_EXEC)) {
 		struct inode *inode = vma->vm_file->f_inode;
 
 		return S_ISREG(inode->i_mode);
