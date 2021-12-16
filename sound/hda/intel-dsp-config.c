@@ -430,8 +430,9 @@ int snd_intel_dsp_driver_probe(struct pci_dev *pci)
 	case 0x2284: /* Braswell */
 		return SND_INTEL_DSP_DRIVER_ANY;
 	}
-
+        printk("LOGS_ENABLE dsp_driver value is %d\n", dsp_driver);
 	if (dsp_driver > 0 && dsp_driver <= SND_INTEL_DSP_DRIVER_LAST)
+        printk("LOGS_ENABLE dsp_driver value is %d\n", dsp_driver);
 		return dsp_driver;
 
 	/*
