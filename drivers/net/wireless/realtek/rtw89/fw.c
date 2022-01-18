@@ -91,7 +91,6 @@ static int rtw89_fw_hdr_parser(struct rtw89_dev *rtwdev, const u8 *fw, u32 len,
 	info->section_num = GET_FW_HDR_SEC_NUM(fw);
 	info->hdr_len = RTW89_FW_HDR_SIZE +
 			info->section_num * RTW89_FW_SECTION_HDR_SIZE;
-	SET_FW_HDR_PART_SIZE(fw, FWDL_SECTION_PER_PKT_LEN);
 
 	bin = fw + info->hdr_len;
 
@@ -194,6 +193,16 @@ int __rtw89_fw_recognize(struct rtw89_dev *rtwdev, enum rtw89_fw_type type)
 	return 0;
 }
 
+static void rtw89_fw_recognize_features(struct rtw89_dev *rtwdev)
+{
+	const struct rtw89_chip_info *chip = rtwdev->chip;
+	struct rtw89_fw_suit *fw_suit = rtw89_fw_suit_get(rtwdev, RTW89_FW_NORMAL);
+
+	if (chip->chip_id == RTL8852A &&
+	    RTW89_FW_SUIT_VER_CODE(fw_suit) <= RTW89_FW_VER_CODE(0, 13, 29, 0))
+		rtwdev->fw.old_ht_ra_format = true;
+}
+
 int rtw89_fw_recognize(struct rtw89_dev *rtwdev)
 {
 	int ret;
@@ -204,6 +213,8 @@ int rtw89_fw_recognize(struct rtw89_dev *rtwdev)
 
 	/* It still works if wowlan firmware isn't existing. */
 	__rtw89_fw_recognize(rtwdev, RTW89_FW_WOWLAN);
+
+	rtw89_fw_recognize_features(rtwdev);
 
 	return 0;
 }
@@ -263,6 +274,7 @@ static int __rtw89_fw_download_hdr(struct rtw89_dev *rtwdev, const u8 *fw, u32 l
 	}
 
 	skb_put_data(skb, fw, len);
+	SET_FW_HDR_PART_SIZE(skb->data, FWDL_SECTION_PER_PKT_LEN);
 	rtw89_h2c_pkt_set_hdr_fwdl(rtwdev, skb, FWCMD_TYPE_H2C,
 				   H2C_CAT_MAC, H2C_CL_MAC_FWDL,
 				   H2C_FUNC_MAC_FWHDR_DL, len);
@@ -511,7 +523,8 @@ void rtw89_unload_firmware(struct rtw89_dev *rtwdev)
 }
 
 #define H2C_CAM_LEN 60
-int rtw89_fw_h2c_cam(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
+int rtw89_fw_h2c_cam(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
+		     struct rtw89_sta *rtwsta, const u8 *scan_mac_addr)
 {
 	struct sk_buff *skb;
 
@@ -521,7 +534,7 @@ int rtw89_fw_h2c_cam(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif)
 		return -ENOMEM;
 	}
 	skb_put(skb, H2C_CAM_LEN);
-	rtw89_cam_fill_addr_cam_info(rtwdev, rtwvif, skb->data);
+	rtw89_cam_fill_addr_cam_info(rtwdev, rtwvif, rtwsta, scan_mac_addr, skb->data);
 	rtw89_cam_fill_bssid_cam_info(rtwdev, rtwvif, skb->data);
 
 	rtw89_h2c_pkt_set_hdr(rtwdev, skb, FWCMD_TYPE_H2C,
@@ -807,6 +820,7 @@ int rtw89_fw_h2c_assoc_cmac_tbl(struct rtw89_dev *rtwdev,
 				struct ieee80211_vif *vif,
 				struct ieee80211_sta *sta)
 {
+	struct rtw89_hal *hal = &rtwdev->hal;
 	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
 	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
 	struct sk_buff *skb;
@@ -825,6 +839,10 @@ int rtw89_fw_h2c_assoc_cmac_tbl(struct rtw89_dev *rtwdev,
 	SET_CTRL_INFO_OPERATION(skb->data, 1);
 	SET_CMC_TBL_DISRTSFB(skb->data, 1);
 	SET_CMC_TBL_DISDATAFB(skb->data, 1);
+	if (hal->current_band_type == RTW89_BAND_2G)
+		SET_CMC_TBL_RTS_RTY_LOWEST_RATE(skb->data, RTW89_HW_RATE_CCK1);
+	else
+		SET_CMC_TBL_RTS_RTY_LOWEST_RATE(skb->data, RTW89_HW_RATE_OFDM6);
 	SET_CMC_TBL_RTS_TXCNT_LMT_SEL(skb->data, 0);
 	SET_CMC_TBL_DATA_TXCNT_LMT_SEL(skb->data, 0);
 	if (vif->type == NL80211_IFTYPE_STATION)
@@ -1431,6 +1449,30 @@ fail:
 	dev_kfree_skb_any(skb);
 
 	return -EBUSY;
+}
+
+void rtw89_fw_send_all_early_h2c(struct rtw89_dev *rtwdev)
+{
+	struct rtw89_early_h2c *early_h2c;
+
+	lockdep_assert_held(&rtwdev->mutex);
+
+	list_for_each_entry(early_h2c, &rtwdev->early_h2c_list, list) {
+		rtw89_fw_h2c_raw(rtwdev, early_h2c->h2c, early_h2c->h2c_len);
+	}
+}
+
+void rtw89_fw_free_all_early_h2c(struct rtw89_dev *rtwdev)
+{
+	struct rtw89_early_h2c *early_h2c, *tmp;
+
+	mutex_lock(&rtwdev->mutex);
+	list_for_each_entry_safe(early_h2c, tmp, &rtwdev->early_h2c_list, list) {
+		list_del(&early_h2c->list);
+		kfree(early_h2c->h2c);
+		kfree(early_h2c);
+	}
+	mutex_unlock(&rtwdev->mutex);
 }
 
 void rtw89_fw_c2h_irqsafe(struct rtw89_dev *rtwdev, struct sk_buff *c2h)

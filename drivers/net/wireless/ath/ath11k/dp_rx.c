@@ -142,6 +142,18 @@ static u32 ath11k_dp_rx_h_attn_mpdu_err(struct rx_attention *attn)
 	return errmap;
 }
 
+static bool ath11k_dp_rx_h_attn_msdu_len_err(struct ath11k_base *ab,
+					     struct hal_rx_desc *desc)
+{
+	struct rx_attention *rx_attention;
+	u32 errmap;
+
+	rx_attention = ath11k_dp_rx_get_attention(ab, desc);
+	errmap = ath11k_dp_rx_h_attn_mpdu_err(rx_attention);
+
+	return errmap & DP_RX_MPDU_ERR_MSDU_LEN;
+}
+
 static u16 ath11k_dp_rx_h_msdu_start_msdu_len(struct ath11k_base *ab,
 					      struct hal_rx_desc *desc)
 {
@@ -1406,11 +1418,6 @@ ath11k_update_per_peer_tx_stats(struct ath11k *ar,
 	 * Firmware rate's control to be skipped for this?
 	 */
 
-	if (flags == WMI_RATE_PREAMBLE_HE && mcs > 11) {
-		ath11k_warn(ab, "Invalid HE mcs %d peer stats",  mcs);
-		return;
-	}
-
 	if (flags == WMI_RATE_PREAMBLE_HE && mcs > ATH11K_HE_MCS_MAX) {
 		ath11k_warn(ab, "Invalid HE mcs %d peer stats",  mcs);
 		return;
@@ -2466,6 +2473,12 @@ static int ath11k_dp_rx_process_msdu(struct ath11k *ar,
 	}
 
 	rx_desc = (struct hal_rx_desc *)msdu->data;
+	if (ath11k_dp_rx_h_attn_msdu_len_err(ab, rx_desc)) {
+		ath11k_warn(ar->ab, "msdu len not valid\n");
+		ret = -EIO;
+		goto free_out;
+	}
+
 	lrx_desc = (struct hal_rx_desc *)last_buf->data;
 	rx_attention = ath11k_dp_rx_get_attention(ab, lrx_desc);
 	if (!ath11k_dp_rx_h_attn_msdu_done(rx_attention)) {
@@ -2977,6 +2990,8 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
 	struct ath11k_peer *peer;
 	struct ath11k_sta *arsta;
 	int num_buffs_reaped = 0;
+	u32 rx_buf_sz;
+	u16 log_type = 0;
 
 	__skb_queue_head_init(&skb_list);
 
@@ -2989,8 +3004,16 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
 		memset(&ppdu_info, 0, sizeof(ppdu_info));
 		ppdu_info.peer_id = HAL_INVALID_PEERID;
 
-		if (ath11k_debugfs_is_pktlog_rx_stats_enabled(ar))
-			trace_ath11k_htt_rxdesc(ar, skb->data, DP_RX_BUFFER_SIZE);
+		if (ath11k_debugfs_is_pktlog_lite_mode_enabled(ar)) {
+			log_type = ATH11K_PKTLOG_TYPE_LITE_RX;
+			rx_buf_sz = DP_RX_BUFFER_SIZE_LITE;
+		} else if (ath11k_debugfs_is_pktlog_rx_stats_enabled(ar)) {
+			log_type = ATH11K_PKTLOG_TYPE_RX_STATBUF;
+			rx_buf_sz = DP_RX_BUFFER_SIZE;
+		}
+
+		if (log_type)
+			trace_ath11k_htt_rxdesc(ar, skb->data, log_type, rx_buf_sz);
 
 		hal_status = ath11k_hal_rx_parse_mon_status(ab, &ppdu_info, skb);
 
@@ -3018,7 +3041,7 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
 		ath11k_dp_rx_update_peer_stats(arsta, &ppdu_info);
 
 		if (ath11k_debugfs_is_pktlog_peer_valid(ar, peer->addr))
-			trace_ath11k_htt_rxdesc(ar, skb->data, DP_RX_BUFFER_SIZE);
+			trace_ath11k_htt_rxdesc(ar, skb->data, log_type, rx_buf_sz);
 
 		spin_unlock_bh(&ab->base_lock);
 		rcu_read_unlock();
@@ -4748,15 +4771,13 @@ ath11k_dp_rx_mon_merg_msdus(struct ath11k *ar,
 			    struct ieee80211_rx_status *rxs)
 {
 	struct ath11k_base *ab = ar->ab;
-	struct sk_buff *msdu, *mpdu_buf, *prev_buf;
+	struct sk_buff *msdu, *prev_buf;
 	u32 wifi_hdr_len;
 	struct hal_rx_desc *rx_desc;
 	char *hdr_desc;
 	u8 *dest, decap_format;
 	struct ieee80211_hdr_3addr *wh;
 	struct rx_attention *rx_attention;
-
-	mpdu_buf = NULL;
 
 	if (!head_msdu)
 		goto err_merge_fail;
@@ -4840,12 +4861,6 @@ ath11k_dp_rx_mon_merg_msdus(struct ath11k *ar,
 	return head_msdu;
 
 err_merge_fail:
-	if (mpdu_buf && decap_format != DP_RX_DECAP_TYPE_RAW) {
-		ath11k_dbg(ab, ATH11K_DBG_DATA,
-			   "err_merge_fail mpdu_buf %pK", mpdu_buf);
-		/* Free the head buffer */
-		dev_kfree_skb_any(mpdu_buf);
-	}
 	return NULL;
 }
 
@@ -5037,7 +5052,7 @@ int ath11k_dp_rx_process_mon_rings(struct ath11k_base *ab, int mac_id,
 	struct ath11k *ar = ath11k_ab_to_ar(ab, mac_id);
 	int ret = 0;
 
-	if (test_bit(ATH11K_FLAG_MONITOR_ENABLED, &ar->monitor_flags))
+	if (test_bit(ATH11K_FLAG_MONITOR_STARTED, &ar->monitor_flags))
 		ret = ath11k_dp_mon_process_rx(ab, mac_id, napi, budget);
 	else
 		ret = ath11k_dp_rx_process_mon_status(ab, mac_id, napi, budget);

@@ -739,7 +739,6 @@ static const struct uvc_control_mapping uvc_ctrl_mappings[] = {
 	},
 	{
 		.id		= V4L2_CID_REGION_OF_INTEREST_AUTO,
-		.name		= "Region of Interest (auto)",
 		.entity		= UVC_GUID_UVC_CAMERA,
 		.selector	= UVC_CT_REGION_OF_INTEREST_CONTROL,
 		.size		= 16,
@@ -1657,8 +1656,8 @@ static int uvc_ctrl_find_ctrl_idx(struct uvc_entity *entity,
 				  struct v4l2_ext_controls *ctrls,
 				  struct uvc_control *uvc_control)
 {
-	struct uvc_control_mapping *mapping;
-	struct uvc_control *ctrl_found;
+	struct uvc_control_mapping *mapping = NULL;
+	struct uvc_control *ctrl_found = NULL;
 	unsigned int i;
 
 	if (!entity)

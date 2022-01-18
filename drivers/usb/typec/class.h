@@ -58,11 +58,6 @@ struct typec_port {
 
 	const struct typec_capability	*cap;
 	const struct typec_operations   *ops;
-
-	struct list_head		port_list;
-	struct mutex			port_list_lock; /* Port list lock */
-
-	void				*pld;
 	ANDROID_KABI_RESERVE(1);
 };
 
@@ -84,7 +79,12 @@ extern const struct device_type typec_port_dev_type;
 extern struct class typec_mux_class;
 extern struct class typec_class;
 
+#if defined(CONFIG_ACPI)
 int typec_link_ports(struct typec_port *connector);
 void typec_unlink_ports(struct typec_port *connector);
+#else
+static inline int typec_link_ports(struct typec_port *connector) { return 0; }
+static inline void typec_unlink_ports(struct typec_port *connector) { }
+#endif
 
 #endif /* __USB_TYPEC_CLASS__ */

@@ -252,6 +252,11 @@ static const struct config_entry config_table[] = {
 		.flags = FLAG_SOF | FLAG_SOF_ONLY_IF_DMIC_OR_SOUNDWIRE,
 		.device = 0x02c8,
 	},
+	{
+		.flags = FLAG_SOF,
+		.device = 0x02c8,
+		.codec_hid = "ESSX8336",
+	},
 /* Cometlake-H */
 	{
 		.flags = FLAG_SOF,
@@ -276,6 +281,11 @@ static const struct config_entry config_table[] = {
 		.flags = FLAG_SOF | FLAG_SOF_ONLY_IF_DMIC_OR_SOUNDWIRE,
 		.device = 0x06c8,
 	},
+		{
+		.flags = FLAG_SOF,
+		.device = 0x06c8,
+		.codec_hid = "ESSX8336",
+	},
 #endif
 
 /* Icelake */
@@ -296,6 +306,15 @@ static const struct config_entry config_table[] = {
 	{
 		.flags = FLAG_SOF | FLAG_SOF_ONLY_IF_DMIC_OR_SOUNDWIRE,
 		.device = 0x34c8,
+	},
+#endif
+
+/* JasperLake */
+#if IS_ENABLED(CONFIG_SND_SOC_SOF_JASPERLAKE)
+	{
+		.flags = FLAG_SOF,
+		.device = 0x4dc8,
+		.codec_hid = "ESSX8336",
 	},
 #endif
 
@@ -375,12 +394,12 @@ static const struct config_entry *snd_intel_dsp_find_config
 
 static int snd_intel_dsp_check_dmic(struct pci_dev *pci)
 {
-	struct nhlt_acpi_table *nhlt;
+	struct acpi_table_nhlt *nhlt;
 	int ret = 0;
 
 	nhlt = intel_nhlt_init(&pci->dev);
 	if (nhlt) {
-		if (intel_nhlt_get_dmic_geo(&pci->dev, nhlt))
+		if (intel_nhlt_has_endpoint_type(nhlt, NHLT_LINK_DMIC))
 			ret = 1;
 		intel_nhlt_free(nhlt);
 	}

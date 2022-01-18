@@ -242,6 +242,7 @@ void rtw89_set_channel(struct rtw89_dev *rtwdev)
 
 	hal->current_band_width = bandwidth;
 	hal->current_channel = center_chan;
+	hal->prev_primary_channel = hal->current_primary_channel;
 	hal->current_primary_channel = ch_param.primary_chan;
 	hal->current_band_type = band_type;
 
@@ -544,6 +545,10 @@ static void
 rtw89_core_tx_update_data_info(struct rtw89_dev *rtwdev,
 			       struct rtw89_core_tx_request *tx_req)
 {
+	struct ieee80211_vif *vif = tx_req->vif;
+	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
+	struct rtw89_phy_rate_pattern *rate_pattern = &rtwvif->rate_pattern;
+	struct rtw89_hal *hal = &rtwdev->hal;
 	struct rtw89_tx_desc_info *desc_info = &tx_req->desc_info;
 	struct sk_buff *skb = tx_req->skb;
 	u8 tid, tid_indicate;
@@ -565,6 +570,13 @@ rtw89_core_tx_update_data_info(struct rtw89_dev *rtwdev,
 		rtw89_core_tx_update_ampdu_info(rtwdev, tx_req, tid);
 	if (IEEE80211_SKB_CB(skb)->control.hw_key)
 		rtw89_core_tx_update_sec_key(rtwdev, tx_req);
+
+	if (rate_pattern->enable)
+		desc_info->data_retry_lowest_rate = rate_pattern->rate;
+	else if (hal->current_band_type == RTW89_BAND_2G)
+		desc_info->data_retry_lowest_rate = RTW89_HW_RATE_CCK1;
+	else
+		desc_info->data_retry_lowest_rate = RTW89_HW_RATE_OFDM6;
 }
 
 static enum btc_pkt_type
@@ -593,6 +605,12 @@ rtw89_core_tx_btc_spec_pkt_notify(struct rtw89_dev *rtwdev,
 			ieee80211_queue_work(rtwdev->hw, &rtwdev->btc.dhcp_notify_work);
 			return PACKET_DHCP;
 		}
+	}
+
+	if (skb->protocol == htons(ETH_P_IP) &&
+	    ip_hdr(skb)->protocol == IPPROTO_ICMP) {
+		ieee80211_queue_work(rtwdev->hw, &rtwdev->btc.icmp_notify_work);
+		return PACKET_ICMP;
 	}
 
 	return PACKET_MAX;
@@ -706,38 +724,93 @@ int rtw89_core_tx_write(struct rtw89_dev *rtwdev, struct ieee80211_vif *vif,
 	return 0;
 }
 
+static __le32 rtw89_build_txwd_body0(struct rtw89_tx_desc_info *desc_info)
+{
+	u32 dword = FIELD_PREP(RTW89_TXWD_BODY0_WP_OFFSET, desc_info->wp_offset) |
+		    FIELD_PREP(RTW89_TXWD_BODY0_WD_INFO_EN, desc_info->en_wd_info) |
+		    FIELD_PREP(RTW89_TXWD_BODY0_CHANNEL_DMA, desc_info->ch_dma) |
+		    FIELD_PREP(RTW89_TXWD_BODY0_HDR_LLC_LEN, desc_info->hdr_llc_len) |
+		    FIELD_PREP(RTW89_TXWD_BODY0_WD_PAGE, desc_info->wd_page) |
+		    FIELD_PREP(RTW89_TXWD_BODY0_FW_DL, desc_info->fw_dl);
+
+	return cpu_to_le32(dword);
+}
+
+static __le32 rtw89_build_txwd_body2(struct rtw89_tx_desc_info *desc_info)
+{
+	u32 dword = FIELD_PREP(RTW89_TXWD_BODY2_TID_INDICATE, desc_info->tid_indicate) |
+		    FIELD_PREP(RTW89_TXWD_BODY2_QSEL, desc_info->qsel) |
+		    FIELD_PREP(RTW89_TXWD_BODY2_TXPKT_SIZE, desc_info->pkt_size);
+
+	return cpu_to_le32(dword);
+}
+
+static __le32 rtw89_build_txwd_body3(struct rtw89_tx_desc_info *desc_info)
+{
+	u32 dword = FIELD_PREP(RTW89_TXWD_BODY3_SW_SEQ, desc_info->seq) |
+		    FIELD_PREP(RTW89_TXWD_BODY3_AGG_EN, desc_info->agg_en) |
+		    FIELD_PREP(RTW89_TXWD_BODY3_BK, desc_info->bk);
+
+	return cpu_to_le32(dword);
+}
+
+static __le32 rtw89_build_txwd_info0(struct rtw89_tx_desc_info *desc_info)
+{
+	u32 dword = FIELD_PREP(RTW89_TXWD_INFO0_USE_RATE, desc_info->use_rate) |
+		    FIELD_PREP(RTW89_TXWD_INFO0_DATA_RATE, desc_info->data_rate) |
+		    FIELD_PREP(RTW89_TXWD_INFO0_DISDATAFB, desc_info->dis_data_fb);
+
+	return cpu_to_le32(dword);
+}
+
+static __le32 rtw89_build_txwd_info1(struct rtw89_tx_desc_info *desc_info)
+{
+	u32 dword = FIELD_PREP(RTW89_TXWD_INFO1_MAX_AGGNUM, desc_info->ampdu_num) |
+		    FIELD_PREP(RTW89_TXWD_INFO1_A_CTRL_BSR, desc_info->a_ctrl_bsr) |
+		    FIELD_PREP(RTW89_TXWD_INFO1_DATA_RTY_LOWEST_RATE,
+			       desc_info->data_retry_lowest_rate);
+
+	return cpu_to_le32(dword);
+}
+
+static __le32 rtw89_build_txwd_info2(struct rtw89_tx_desc_info *desc_info)
+{
+	u32 dword = FIELD_PREP(RTW89_TXWD_INFO2_AMPDU_DENSITY, desc_info->ampdu_density) |
+		    FIELD_PREP(RTW89_TXWD_INFO2_SEC_TYPE, desc_info->sec_type) |
+		    FIELD_PREP(RTW89_TXWD_INFO2_SEC_HW_ENC, desc_info->sec_en) |
+		    FIELD_PREP(RTW89_TXWD_INFO2_SEC_CAM_IDX, desc_info->sec_cam_idx);
+
+	return cpu_to_le32(dword);
+}
+
+static __le32 rtw89_build_txwd_info4(struct rtw89_tx_desc_info *desc_info)
+{
+	u32 dword = FIELD_PREP(RTW89_TXWD_INFO4_RTS_EN, 1) |
+		    FIELD_PREP(RTW89_TXWD_INFO4_HW_RTS_EN, 1);
+
+	return cpu_to_le32(dword);
+}
+
 void rtw89_core_fill_txdesc(struct rtw89_dev *rtwdev,
 			    struct rtw89_tx_desc_info *desc_info,
 			    void *txdesc)
 {
-	RTW89_SET_TXWD_BODY_WP_OFFSET(txdesc, desc_info->wp_offset);
-	RTW89_SET_TXWD_BODY_WD_INFO_EN(txdesc, desc_info->en_wd_info);
-	RTW89_SET_TXWD_BODY_CHANNEL_DMA(txdesc, desc_info->ch_dma);
-	RTW89_SET_TXWD_BODY_HDR_LLC_LEN(txdesc, desc_info->hdr_llc_len);
-	RTW89_SET_TXWD_BODY_WD_PAGE(txdesc, desc_info->wd_page);
-	RTW89_SET_TXWD_BODY_FW_DL(txdesc, desc_info->fw_dl);
-	RTW89_SET_TXWD_BODY_SW_SEQ(txdesc, desc_info->seq);
+	struct rtw89_txwd_body *txwd_body = (struct rtw89_txwd_body *)txdesc;
+	struct rtw89_txwd_info *txwd_info;
 
-	RTW89_SET_TXWD_BODY_TID_INDICATE(txdesc, desc_info->tid_indicate);
-	RTW89_SET_TXWD_BODY_QSEL(txdesc, desc_info->qsel);
-	RTW89_SET_TXWD_BODY_TXPKT_SIZE(txdesc, desc_info->pkt_size);
-	RTW89_SET_TXWD_BODY_AGG_EN(txdesc, desc_info->agg_en);
-	RTW89_SET_TXWD_BODY_BK(txdesc, desc_info->bk);
+	txwd_body->dword0 = rtw89_build_txwd_body0(desc_info);
+	txwd_body->dword2 = rtw89_build_txwd_body2(desc_info);
+	txwd_body->dword3 = rtw89_build_txwd_body3(desc_info);
 
 	if (!desc_info->en_wd_info)
 		return;
 
-	RTW89_SET_TXWD_INFO_USE_RATE(txdesc, desc_info->use_rate);
-	RTW89_SET_TXWD_INFO_DATA_RATE(txdesc, desc_info->data_rate);
-	RTW89_SET_TXWD_INFO_DISDATAFB(txdesc, desc_info->dis_data_fb);
-	RTW89_SET_TXWD_INFO_MAX_AGGNUM(txdesc, desc_info->ampdu_num);
-	RTW89_SET_TXWD_INFO_AMPDU_DENSITY(txdesc, desc_info->ampdu_density);
-	RTW89_SET_TXWD_INFO_SEC_TYPE(txdesc, desc_info->sec_type);
-	RTW89_SET_TXWD_INFO_SEC_HW_ENC(txdesc, desc_info->sec_en);
-	RTW89_SET_TXWD_INFO_SEC_CAM_IDX(txdesc, desc_info->sec_cam_idx);
-	RTW89_SET_TXWD_INFO_RTS_EN(txdesc, 1);
-	RTW89_SET_TXWD_INFO_HW_RTS_EN(txdesc, 1);
-	RTW89_SET_TXWD_INFO_A_CTRL_BSR(txdesc, desc_info->a_ctrl_bsr);
+	txwd_info = (struct rtw89_txwd_info *)(txwd_body + 1);
+	txwd_info->dword0 = rtw89_build_txwd_info0(desc_info);
+	txwd_info->dword1 = rtw89_build_txwd_info1(desc_info);
+	txwd_info->dword2 = rtw89_build_txwd_info2(desc_info);
+	txwd_info->dword4 = rtw89_build_txwd_info4(desc_info);
+
 }
 EXPORT_SYMBOL(rtw89_core_fill_txdesc);
 
@@ -809,8 +882,11 @@ static void rtw89_core_parse_phy_status_ie01(struct rtw89_dev *rtwdev, u8 *addr,
 {
 	s16 cfo;
 
+	phy_ppdu->chan_idx = RTW89_GET_PHY_STS_IE01_CH_IDX(addr);
+	if (phy_ppdu->rate < RTW89_HW_RATE_OFDM6)
+		return;
 	/* sign conversion for S(12,2) */
-	cfo = sign_extend32(RTW89_GET_PHY_STS_IE0_CFO(addr), 11);
+	cfo = sign_extend32(RTW89_GET_PHY_STS_IE01_CFO(addr), 11);
 	rtw89_phy_cfo_parse(rtwdev, cfo, phy_ppdu);
 }
 
@@ -836,6 +912,7 @@ static void rtw89_core_update_phy_ppdu(struct rtw89_rx_phy_ppdu *phy_ppdu)
 	s8 *rssi = phy_ppdu->rssi;
 	u8 *buf = phy_ppdu->buf;
 
+	phy_ppdu->ie = RTW89_GET_PHY_STS_IE_MAP(buf);
 	phy_ppdu->rssi_avg = RTW89_GET_PHY_STS_RSSI_AVG(buf);
 	rssi[RF_PATH_A] = RTW89_RSSI_RAW_TO_DBM(RTW89_GET_PHY_STS_RSSI_A(buf));
 	rssi[RF_PATH_B] = RTW89_RSSI_RAW_TO_DBM(RTW89_GET_PHY_STS_RSSI_B(buf));
@@ -864,8 +941,9 @@ static int rtw89_core_rx_parse_phy_sts(struct rtw89_dev *rtwdev,
 	u16 ie_len;
 	u8 *pos, *end;
 
-	if (!phy_ppdu->to_self)
-		return 0;
+	/* mark invalid reports and bypass them */
+	if (phy_ppdu->ie < RTW89_CCK_PKT)
+		return -EINVAL;
 
 	pos = (u8 *)phy_ppdu->buf + PHY_STS_HDR_LEN;
 	end = (u8 *)phy_ppdu->buf + phy_ppdu->len;
@@ -928,9 +1006,7 @@ static bool rtw89_core_rx_ppdu_match(struct rtw89_dev *rtwdev,
 	data_rate_mode = GET_DATA_RATE_MODE(data_rate);
 	if (data_rate_mode == DATA_RATE_MODE_NON_HT) {
 		rate_idx = GET_DATA_RATE_NOT_HT_IDX(data_rate);
-		/* No 4 CCK rates for 5G */
-		if (status->band == NL80211_BAND_5GHZ)
-			rate_idx -= 4;
+		/* rate_idx is still hardware value here */
 	} else if (data_rate_mode == DATA_RATE_MODE_HT) {
 		rate_idx = GET_DATA_RATE_HT_IDX(data_rate);
 	} else if (data_rate_mode == DATA_RATE_MODE_VHT) {
@@ -1009,6 +1085,29 @@ static void rtw89_core_rx_stats(struct rtw89_dev *rtwdev,
 	rtw89_iterate_vifs_bh(rtwdev, rtw89_vif_rx_stats_iter, &iter_data);
 }
 
+static void rtw89_correct_cck_chan(struct rtw89_dev *rtwdev,
+				   struct ieee80211_rx_status *status)
+{
+	u16 chan = rtwdev->hal.prev_primary_channel;
+	u8 band = chan <= 14 ? NL80211_BAND_2GHZ : NL80211_BAND_5GHZ;
+
+	if (status->band != NL80211_BAND_2GHZ &&
+	    status->encoding == RX_ENC_LEGACY &&
+	    status->rate_idx < RTW89_HW_RATE_OFDM6) {
+		status->freq = ieee80211_channel_to_frequency(chan, band);
+		status->band = band;
+	}
+}
+
+static void rtw89_core_hw_to_sband_rate(struct ieee80211_rx_status *rx_status)
+{
+	if (rx_status->band == NL80211_BAND_2GHZ ||
+	    rx_status->encoding != RX_ENC_LEGACY)
+		return;
+	/* No 4 CCK rates for non-2G */
+	rx_status->rate_idx -= 4;
+}
+
 static void rtw89_core_rx_pending_skb(struct rtw89_dev *rtwdev,
 				      struct rtw89_rx_phy_ppdu *phy_ppdu,
 				      struct rtw89_rx_desc_info *desc_info,
@@ -1027,6 +1126,8 @@ static void rtw89_core_rx_pending_skb(struct rtw89_dev *rtwdev,
 		rx_status = IEEE80211_SKB_RXCB(skb_ppdu);
 		if (rtw89_core_rx_ppdu_match(rtwdev, desc_info, rx_status))
 			rtw89_chip_query_ppdu(rtwdev, phy_ppdu, rx_status);
+		rtw89_correct_cck_chan(rtwdev, rx_status);
+		rtw89_core_hw_to_sband_rate(rx_status);
 		rtw89_core_rx_stats(rtwdev, phy_ppdu, desc_info, skb_ppdu);
 		ieee80211_rx_napi(rtwdev->hw, NULL, skb_ppdu, &rtwdev->napi);
 		rtwdev->napi_budget_countdown--;
@@ -1040,6 +1141,7 @@ static void rtw89_core_rx_process_ppdu_sts(struct rtw89_dev *rtwdev,
 	struct rtw89_rx_phy_ppdu phy_ppdu = {.buf = skb->data, .valid = false,
 					     .len = skb->len,
 					     .to_self = desc_info->addr1_match,
+					     .rate = desc_info->data_rate,
 					     .mac_id = desc_info->mac_id};
 	int ret;
 
@@ -1195,12 +1297,7 @@ static void rtw89_core_update_rx_status(struct rtw89_dev *rtwdev,
 	if (data_rate_mode == DATA_RATE_MODE_NON_HT) {
 		rx_status->encoding = RX_ENC_LEGACY;
 		rx_status->rate_idx = GET_DATA_RATE_NOT_HT_IDX(data_rate);
-		/* No 4 CCK rates for 5G */
-		if (rx_status->band == NL80211_BAND_5GHZ)
-			rx_status->rate_idx -= 4;
-		if (rtwdev->scanning)
-			rx_status->rate_idx = min_t(u8, rx_status->rate_idx,
-						    ARRAY_SIZE(rtw89_bitrates) - 5);
+		/* convert rate_idx after we get the correct band */
 	} else if (data_rate_mode == DATA_RATE_MODE_HT) {
 		rx_status->encoding = RX_ENC_HT;
 		rx_status->rate_idx = GET_DATA_RATE_HT_IDX(data_rate);
@@ -1252,10 +1349,13 @@ static void rtw89_core_flush_ppdu_rx_queue(struct rtw89_dev *rtwdev,
 {
 	struct rtw89_ppdu_sts_info *ppdu_sts = &rtwdev->ppdu_sts;
 	u8 band = desc_info->bb_sel ? RTW89_PHY_1 : RTW89_PHY_0;
+	struct ieee80211_rx_status *rx_status;
 	struct sk_buff *skb_ppdu, *tmp;
 
 	skb_queue_walk_safe(&ppdu_sts->rx_queue[band], skb_ppdu, tmp) {
 		skb_unlink(skb_ppdu, &ppdu_sts->rx_queue[band]);
+		rx_status = IEEE80211_SKB_RXCB(skb_ppdu);
+		rtw89_core_hw_to_sband_rate(rx_status);
 		rtw89_core_rx_stats(rtwdev, NULL, desc_info, skb_ppdu);
 		ieee80211_rx_napi(rtwdev->hw, NULL, skb_ppdu, &rtwdev->napi);
 		rtwdev->napi_budget_countdown--;
@@ -1288,6 +1388,7 @@ void rtw89_core_rx(struct rtw89_dev *rtwdev,
 	    BIT(desc_info->frame_type) & PPDU_FILTER_BITMAP) {
 		skb_queue_tail(&ppdu_sts->rx_queue[band], skb);
 	} else {
+		rtw89_core_hw_to_sband_rate(rx_status);
 		rtw89_core_rx_stats(rtwdev, NULL, desc_info, skb);
 		ieee80211_rx_napi(rtwdev->hw, NULL, skb, &rtwdev->napi);
 		rtwdev->napi_budget_countdown--;
@@ -1340,7 +1441,7 @@ static void rtw89_core_ba_work(struct work_struct *work)
 	list_for_each_entry_safe(rtwtxq, tmp, &rtwdev->ba_list, list) {
 		struct ieee80211_txq *txq = rtw89_txq_to_txq(rtwtxq);
 		struct ieee80211_sta *sta = txq->sta;
-		struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
+		struct rtw89_sta *rtwsta = sta ? (struct rtw89_sta *)sta->drv_priv : NULL;
 		u8 tid = txq->tid;
 
 		if (!sta) {
@@ -1390,7 +1491,7 @@ static void rtw89_core_txq_check_agg(struct rtw89_dev *rtwdev,
 	struct ieee80211_hw *hw = rtwdev->hw;
 	struct ieee80211_txq *txq = rtw89_txq_to_txq(rtwtxq);
 	struct ieee80211_sta *sta = txq->sta;
-	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
+	struct rtw89_sta *rtwsta = sta ? (struct rtw89_sta *)sta->drv_priv : NULL;
 
 	if (unlikely(skb_get_queue_mapping(skb) == IEEE80211_AC_VO))
 		return;
@@ -1462,7 +1563,7 @@ static bool rtw89_core_txq_agg_wait(struct rtw89_dev *rtwdev,
 {
 	struct rtw89_txq *rtwtxq = (struct rtw89_txq *)txq->drv_priv;
 	struct ieee80211_sta *sta = txq->sta;
-	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
+	struct rtw89_sta *rtwsta = sta ? (struct rtw89_sta *)sta->drv_priv : NULL;
 
 	if (!sta || rtwsta->max_agg_wait <= 0)
 		return false;
@@ -1583,10 +1684,8 @@ static bool rtw89_traffic_stats_calc(struct rtw89_dev *rtwdev,
 	stats->tx_cnt = 0;
 	stats->rx_cnt = 0;
 
-	if (tx_tfc_lv != stats->tx_tfc_lv || rx_tfc_lv != stats->rx_tfc_lv) {
-		ieee80211_queue_work(rtwdev->hw, &rtwdev->btc.wl_sta_notify_work);
+	if (tx_tfc_lv != stats->tx_tfc_lv || rx_tfc_lv != stats->rx_tfc_lv)
 		return true;
-	}
 
 	return false;
 }
@@ -1652,8 +1751,10 @@ static void rtw89_track_work(struct work_struct *work)
 
 	rtw89_leave_lps(rtwdev);
 
-	if (tfc_changed)
+	if (tfc_changed) {
 		rtw89_hci_recalc_int_mit(rtwdev);
+		rtw89_btc_ntfy_wl_sta(rtwdev);
+	}
 	rtw89_mac_bf_monitor_track(rtwdev);
 	rtw89_phy_stat_track(rtwdev);
 	rtw89_phy_env_monitor_track(rtwdev);
@@ -1753,7 +1854,8 @@ int rtw89_core_sta_add(struct rtw89_dev *rtwdev,
 	ewma_rssi_init(&rtwsta->avg_rssi);
 
 	if (vif->type == NL80211_IFTYPE_STATION) {
-		rtwvif->mgd.ap = sta;
+		/* for station mode, assign the mac_id from itself */
+		rtwsta->mac_id = rtwvif->mac_id;
 		rtw89_btc_ntfy_role_info(rtwdev, rtwvif, rtwsta,
 					 BTC_ROLE_MSTS_STA_CONN_START);
 		rtw89_chip_rfk_channel(rtwdev);
@@ -1779,6 +1881,7 @@ int rtw89_core_sta_disconnect(struct rtw89_dev *rtwdev,
 			      struct ieee80211_sta *sta)
 {
 	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
+	struct rtw89_sta *rtwsta = (struct rtw89_sta *)sta->drv_priv;
 	int ret;
 
 	rtw89_mac_bf_monitor_calc(rtwdev, sta, true);
@@ -1800,7 +1903,7 @@ int rtw89_core_sta_disconnect(struct rtw89_dev *rtwdev,
 	}
 
 	/* update cam aid mac_id net_type */
-	rtw89_fw_h2c_cam(rtwdev, rtwvif);
+	rtw89_fw_h2c_cam(rtwdev, rtwvif, rtwsta, NULL);
 	if (ret) {
 		rtw89_warn(rtwdev, "failed to send h2c cam\n");
 		return ret;
@@ -1825,10 +1928,6 @@ int rtw89_core_sta_assoc(struct rtw89_dev *rtwdev,
 		return ret;
 	}
 
-	/* for station mode, assign the mac_id from itself */
-	if (vif->type == NL80211_IFTYPE_STATION)
-		rtwsta->mac_id = rtwvif->mac_id;
-
 	ret = rtw89_fw_h2c_join_info(rtwdev, rtwvif, 0);
 	if (ret) {
 		rtw89_warn(rtwdev, "failed to send h2c join info\n");
@@ -1836,7 +1935,7 @@ int rtw89_core_sta_assoc(struct rtw89_dev *rtwdev,
 	}
 
 	/* update cam aid mac_id net_type */
-	rtw89_fw_h2c_cam(rtwdev, rtwvif);
+	rtw89_fw_h2c_cam(rtwdev, rtwvif, rtwsta, NULL);
 	if (ret) {
 		rtw89_warn(rtwdev, "failed to send h2c cam\n");
 		return ret;
@@ -2176,7 +2275,7 @@ void rtw89_core_stop(struct rtw89_dev *rtwdev)
 	cancel_work_sync(&btc->eapol_notify_work);
 	cancel_work_sync(&btc->arp_notify_work);
 	cancel_work_sync(&btc->dhcp_notify_work);
-	cancel_work_sync(&btc->wl_sta_notify_work);
+	cancel_work_sync(&btc->icmp_notify_work);
 	cancel_delayed_work_sync(&rtwdev->txq_reinvoke_work);
 	cancel_delayed_work_sync(&rtwdev->track_work);
 	cancel_delayed_work_sync(&rtwdev->coex_act1_work);
@@ -2202,6 +2301,7 @@ int rtw89_core_init(struct rtw89_dev *rtwdev)
 
 	INIT_LIST_HEAD(&rtwdev->ba_list);
 	INIT_LIST_HEAD(&rtwdev->rtwvifs_list);
+	INIT_LIST_HEAD(&rtwdev->early_h2c_list);
 	INIT_WORK(&rtwdev->ba_work, rtw89_core_ba_work);
 	INIT_WORK(&rtwdev->txq_work, rtw89_core_txq_work);
 	INIT_DELAYED_WORK(&rtwdev->txq_reinvoke_work, rtw89_core_txq_reinvoke_work);
@@ -2227,7 +2327,7 @@ int rtw89_core_init(struct rtw89_dev *rtwdev)
 	INIT_WORK(&btc->eapol_notify_work, rtw89_btc_ntfy_eapol_packet_work);
 	INIT_WORK(&btc->arp_notify_work, rtw89_btc_ntfy_arp_packet_work);
 	INIT_WORK(&btc->dhcp_notify_work, rtw89_btc_ntfy_dhcp_packet_work);
-	INIT_WORK(&btc->wl_sta_notify_work, rtw89_btc_ntfy_wl_sta_work);
+	INIT_WORK(&btc->icmp_notify_work, rtw89_btc_ntfy_icmp_packet_work);
 
 	ret = rtw89_load_firmware(rtwdev);
 	if (ret) {
@@ -2244,6 +2344,7 @@ void rtw89_core_deinit(struct rtw89_dev *rtwdev)
 {
 	rtw89_ser_deinit(rtwdev);
 	rtw89_unload_firmware(rtwdev);
+	rtw89_fw_free_all_early_h2c(rtwdev);
 
 	destroy_workqueue(rtwdev->txq_wq);
 	mutex_destroy(&rtwdev->rf_mutex);

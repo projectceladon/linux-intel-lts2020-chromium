@@ -74,17 +74,23 @@ static void rk3399_vpu_jpeg_enc_set_buffers(struct hantro_dev *vpu,
 			   VEPU_REG_STR_BUF_LIMIT);
 
 	if (pix_fmt->num_planes == 1) {
-		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0);
+		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0) +
+			src_buf->planes[0].data_offset;
 		vepu_write_relaxed(vpu, src[0], VEPU_REG_ADDR_IN_PLANE_0);
 	} else if (pix_fmt->num_planes == 2) {
-		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0);
-		src[1] = vb2_dma_contig_plane_dma_addr(src_buf, 1);
+		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0) +
+			src_buf->planes[0].data_offset;
+		src[1] = vb2_dma_contig_plane_dma_addr(src_buf, 1) +
+			src_buf->planes[1].data_offset;
 		vepu_write_relaxed(vpu, src[0], VEPU_REG_ADDR_IN_PLANE_0);
 		vepu_write_relaxed(vpu, src[1], VEPU_REG_ADDR_IN_PLANE_1);
 	} else {
-		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0);
-		src[1] = vb2_dma_contig_plane_dma_addr(src_buf, 1);
-		src[2] = vb2_dma_contig_plane_dma_addr(src_buf, 2);
+		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0) +
+			src_buf->planes[0].data_offset;
+		src[1] = vb2_dma_contig_plane_dma_addr(src_buf, 1) +
+			src_buf->planes[1].data_offset;
+		src[2] = vb2_dma_contig_plane_dma_addr(src_buf, 2) +
+			src_buf->planes[2].data_offset;
 		vepu_write_relaxed(vpu, src[0], VEPU_REG_ADDR_IN_PLANE_0);
 		vepu_write_relaxed(vpu, src[1], VEPU_REG_ADDR_IN_PLANE_1);
 		vepu_write_relaxed(vpu, src[2], VEPU_REG_ADDR_IN_PLANE_2);
@@ -168,4 +174,21 @@ void rk3399_vpu_jpeg_enc_run(struct hantro_ctx *ctx)
 	/* Kick the watchdog and start encoding */
 	hantro_end_prepare_run(ctx);
 	vepu_write(vpu, reg, VEPU_REG_ENCODE_START);
+}
+
+void rk3399_vpu_jpeg_enc_done(struct hantro_ctx *ctx)
+{
+	struct hantro_dev *vpu = ctx->dev;
+	u32 bytesused = vepu_read(vpu, VEPU_REG_STR_BUF_LIMIT) / 8;
+	struct vb2_v4l2_buffer *dst_buf = hantro_get_dst_buf(ctx);
+
+	/*
+	 * TODO: Rework the JPEG encoder to eliminate the need
+	 * for a bounce buffer.
+	 */
+	memcpy(vb2_plane_vaddr(&dst_buf->vb2_buf, 0) +
+	       ctx->vpu_dst_fmt->header_size,
+	       ctx->jpeg_enc.bounce_buffer.cpu, bytesused);
+	vb2_set_plane_payload(&dst_buf->vb2_buf, 0,
+			      ctx->vpu_dst_fmt->header_size + bytesused);
 }

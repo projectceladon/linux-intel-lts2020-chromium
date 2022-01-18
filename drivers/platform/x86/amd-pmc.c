@@ -17,9 +17,11 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
+#include <linux/limits.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/platform_device.h>
+#include <linux/rtc.h>
 #include <linux/suspend.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
@@ -32,12 +34,6 @@
 /* PMC Scratch Registers */
 #define AMD_PMC_SCRATCH_REG_CZN		0x94
 #define AMD_PMC_SCRATCH_REG_YC		0xD14
-
-/* STB Registers */
-#define AMD_PMC_STB_INDEX_ADDRESS	0xF8
-#define AMD_PMC_STB_INDEX_DATA		0xFC
-#define AMD_PMC_STB_PMI_0		0x03E30600
-#define AMD_PMC_STB_PREDEF		0xC6000001
 
 /* Base address of SMU for mapping physical address to virtual address */
 #define AMD_PMC_SMU_INDEX_ADDRESS	0xB8
@@ -80,13 +76,12 @@
 #define AMD_CPU_ID_CZN			AMD_CPU_ID_RN
 #define AMD_CPU_ID_YC			0x14B5
 
-#define PMC_MSG_DELAY_MIN_US		100
+#define PMC_MSG_DELAY_MIN_US		50
 #define RESPONSE_REGISTER_LOOP_MAX	20000
 
 #define SOC_SUBSYSTEM_IP_MAX	12
 #define DELAY_MIN_US		2000
 #define DELAY_MAX_US		3000
-#define FIFO_SIZE		4096
 enum amd_pmc_def {
 	MSG_TEST = 0x01,
 	MSG_OS_HINT_PCO,
@@ -126,22 +121,14 @@ struct amd_pmc_dev {
 	u16 minor;
 	u16 rev;
 	struct device *dev;
-	struct pci_dev *rdev;
 	struct mutex lock; /* generic mutex lock */
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 	struct dentry *dbgfs_dir;
 #endif /* CONFIG_DEBUG_FS */
 };
 
-static u32 stb_data[FIFO_SIZE];
-static bool enable_stb;
-module_param(enable_stb, bool, 0644);
-MODULE_PARM_DESC(enable_stb, "Enable the STB debug mechanism");
-
 static struct amd_pmc_dev pmc;
-static int amd_pmc_write_stb(struct amd_pmc_dev *dev, u32 data);
-static int amd_pmc_read_stb(struct amd_pmc_dev *dev);
-static int amd_pmc_send_cmd(struct amd_pmc_dev *dev, bool set, u32 *data, u8 msg, bool ret);
+static int amd_pmc_send_cmd(struct amd_pmc_dev *dev, u32 arg, u32 *data, u8 msg, bool ret);
 
 static inline u32 amd_pmc_reg_read(struct amd_pmc_dev *dev, int reg_offset)
 {
@@ -286,20 +273,6 @@ static int amd_pmc_idlemask_show(struct seq_file *s, void *unused)
 }
 DEFINE_SHOW_ATTRIBUTE(amd_pmc_idlemask);
 
-static int stb_read_show(struct seq_file *seq, void *unused)
-{
-	struct amd_pmc_dev *pdev = seq->private;
-	int i;
-
-	amd_pmc_read_stb(pdev);
-
-	for (i = 0; i < FIFO_SIZE; i += 4)
-		seq_hex_dump(seq, "", DUMP_PREFIX_NONE, 16, 1, &stb_data[i], 16, true);
-
-	return 0;
-}
-DEFINE_SHOW_ATTRIBUTE(stb_read);
-
 static void amd_pmc_dbgfs_unregister(struct amd_pmc_dev *dev)
 {
 	debugfs_remove_recursive(dev->dbgfs_dir);
@@ -314,10 +287,6 @@ static void amd_pmc_dbgfs_register(struct amd_pmc_dev *dev)
 			    &s0ix_stats_fops);
 	debugfs_create_file("amd_pmc_idlemask", 0644, dev->dbgfs_dir, dev,
 			    &amd_pmc_idlemask_fops);
-	/* Enable STB only when the module_param is set */
-	if (enable_stb)
-		debugfs_create_file("stb_read", 0644, dev->dbgfs_dir, dev,
-				    &stb_read_fops);
 }
 #else
 static inline void amd_pmc_dbgfs_register(struct amd_pmc_dev *dev)
@@ -369,7 +338,7 @@ static void amd_pmc_dump_registers(struct amd_pmc_dev *dev)
 	dev_dbg(dev->dev, "AMD_PMC_REGISTER_MESSAGE:%x\n", value);
 }
 
-static int amd_pmc_send_cmd(struct amd_pmc_dev *dev, bool set, u32 *data, u8 msg, bool ret)
+static int amd_pmc_send_cmd(struct amd_pmc_dev *dev, u32 arg, u32 *data, u8 msg, bool ret)
 {
 	int rc;
 	u32 val;
@@ -388,7 +357,7 @@ static int amd_pmc_send_cmd(struct amd_pmc_dev *dev, bool set, u32 *data, u8 msg
 	amd_pmc_reg_write(dev, AMD_PMC_REGISTER_RESPONSE, 0);
 
 	/* Write argument into response register */
-	amd_pmc_reg_write(dev, AMD_PMC_REGISTER_ARGUMENT, set);
+	amd_pmc_reg_write(dev, AMD_PMC_REGISTER_ARGUMENT, arg);
 
 	/* Write message ID to message ID register */
 	amd_pmc_reg_write(dev, AMD_PMC_REGISTER_MESSAGE, msg);
@@ -444,27 +413,78 @@ static int amd_pmc_get_os_hint(struct amd_pmc_dev *dev)
 	return -EINVAL;
 }
 
+static int amd_pmc_verify_czn_rtc(struct amd_pmc_dev *pdev, u32 *arg)
+{
+	struct rtc_device *rtc_device;
+	time64_t then, now, duration;
+	struct rtc_wkalrm alarm;
+	struct rtc_time tm;
+	int rc;
+
+	if (pdev->major < 64 || (pdev->major == 64 && pdev->minor < 53))
+		return 0;
+
+	rtc_device = rtc_class_open("rtc0");
+	if (!rtc_device)
+		return 0;
+	rc = rtc_read_alarm(rtc_device, &alarm);
+	if (rc)
+		return rc;
+	if (!alarm.enabled) {
+		dev_dbg(pdev->dev, "alarm not enabled\n");
+		return 0;
+	}
+	rc = rtc_read_time(rtc_device, &tm);
+	if (rc)
+		return rc;
+	then = rtc_tm_to_time64(&alarm.time);
+	now = rtc_tm_to_time64(&tm);
+	duration = then-now;
+
+	/* in the past */
+	if (then < now)
+		return 0;
+
+	/* will be stored in upper 16 bits of s0i3 hint argument,
+	 * so timer wakeup from s0i3 is limited to ~18 hours or less
+	 */
+	if (duration <= 4 || duration > U16_MAX)
+		return -EINVAL;
+
+	*arg |= (duration << 16);
+	rc = rtc_alarm_irq_enable(rtc_device, 0);
+	dev_dbg(pdev->dev, "wakeup timer programmed for %lld seconds\n", duration);
+
+	return rc;
+}
+
 static int __maybe_unused amd_pmc_suspend(struct device *dev)
 {
 	struct amd_pmc_dev *pdev = dev_get_drvdata(dev);
 	int rc;
 	u8 msg;
+	u32 arg = 1;
 
 	/* Reset and Start SMU logging - to monitor the s0i3 stats */
 	amd_pmc_send_cmd(pdev, 0, NULL, SMU_MSG_LOG_RESET, 0);
 	amd_pmc_send_cmd(pdev, 0, NULL, SMU_MSG_LOG_START, 0);
 
+	/* Activate CZN specific RTC functionality */
+	/* TODO(b/209705576): We need to add firmware support */
+	if (pdev->cpu_id == AMD_CPU_ID_CZN && false) {
+		rc = amd_pmc_verify_czn_rtc(pdev, &arg);
+		if (rc < 0)
+			return rc;
+	}
+
 	/* Dump the IdleMask before we send hint to SMU */
 	amd_pmc_idlemask_read(pdev, dev, NULL);
 	msg = amd_pmc_get_os_hint(pdev);
-	rc = amd_pmc_send_cmd(pdev, 1, NULL, msg, 0);
+	rc = amd_pmc_send_cmd(pdev, arg, NULL, msg, 0);
 	if (rc)
 		dev_err(pdev->dev, "suspend failed\n");
 
-	if (enable_stb)
-		amd_pmc_write_stb(pdev, AMD_PMC_STB_PREDEF);
-
-	return 0;
+	return rc;
 }
 
 static int __maybe_unused amd_pmc_resume(struct device *dev)
@@ -484,10 +504,6 @@ static int __maybe_unused amd_pmc_resume(struct device *dev)
 	/* Dump the IdleMask to see the blockers */
 	amd_pmc_idlemask_read(pdev, dev, NULL);
 
-	/* Write data incremented by 1 to distinguish in stb_read */
-	if (enable_stb)
-		amd_pmc_write_stb(pdev, AMD_PMC_STB_PREDEF + 1);
-
 	return 0;
 }
 
@@ -504,76 +520,6 @@ static const struct pci_device_id pmc_pci_ids[] = {
 	{ }
 };
 
-static int amd_pmc_get_root_port(struct amd_pmc_dev *dev)
-{
-	dev->rdev = pci_get_domain_bus_and_slot(0, 0, PCI_DEVFN(0, 0));
-	if (!dev->rdev || !pci_match_id(pmc_pci_ids, dev->rdev)) {
-		pci_dev_put(dev->rdev);
-		return -ENODEV;
-	}
-
-	return 0;
-}
-
-static int amd_pmc_write_stb(struct amd_pmc_dev *dev, u32 data)
-{
-	int rc;
-
-	rc = amd_pmc_get_root_port(dev);
-	if (rc)
-		return rc;
-
-	rc = pci_write_config_dword(dev->rdev, AMD_PMC_STB_INDEX_ADDRESS, AMD_PMC_STB_PMI_0);
-	if (rc) {
-		dev_err(dev->dev, "failed to write addr in stb: 0x%X\n",
-			AMD_PMC_STB_INDEX_ADDRESS);
-		pci_dev_put(dev->rdev);
-		return pcibios_err_to_errno(rc);
-	}
-
-	rc = pci_write_config_dword(dev->rdev, AMD_PMC_STB_INDEX_DATA, data);
-	if (rc) {
-		dev_err(dev->dev, "failed to write data in stb: 0x%X\n",
-			AMD_PMC_STB_INDEX_DATA);
-		pci_dev_put(dev->rdev);
-		return pcibios_err_to_errno(rc);
-	}
-
-	return 0;
-}
-
-static int amd_pmc_read_stb(struct amd_pmc_dev *dev)
-{
-	u32 cnt = 0, value;
-	int i, err;
-
-	err = amd_pmc_get_root_port(dev);
-	if (err)
-		return err;
-
-	err = pci_write_config_dword(dev->rdev, AMD_PMC_STB_INDEX_ADDRESS, AMD_PMC_STB_PMI_0);
-	if (err) {
-		dev_err(dev->dev, "error writing addr to stb: 0x%X\n",
-			AMD_PMC_STB_INDEX_ADDRESS);
-		pci_dev_put(dev->rdev);
-		return pcibios_err_to_errno(err);
-	}
-
-	for (i = 0; i < FIFO_SIZE; i++) {
-		err = pci_read_config_dword(dev->rdev, AMD_PMC_STB_INDEX_DATA, &value);
-		if (err) {
-			dev_err(dev->dev, "error reading data from stb: 0x%X\n",
-				AMD_PMC_STB_INDEX_DATA);
-			pci_dev_put(dev->rdev);
-			return pcibios_err_to_errno(err);
-		}
-
-		stb_data[cnt++] = value;
-	}
-
-	return 0;
-}
-
 static int amd_pmc_probe(struct platform_device *pdev)
 {
 	struct amd_pmc_dev *dev = &pmc;
@@ -586,31 +532,39 @@ static int amd_pmc_probe(struct platform_device *pdev)
 	dev->dev = &pdev->dev;
 
 	rdev = pci_get_domain_bus_and_slot(0, 0, PCI_DEVFN(0, 0));
-	if (!rdev || !pci_match_id(pmc_pci_ids, rdev))
+	if (!rdev || !pci_match_id(pmc_pci_ids, rdev)) {
+		pci_dev_put(rdev);
 		return -ENODEV;
+	}
 
 	dev->cpu_id = rdev->device;
 	err = pci_write_config_dword(rdev, AMD_PMC_SMU_INDEX_ADDRESS, AMD_PMC_BASE_ADDR_LO);
 	if (err) {
 		dev_err(dev->dev, "error writing to 0x%x\n", AMD_PMC_SMU_INDEX_ADDRESS);
+		pci_dev_put(rdev);
 		return pcibios_err_to_errno(err);
 	}
 
 	err = pci_read_config_dword(rdev, AMD_PMC_SMU_INDEX_DATA, &val);
-	if (err)
+	if (err) {
+		pci_dev_put(rdev);
 		return pcibios_err_to_errno(err);
+	}
 
 	base_addr_lo = val & AMD_PMC_BASE_ADDR_HI_MASK;
 
 	err = pci_write_config_dword(rdev, AMD_PMC_SMU_INDEX_ADDRESS, AMD_PMC_BASE_ADDR_HI);
 	if (err) {
 		dev_err(dev->dev, "error writing to 0x%x\n", AMD_PMC_SMU_INDEX_ADDRESS);
+		pci_dev_put(rdev);
 		return pcibios_err_to_errno(err);
 	}
 
 	err = pci_read_config_dword(rdev, AMD_PMC_SMU_INDEX_DATA, &val);
-	if (err)
+	if (err) {
+		pci_dev_put(rdev);
 		return pcibios_err_to_errno(err);
+	}
 
 	base_addr_hi = val & AMD_PMC_BASE_ADDR_LO_MASK;
 	pci_dev_put(rdev);
@@ -656,6 +610,7 @@ static const struct acpi_device_id amd_pmc_acpi_ids[] = {
 	{"AMDI0006", 0},
 	{"AMDI0007", 0},
 	{"AMD0004", 0},
+	{"AMD0005", 0},
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, amd_pmc_acpi_ids);

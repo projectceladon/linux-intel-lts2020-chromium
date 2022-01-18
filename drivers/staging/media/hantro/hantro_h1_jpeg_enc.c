@@ -43,18 +43,24 @@ static void hantro_h1_jpeg_enc_set_buffers(struct hantro_dev *vpu,
 			   H1_REG_STR_BUF_LIMIT);
 
 	if (pix_fmt->num_planes == 1) {
-		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0);
+		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0) +
+			src_buf->planes[0].data_offset;
 		/* single plane formats we supported are all interlaced */
 		vepu_write_relaxed(vpu, src[0], H1_REG_ADDR_IN_PLANE_0);
 	} else if (pix_fmt->num_planes == 2) {
-		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0);
-		src[1] = vb2_dma_contig_plane_dma_addr(src_buf, 1);
+		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0) +
+			src_buf->planes[0].data_offset;
+		src[1] = vb2_dma_contig_plane_dma_addr(src_buf, 1) +
+			src_buf->planes[1].data_offset;
 		vepu_write_relaxed(vpu, src[0], H1_REG_ADDR_IN_PLANE_0);
 		vepu_write_relaxed(vpu, src[1], H1_REG_ADDR_IN_PLANE_1);
 	} else {
-		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0);
-		src[1] = vb2_dma_contig_plane_dma_addr(src_buf, 1);
-		src[2] = vb2_dma_contig_plane_dma_addr(src_buf, 2);
+		src[0] = vb2_dma_contig_plane_dma_addr(src_buf, 0) +
+			src_buf->planes[0].data_offset;
+		src[1] = vb2_dma_contig_plane_dma_addr(src_buf, 1) +
+			src_buf->planes[1].data_offset;
+		src[2] = vb2_dma_contig_plane_dma_addr(src_buf, 2) +
+			src_buf->planes[2].data_offset;
 		vepu_write_relaxed(vpu, src[0], H1_REG_ADDR_IN_PLANE_0);
 		vepu_write_relaxed(vpu, src[1], H1_REG_ADDR_IN_PLANE_1);
 		vepu_write_relaxed(vpu, src[2], H1_REG_ADDR_IN_PLANE_2);
@@ -138,7 +144,7 @@ void hantro_h1_jpeg_enc_run(struct hantro_ctx *ctx)
 	vepu_write(vpu, reg, H1_REG_ENC_CTRL);
 }
 
-void hantro_jpeg_enc_done(struct hantro_ctx *ctx)
+void hantro_h1_jpeg_enc_done(struct hantro_ctx *ctx)
 {
 	struct hantro_dev *vpu = ctx->dev;
 	u32 bytesused = vepu_read(vpu, H1_REG_STR_BUF_LIMIT) / 8;

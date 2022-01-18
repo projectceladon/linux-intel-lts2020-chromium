@@ -2,6 +2,11 @@
 /*
  * Copyright (c) 2021, MediaTek Inc.
  * Copyright (c) 2021, Intel Corporation.
+ *
+ * Authors: Haijun Lio <haijun.liu@mediatek.com>
+ * Contributors: Amir Hanania <amir.hanania@intel.com>
+ *               Moises Veleta <moises.veleta@intel.com>
+ *               Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
 #include <linux/tty.h>
@@ -61,7 +66,8 @@ static int ccci_tty_port_create(struct t7xx_port *port, char *port_name)
 {
 	struct tty_driver *tty_drv;
 	struct tty_port *pport;
-	int minor = GET_TTY_IDX(port);
+	struct t7xx_port_static *port_static = port->port_static;
+	int minor = GET_TTY_IDX(port_static);
 
 	tty_drv = tty_ctlb->driver;
 	tty_drv->name = port_name;
@@ -82,7 +88,8 @@ static int ccci_tty_port_destroy(struct t7xx_port *port)
 	struct tty_driver *tty_drv;
 	struct tty_port *pport;
 	struct tty_struct *tty;
-	int minor = port->minor;
+	struct t7xx_port_static *port_static = port->port_static;
+	int minor = port_static->minor;
 
 	tty_drv = tty_ctlb->driver;
 
@@ -100,6 +107,7 @@ static int ccci_tty_port_destroy(struct t7xx_port *port)
 
 	tty_unregister_device(tty_drv, minor);
 	tty_port_destroy(pport);
+	devm_kfree(port->dev, pport);
 	tty_drv->ports[minor] = NULL;
 	return 0;
 }
@@ -111,16 +119,16 @@ static int tty_ccci_init(struct tty_ccci_ops *ccci_info, struct t7xx_port *port)
 	struct tty_ctl_block *ctlb;
 	int ret, port_nr;
 
-	ctlb = devm_kzalloc(port->dev, sizeof(*ctlb), GFP_KERNEL);
+	ctlb = kzalloc(sizeof(*ctlb), GFP_KERNEL);
 	if (!ctlb)
 		return -ENOMEM;
 
-	ctlb->ccci_ops = devm_kzalloc(port->dev, sizeof(*ctlb->ccci_ops), GFP_KERNEL);
+	ctlb->ccci_ops = kzalloc(sizeof(*ctlb->ccci_ops), GFP_KERNEL);
 	if (!ctlb->ccci_ops)
 		return -ENOMEM;
 
 	tty_ctlb = ctlb;
-	memcpy(ctlb->ccci_ops, ccci_info, sizeof(struct tty_ccci_ops));
+	memcpy(ctlb->ccci_ops, ccci_info, sizeof(*ccci_info));
 	port_nr = ctlb->ccci_ops->tty_num;
 
 	tty_drv = tty_alloc_driver(port_nr, 0);
@@ -164,7 +172,11 @@ static void tty_ccci_uninit(void)
 		tty_drv = ctlb->driver;
 		tty_unregister_driver(tty_drv);
 		tty_driver_kref_put(tty_drv);
-		tty_ctlb = NULL;
+
+		/*free memory*/
+		kfree(tty_ctlb->ccci_ops);
+		tty_ctlb->ccci_ops = NULL;
+		kfree(tty_ctlb);
 	}
 }
 
@@ -172,7 +184,8 @@ static int tty_rx_callback(struct t7xx_port *port, void *data, int len)
 {
 	struct tty_port *pport;
 	struct tty_driver *drv;
-	int tty_id = GET_TTY_IDX(port);
+	struct t7xx_port_static *port_static = port->port_static;
+	int tty_id = GET_TTY_IDX(port_static);
 	int copied = 0;
 
 	drv = tty_ctlb->driver;

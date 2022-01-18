@@ -2,45 +2,60 @@
  *
  * Copyright (c) 2021, MediaTek Inc.
  * Copyright (c) 2021, Intel Corporation.
+ *
+ * Authors:
+ *  Haijun Liu <haijun.liu@mediatek.com>
+ *  Eliot Lee <eliot.lee@intel.com>
+ *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *
+ * Contributors:
+ *  Amir Hanania <amir.hanania@intel.com>
+ *  Chiranjeevi Rapolu <chiranjeevi.rapolu@intel.com>
+ *  Moises Veleta <moises.veleta@intel.com>
+ *  Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
 #ifndef __T7XX_HIF_DPMA_TX_H__
 #define __T7XX_HIF_DPMA_TX_H__
 
-#include <linux/bitfield.h>
+#include <linux/bits.h>
 #include <linux/skbuff.h>
+#include <linux/types.h>
 
 #include "t7xx_common.h"
 #include "t7xx_hif_dpmaif.h"
 
+/* SKB control buffer indexed values */
+#define TX_CB_NETIF_IDX		0
+#define TX_CB_QTYPE		1
+#define TX_CB_DRB_CNT		2
+
 /* UL DRB */
 struct dpmaif_drb_pd {
-	unsigned int		header;
-	unsigned int		p_data_addr;
-	unsigned int		data_addr_ext;
-	unsigned int		reserved2;
+	__le32			header;
+	__le32			p_data_addr;
+	__le32			data_addr_ext;
+	__le32			reserved2;
 };
 
-/* header's fields */
-#define DRB_PD_DATA_LEN		GENMASK(31, 16)
+/* Header fields */
+#define DRB_PD_DATA_LEN		((u32)GENMASK(31, 16))
 #define DRB_PD_RES		GENMASK(15, 3)
 #define DRB_PD_CONT		BIT(2)
 #define DRB_PD_DTYP		GENMASK(1, 0)
 
 struct dpmaif_drb_msg {
-	unsigned int		header_dw1;
-	unsigned int		header_dw2;
-	unsigned int		reserved4;
-	unsigned int		reserved5;
+	__le32	header_dw1;
+	__le32	header_dw2;
+	__le32	reserved4;
+	__le32	reserved5;
 };
 
-/* first double word header fields */
 #define DRB_MSG_PACKET_LEN	GENMASK(31, 16)
 #define DRB_MSG_DW1_RES		GENMASK(15, 3)
 #define DRB_MSG_CONT		BIT(2)
 #define DRB_MSG_DTYP		GENMASK(1, 0)
 
-/* second double word header fields */
 #define DRB_MSG_DW2_RES		GENMASK(31, 30)
 #define DRB_MSG_L4_CHK		BIT(29)
 #define DRB_MSG_IP_CHK		BIT(28)
@@ -61,14 +76,14 @@ struct dpmaif_drb_skb {
 #define DRB_SKB_IS_MSG		BIT(13)
 #define DRB_SKB_DRB_IDX		GENMASK(12, 0)
 
-int dpmaif_tx_send_skb(struct dpmaif_ctrl *dpmaif_ctrl, enum txq_type txqt,
-		       struct sk_buff *skb);
-void dpmaif_tx_thread_release(struct dpmaif_ctrl *dpmaif_ctrl);
-int dpmaif_tx_thread_init(struct dpmaif_ctrl *dpmaif_ctrl);
-void dpmaif_txq_free(struct dpmaif_tx_queue *txq);
-void dpmaif_irq_tx_done(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int que_mask);
-int dpmaif_txq_init(struct dpmaif_tx_queue *txq);
-void dpmaif_suspend_tx_sw_stop(struct dpmaif_ctrl *dpmaif_ctrl);
-void dpmaif_stop_tx_sw(struct dpmaif_ctrl *dpmaif_ctrl);
+int t7xx_dpmaif_tx_send_skb(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int txqt,
+			    struct sk_buff *skb);
+void t7xx_dpmaif_tx_thread_rel(struct dpmaif_ctrl *dpmaif_ctrl);
+int t7xx_dpmaif_tx_thread_init(struct dpmaif_ctrl *dpmaif_ctrl);
+void t7xx_dpmaif_txq_free(struct dpmaif_tx_queue *txq);
+void t7xx_dpmaif_irq_tx_done(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int que_mask);
+int t7xx_dpmaif_txq_init(struct dpmaif_tx_queue *txq);
+void t7xx_dpmaif_tx_stop(struct dpmaif_ctrl *dpmaif_ctrl);
+void t7xx_dpmaif_tx_clear(struct dpmaif_ctrl *dpmaif_ctrl);
 
 #endif /* __T7XX_HIF_DPMA_TX_H__ */

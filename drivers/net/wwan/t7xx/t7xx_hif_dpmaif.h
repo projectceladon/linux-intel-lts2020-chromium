@@ -2,24 +2,40 @@
  *
  * Copyright (c) 2021, MediaTek Inc.
  * Copyright (c) 2021, Intel Corporation.
+ *
+ * Authors:
+ *  Amir Hanania <amir.hanania@intel.com>
+ *  Haijun Liu <haijun.liu@mediatek.com>
+ *  Moises Veleta <moises.veleta@intel.com>
+ *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *
+ * Contributors:
+ *  Chiranjeevi Rapolu <chiranjeevi.rapolu@intel.com>
+ *  Eliot Lee <eliot.lee@intel.com>
+ *  Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
 #ifndef __T7XX_DPMA_TX_H__
 #define __T7XX_DPMA_TX_H__
 
-#include <linux/netdevice.h>
+#include <linux/mm_types.h>
+#include <linux/sched.h>
+#include <linux/skbuff.h>
+#include <linux/spinlock.h>
+#include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/wait.h>
-#include <linux/types.h>
 
 #include "t7xx_common.h"
 #include "t7xx_pci.h"
-#include "t7xx_skb_util.h"
 
 #define DPMAIF_RXQ_NUM		2
 #define DPMAIF_TXQ_NUM		5
 
-#define DPMA_SKB_QUEUE_CNT	1
+enum dpmaif_rdwr {
+	DPMAIF_READ,
+	DPMAIF_WRITE,
+};
 
 struct dpmaif_isr_en_mask {
 	unsigned int		ap_ul_l2intr_en_msk;
@@ -67,6 +83,7 @@ struct dpmaif_cur_rx_skb_info {
 	unsigned int		cur_chn_idx;
 	unsigned int		check_sum;
 	unsigned int		pit_dp;
+	unsigned int		pkt_type;
 	int			err_payload;
 };
 
@@ -99,12 +116,12 @@ struct dpmaif_bat_request {
 	unsigned int		bat_size_cnt;
 	unsigned short		bat_wr_idx;
 	unsigned short		bat_release_rd_idx;
-	void			*bat_skb_ptr;
+	void			*bat_skb;
 	unsigned int		skb_pkt_cnt;
 	unsigned int		pkt_buf_sz;
 	unsigned char		*bat_mask;
 	atomic_t		refcnt;
-	spinlock_t		mask_lock; /* protects bat_mask */
+	spinlock_t		mask_lock; /* Protects BAT mask */
 	enum bat_type		type;
 };
 
@@ -126,7 +143,8 @@ struct dpmaif_rx_queue {
 
 	wait_queue_head_t	rx_wq;
 	struct task_struct	*rx_thread;
-	struct ccci_skb_queue	skb_queue;
+	struct sk_buff_head	skb_list;
+	unsigned int		skb_list_max_len;
 
 	struct workqueue_struct	*worker;
 	struct work_struct	dpmaif_rxq_work;
@@ -154,24 +172,16 @@ struct dpmaif_tx_queue {
 	wait_queue_head_t	req_wq;
 	struct workqueue_struct	*worker;
 	struct work_struct	dpmaif_tx_work;
-	spinlock_t		tx_lock; /* protects txq DRB */
+	spinlock_t		tx_lock; /* Protects txq DRB */
 	atomic_t		tx_processing;
 
 	struct dpmaif_ctrl	*dpmaif_ctrl;
-	/* tx thread skb_list */
-	spinlock_t		tx_event_lock;
-	struct list_head	tx_event_queue;
+	spinlock_t		tx_skb_lock; /* Protects TX thread skb list */
+	struct list_head	tx_skb_queue;
 	unsigned int		tx_submit_skb_cnt;
 	unsigned int		tx_list_max_len;
 	unsigned int		tx_skb_stat;
 	bool			drb_lack;
-};
-
-/* data path skb pool */
-struct dpmaif_map_skb {
-	struct list_head	head;
-	u32			qlen;
-	spinlock_t		lock; /* protects skb queue*/
 };
 
 struct dpmaif_skb_info {
@@ -181,30 +191,10 @@ struct dpmaif_skb_info {
 	dma_addr_t		data_bus_addr;
 };
 
-struct dpmaif_skb_queue {
-	struct dpmaif_map_skb	skb_list;
-	unsigned int		size;
-	unsigned int		max_len;
-};
-
-struct dpmaif_skb_pool {
-	struct dpmaif_skb_queue	queue[DPMA_SKB_QUEUE_CNT];
-	struct workqueue_struct	*reload_work_queue;
-	struct work_struct	reload_work;
-	unsigned int		queue_cnt;
-};
-
 struct dpmaif_isr_para {
 	struct dpmaif_ctrl	*dpmaif_ctrl;
 	unsigned char		pcie_int;
 	unsigned char		dlq_id;
-};
-
-struct dpmaif_tx_event {
-	struct list_head	entry;
-	int			qno;
-	struct sk_buff		*skb;
-	unsigned int		drb_cnt;
 };
 
 enum dpmaif_state {
@@ -229,14 +219,14 @@ enum dpmaif_txq_state {
 };
 
 struct dpmaif_callbacks {
-	void (*state_notify)(struct mtk_pci_dev *mtk_dev,
+	void (*state_notify)(struct t7xx_pci_dev *t7xx_dev,
 			     enum dpmaif_txq_state state, int txqt);
-	void (*recv_skb)(struct mtk_pci_dev *mtk_dev, int netif_id, struct sk_buff *skb);
+	void (*recv_skb)(struct t7xx_pci_dev *t7xx_dev, struct sk_buff *skb);
 };
 
 struct dpmaif_ctrl {
 	struct device			*dev;
-	struct mtk_pci_dev		*mtk_dev;
+	struct t7xx_pci_dev		*t7xx_dev;
 	struct md_pm_entity		dpmaif_pm_entity;
 	enum dpmaif_state		state;
 	bool				dpmaif_sw_init_done;
@@ -249,9 +239,8 @@ struct dpmaif_ctrl {
 
 	struct dpmaif_bat_request	bat_req;
 	struct dpmaif_bat_request	bat_frag;
-	struct workqueue_struct		*bat_release_work_queue;
+	struct workqueue_struct		*bat_release_wq;
 	struct work_struct		bat_release_work;
-	struct dpmaif_skb_pool		skb_pool;
 
 	wait_queue_head_t		tx_wq;
 	struct task_struct		*tx_thread;
@@ -260,12 +249,12 @@ struct dpmaif_ctrl {
 	struct dpmaif_callbacks		*callbacks;
 };
 
-struct dpmaif_ctrl *dpmaif_hif_init(struct mtk_pci_dev *mtk_dev,
-				    struct dpmaif_callbacks *callbacks);
-void dpmaif_hif_exit(struct dpmaif_ctrl *dpmaif_ctrl);
-int dpmaif_md_state_callback(struct dpmaif_ctrl *dpmaif_ctrl, unsigned char state);
-unsigned int ring_buf_get_next_wrdx(unsigned int buf_len, unsigned int buf_idx);
-unsigned int ring_buf_read_write_count(unsigned int total_cnt, unsigned int rd_idx,
-				       unsigned int wrt_idx, bool rd_wrt);
+struct dpmaif_ctrl *t7xx_dpmaif_hif_init(struct t7xx_pci_dev *t7xx_dev,
+					 struct dpmaif_callbacks *callbacks);
+void t7xx_dpmaif_hif_exit(struct dpmaif_ctrl *dpmaif_ctrl);
+int t7xx_dpmaif_md_state_callback(struct dpmaif_ctrl *dpmaif_ctrl, unsigned char state);
+unsigned int t7xx_ring_buf_get_next_wrdx(unsigned int buf_len, unsigned int buf_idx);
+unsigned int t7xx_ring_buf_rd_wr_count(unsigned int total_cnt, unsigned int rd_idx,
+				       unsigned int wrt_idx, enum dpmaif_rdwr);
 
 #endif /* __T7XX_DPMA_TX_H__ */

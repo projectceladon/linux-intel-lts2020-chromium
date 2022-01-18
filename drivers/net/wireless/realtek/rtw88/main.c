@@ -509,87 +509,6 @@ int rtw_dump_reg(struct rtw_dev *rtwdev, const u32 addr, const u32 size)
 }
 EXPORT_SYMBOL(rtw_dump_reg);
 
-void rtw_replace_radar_flag_with_no_ir(struct ieee80211_hw *hw)
-{
-	struct wiphy *wiphy = hw->wiphy;
-	struct rtw_dev *rtwdev = hw->priv;
-	struct ieee80211_channel *ch;
-	struct ieee80211_supported_band *sband;
-	int i;
-
-	if (!wiphy || !wiphy->bands[NL80211_BAND_5GHZ])
-		return;
-
-	/* Currently mac80211 just don't allow active scan on DFS channels
-	 * because DFS master support is not yet implemented for client devices.
-	 * This behavior will make client impossible to connect to hidden AP
-	 * on DFS channels. To practice the feature, a common way is to dismiss
-	 * the limit for a period of time after hearing beacon in DFS channels.
-	 * So we take advantage of beacon hint in cfg80211, by replacing
-	 * IEEE80211_CHAN_RADAR of channel flags with IEEE80211_CHAN_NO_IR.
-	 */
-	sband = wiphy->bands[NL80211_BAND_5GHZ];
-	mutex_lock(&rtwdev->dfs_mutex);
-	rtwdev->dfs_channel_map = 0;
-	for (i = 0; i < sband->n_channels; i++) {
-		ch = &sband->channels[i];
-		if (ch->flags & IEEE80211_CHAN_DISABLED)
-			continue;
-		if (ch->flags & IEEE80211_CHAN_RADAR) {
-			rtw_dbg(rtwdev, RTW_DBG_REGD,
-				"set channel(%d) RADAR flags to NO_IR",
-				ch->hw_value);
-			ch->beacon_found = false;
-			ch->flags |= IEEE80211_CHAN_NO_IR;
-			ch->flags &= ~IEEE80211_CHAN_RADAR;
-			rtwdev->dfs_channel_map |= BIT(i);
-		}
-	}
-	rtwdev->dfs_last_update = jiffies;
-	mutex_unlock(&rtwdev->dfs_mutex);
-}
-
-void rtw_restore_no_ir_flag(struct rtw_dev *rtwdev)
-{
-	struct ieee80211_hw *hw = rtwdev->hw;
-	struct wiphy *wiphy = hw->wiphy;
-	struct ieee80211_channel *ch;
-	struct ieee80211_supported_band *sband;
-	int i;
-
-	if (!wiphy || !wiphy->bands[NL80211_BAND_5GHZ])
-		return;
-
-	if (!rtwdev->dfs_channel_map)
-		return;
-
-	mutex_lock(&rtwdev->dfs_mutex);
-	/* Based on the design of beacon hint, active scan is always allowed
-	 * after beacon is probed in current channel. But we need to avoid it
-	 * once radar signal exits. So restore IEEE80211_CHAN_NO_IR when
-	 * the interval of two scans is longer than 10s, to keep monitoring
-	 * if no beacon is found, maybe due to radar signal.
-	 */
-	if (time_after(rtwdev->dfs_last_update + RTW_DFS_TIMEOUT, jiffies)) {
-		mutex_unlock(&rtwdev->dfs_mutex);
-		return;
-	}
-
-	sband = wiphy->bands[NL80211_BAND_5GHZ];
-	for (i = 0; i < sband->n_channels; i++) {
-		ch = &sband->channels[i];
-		if (rtwdev->dfs_channel_map & BIT(i)) {
-			ch->beacon_found = false;
-			ch->flags |= IEEE80211_CHAN_NO_IR;
-			rtw_dbg(rtwdev, RTW_DBG_REGD,
-				"restore NO_IR flag for channel(%d)\n",
-				 ch->hw_value);
-		}
-	}
-	rtwdev->dfs_last_update = jiffies;
-	mutex_unlock(&rtwdev->dfs_mutex);
-}
-
 void rtw_vif_assoc_changed(struct rtw_vif *rtwvif,
 			   struct ieee80211_bss_conf *conf)
 {
@@ -719,6 +638,19 @@ static void rtw_txq_ba_work(struct work_struct *work)
 	rtw_iterate_stas_atomic(rtwdev, rtw_txq_ba_iter, &data);
 }
 
+void rtw_set_rx_freq_band(struct rtw_rx_pkt_stat *pkt_stat, u8 channel)
+{
+	if (IS_CH_2G_BAND(channel))
+		pkt_stat->band = NL80211_BAND_2GHZ;
+	else if (IS_CH_5G_BAND(channel))
+		pkt_stat->band = NL80211_BAND_5GHZ;
+	else
+		return;
+
+	pkt_stat->freq = ieee80211_channel_to_frequency(channel, pkt_stat->band);
+}
+EXPORT_SYMBOL(rtw_set_rx_freq_band);
+
 void rtw_get_channel_params(struct cfg80211_chan_def *chandef,
 			    struct rtw_channel_params *chan_params)
 {
@@ -817,6 +749,7 @@ void rtw_set_channel(struct rtw_dev *rtwdev)
 
 	hal->current_band_width = bandwidth;
 	hal->current_channel = center_chan;
+	hal->current_primary_channel_index = primary_chan_idx;
 	hal->current_band_type = center_chan > 14 ? RTW_BAND_5G : RTW_BAND_2G;
 
 	for (i = RTW_CHANNEL_WIDTH_20; i <= RTW_MAX_CHANNEL_WIDTH; i++)
@@ -1358,6 +1291,50 @@ void rtw_core_fw_scan_notify(struct rtw_dev *rtwdev, bool start)
 						 SCAN_NOTIFY_TIMEOUT))
 			rtw_warn(rtwdev, "firmware failed to report density after scan\n");
 	}
+}
+
+void rtw_core_scan_start(struct rtw_dev *rtwdev, struct rtw_vif *rtwvif,
+			 const u8 *mac_addr, bool hw_scan)
+{
+	u32 config = 0;
+	int ret = 0;
+
+	rtw_leave_lps(rtwdev);
+
+	if (hw_scan && rtwvif->net_type == RTW_NET_NO_LINK) {
+		ret = rtw_leave_ips(rtwdev);
+		if (ret) {
+			rtw_err(rtwdev, "failed to leave idle state\n");
+			return;
+		}
+	}
+
+	ether_addr_copy(rtwvif->mac_addr, mac_addr);
+	config |= PORT_SET_MAC_ADDR;
+	rtw_vif_port_config(rtwdev, rtwvif, config);
+
+	rtw_coex_scan_notify(rtwdev, COEX_SCAN_START);
+	rtw_core_fw_scan_notify(rtwdev, true);
+
+	set_bit(RTW_FLAG_DIG_DISABLE, rtwdev->flags);
+	set_bit(RTW_FLAG_SCANNING, rtwdev->flags);
+}
+
+void rtw_core_scan_complete(struct rtw_dev *rtwdev, struct ieee80211_vif *vif)
+{
+	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+	u32 config = 0;
+
+	clear_bit(RTW_FLAG_SCANNING, rtwdev->flags);
+	clear_bit(RTW_FLAG_DIG_DISABLE, rtwdev->flags);
+
+	rtw_core_fw_scan_notify(rtwdev, false);
+
+	ether_addr_copy(rtwvif->mac_addr, vif->addr);
+	config |= PORT_SET_MAC_ADDR;
+	rtw_vif_port_config(rtwdev, rtwvif, config);
+
+	rtw_coex_scan_notify(rtwdev, COEX_SCAN_FINISH);
 }
 
 int rtw_core_start(struct rtw_dev *rtwdev)
@@ -2036,6 +2013,7 @@ int rtw_register_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
 	ieee80211_hw_set(hw, SUPPORTS_AMSDU_IN_AMPDU);
 	ieee80211_hw_set(hw, HAS_RATE_CONTROL);
 	ieee80211_hw_set(hw, TX_AMSDU);
+	ieee80211_hw_set(hw, SINGLE_SCAN_ON_ALL_BANDS);
 
 	hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION) |
 				     BIT(NL80211_IFTYPE_AP) |
@@ -2048,8 +2026,12 @@ int rtw_register_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
 			    WIPHY_FLAG_TDLS_EXTERNAL_SETUP;
 
 	hw->wiphy->features |= NL80211_FEATURE_SCAN_RANDOM_MAC_ADDR;
+	hw->wiphy->max_scan_ssids = RTW_SCAN_MAX_SSIDS;
+	hw->wiphy->max_scan_ie_len = RTW_SCAN_MAX_IE_LEN;
 
 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_CAN_REPLACE_PTK0);
+	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_SCAN_RANDOM_SN);
+	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_SET_SCAN_DWELL);
 
 #ifdef CONFIG_PM
 	hw->wiphy->wowlan = rtwdev->chip->wowlan_stub;

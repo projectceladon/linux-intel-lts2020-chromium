@@ -3076,7 +3076,7 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 
 		if (!msr_info->host_initiated)
 			return 1;
-		if (guest_cpuid_has(vcpu, X86_FEATURE_PDCM) && kvm_get_msr_feature(&msr_ent))
+		if (kvm_get_msr_feature(&msr_ent))
 			return 1;
 		if (data & ~msr_ent.data)
 			return 1;
@@ -8941,7 +8941,7 @@ static void vcpu_do_suspend_time_adjustment(struct kvm_vcpu *vcpu,
 	}
 
 	adj = __this_cpu_read(cpu_tsc_khz) *
-		(last_suspend_duration / 1000000);
+		div_u64(last_suspend_duration, 1000000);
 	adjust_tsc_offset_host(vcpu, -adj);
 	/*
 	 * This request should be processed before

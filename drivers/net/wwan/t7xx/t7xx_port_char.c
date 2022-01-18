@@ -2,6 +2,14 @@
 /*
  * Copyright (c) 2021, MediaTek Inc.
  * Copyright (c) 2021, Intel Corporation.
+ *
+ * Authors: Haijun Lio <haijun.liu@mediatek.com>
+ * Contributors: Amir Hanania <amir.hanania@intel.com>
+ *               Chiranjeevi Rapolu <chiranjeevi.rapolu@intel.com>
+ *               Eliot Lee <eliot.lee@intel.com>
+ *               Moises Veleta <moises.veleta@intel.com>
+ *               Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *               Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
 #include <linux/bitfield.h>
@@ -12,19 +20,19 @@
 #include <linux/spinlock.h>
 
 #include "t7xx_common.h"
-#include "t7xx_monitor.h"
+#include "t7xx_state_monitor.h"
 #include "t7xx_port.h"
 #include "t7xx_port_proxy.h"
-#include "t7xx_skb_util.h"
 
 static __poll_t port_char_poll(struct file *fp, struct poll_table_struct *poll)
 {
 	struct t7xx_port *port;
+	struct t7xx_port_static *port_static;
 	enum md_state md_state;
 	__poll_t mask = 0;
 
 	port = fp->private_data;
-	md_state = ccci_fsm_get_md_state();
+	md_state = t7xx_fsm_get_md_state(port->t7xx_dev->md->fsm_ctl);
 	poll_wait(fp, &port->rx_wq, poll);
 
 	spin_lock_irq(&port->rx_wq.lock);
@@ -32,10 +40,11 @@ static __poll_t port_char_poll(struct file *fp, struct poll_table_struct *poll)
 		mask |= EPOLLIN | EPOLLRDNORM;
 
 	spin_unlock_irq(&port->rx_wq.lock);
-	if (port_write_room_to_md(port) > 0)
+	if (t7xx_port_write_room_to_md(port) > 0)
 		mask |= EPOLLOUT | EPOLLWRNORM;
 
-	if (port->rx_ch == CCCI_UART1_RX &&
+	port_static = port->port_static;
+	if (port_static->rx_ch == PORT_CH_UART1_RX &&
 	    md_state != MD_STATE_READY &&
 	    md_state != MD_STATE_EXCEPTION) {
 		/* notify MD logger to save its log before md_init kills it */
@@ -76,7 +85,6 @@ static int port_char_close(struct inode *inode, struct file *file)
 {
 	struct t7xx_port *port;
 	struct sk_buff *skb;
-	int clear_cnt = 0;
 
 	port = file->private_data;
 	/* decrease usage count, so when we ask again,
@@ -86,10 +94,8 @@ static int port_char_close(struct inode *inode, struct file *file)
 
 	/* purge RX request list */
 	spin_lock_irq(&port->rx_wq.lock);
-	while ((skb = __skb_dequeue(&port->rx_skb_list)) != NULL) {
-		ccci_free_skb(&port->mtk_dev->pools, skb);
-		clear_cnt++;
-	}
+	while ((skb = __skb_dequeue(&port->rx_skb_list)) != NULL)
+		dev_kfree_skb(skb);
 
 	spin_unlock_irq(&port->rx_wq.lock);
 	return 0;
@@ -131,13 +137,13 @@ static ssize_t port_char_read(struct file *file, char __user *buf, size_t count,
 	spin_unlock_irq(&port->rx_wq.lock);
 	if (copy_to_user(buf, skb->data, read_len)) {
 		dev_err(port->dev, "read on %s, copy to user failed, %d/%zu\n",
-			port->name, read_len, count);
+			port->port_static->name, read_len, count);
 		ret = -EFAULT;
 	}
 
 	skb_pull(skb, read_len);
 	if (full_req_done)
-		ccci_free_skb(&port->mtk_dev->pools, skb);
+		dev_kfree_skb(skb);
 
 	return ret ? ret : read_len;
 }
@@ -148,6 +154,7 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 	size_t actual_count, alloc_size, txq_mtu;
 	int i, multi_packet = 1;
 	struct t7xx_port *port;
+	struct t7xx_port_static *port_static;
 	enum md_state md_state;
 	struct sk_buff *skb;
 	bool blocking;
@@ -155,21 +162,23 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 
 	blocking = !(file->f_flags & O_NONBLOCK);
 	port = file->private_data;
-	md_state = ccci_fsm_get_md_state();
+	port_static = port->port_static;
+	md_state = t7xx_fsm_get_md_state(port->t7xx_dev->md->fsm_ctl);
+
 	if (md_state == MD_STATE_WAITING_FOR_HS1 || md_state == MD_STATE_WAITING_FOR_HS2) {
 		dev_warn(port->dev, "port: %s ch: %d, write fail when md_state: %d\n",
-			 port->name, port->tx_ch, md_state);
+			 port_static->name, port_static->tx_ch, md_state);
 		return -ENODEV;
 	}
 
-	if (port_write_room_to_md(port) <= 0 && !blocking)
+	if (t7xx_port_write_room_to_md(port) <= 0 && !blocking)
 		return -EAGAIN;
 
-	txq_mtu = cldma_txq_mtu(port->txq_index);
-	if (port->flags & PORT_F_RAW_DATA || port->flags & PORT_F_USER_HEADER) {
-		if (port->flags & PORT_F_USER_HEADER && count > txq_mtu) {
+	txq_mtu = cldma_txq_mtu(port_static->txq_index);
+	if (port_static->flags & PORT_F_RAW_DATA || port_static->flags & PORT_F_USER_HEADER) {
+		if (port_static->flags & PORT_F_USER_HEADER && count > txq_mtu) {
 			dev_err(port->dev, "packet size: %zu larger than MTU on %s\n",
-				count, port->name);
+				count, port_static->name);
 			return -ENOMEM;
 		}
 
@@ -178,9 +187,9 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 	} else {
 		actual_count = (count + CCCI_H_ELEN) > txq_mtu ? (txq_mtu - CCCI_H_ELEN) : count;
 		alloc_size = actual_count + CCCI_H_ELEN;
-		if (count + CCCI_H_ELEN > txq_mtu && (port->tx_ch == CCCI_MBIM_TX ||
-						      (port->tx_ch >= CCCI_DSS0_TX &&
-						       port->tx_ch <= CCCI_DSS7_TX))) {
+		if (count + CCCI_H_ELEN > txq_mtu && (port_static->tx_ch == PORT_CH_MBIM_TX ||
+						      (port_static->tx_ch >= PORT_CH_DSS0_TX &&
+						       port_static->tx_ch <= PORT_CH_DSS7_TX))) {
 			multi_packet = (count + txq_mtu - CCCI_H_ELEN - 1) /
 					(txq_mtu - CCCI_H_ELEN);
 		}
@@ -194,7 +203,7 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 			alloc_size = actual_count + CCCI_H_ELEN;
 		}
 
-		skb = ccci_alloc_skb_from_pool(&port->mtk_dev->pools, alloc_size, blocking);
+		skb = __dev_alloc_skb(alloc_size, GFP_KERNEL);
 		if (!skb) {
 			ret = -ENOMEM;
 			goto err_out;
@@ -209,7 +218,7 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 				/* The ccci_header is provided by user.
 				 *
 				 * For only sending ccci_header without additional data
-				 * case, data[0]=CCCI_HEADER_NO_DATA, data[1]=user_data,
+				 * case, data[1]=CCCI_HEADER_NO_DATA, data[1]=user_data,
 				 * ch=tx_channel, reserved=no_use.
 				 *
 				 * For send ccci_header with additional data case,
@@ -218,21 +227,22 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 				 */
 				ccci_h = (struct ccci_header *)skb->data;
 				if (actual_count == CCCI_H_LEN)
-					ccci_h->data[0] = CCCI_HEADER_NO_DATA;
+					ccci_h->packet_header = cpu_to_le32(CCCI_HEADER_NO_DATA);
 				else
-					ccci_h->data[1] = actual_count;
+					ccci_h->packet_len = cpu_to_le32(actual_count);
 
-				ccci_h->status &= ~HDR_FLD_CHN;
-				ccci_h->status |= FIELD_PREP(HDR_FLD_CHN, port->tx_ch);
+				ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
+				ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN,
+									 port_static->tx_ch));
 			}
 		} else {
 			/* ccci_header is provided by driver */
 			ccci_h = skb_put(skb, CCCI_H_LEN);
-			ccci_h->data[0] = 0;
-			ccci_h->data[1] = actual_count + CCCI_H_LEN;
-			ccci_h->status &= ~HDR_FLD_CHN;
-			ccci_h->status |= FIELD_PREP(HDR_FLD_CHN, port->tx_ch);
-			ccci_h->reserved = 0;
+			ccci_h->packet_header = 0;
+			ccci_h->packet_len = cpu_to_le32(actual_count + CCCI_H_LEN);
+			ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
+			ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, port_static->tx_ch));
+			ccci_h->ex_msg = 0;
 
 			ret = copy_from_user(skb_put(skb, actual_count),
 					     buf + i * (txq_mtu - CCCI_H_ELEN), actual_count);
@@ -244,8 +254,8 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 		}
 
 		/* send out */
-		port_proxy_set_seq_num(port, ccci_h);
-		ret = port_send_skb_to_md(port, skb, blocking);
+		t7xx_port_proxy_set_seq_num(port, ccci_h);
+		ret = t7xx_port_send_skb_to_md(port, skb, blocking);
 		if (ret) {
 			if (ret == -EBUSY && !blocking)
 				ret = -EAGAIN;
@@ -255,7 +265,7 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 			/* Record the port seq_num after the data is sent to HIF.
 			 * Only bits 0-14 are used, thus negating overflow.
 			 */
-			port->seq_nums[MTK_OUT]++;
+			port->seq_nums[MTK_TX]++;
 		}
 
 		if (multi_packet == 1) {
@@ -270,8 +280,8 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 err_out:
 	mutex_unlock(&port->tx_mutex_lock);
 	dev_err(port->dev, "write error done on %s, size: %zu, ret: %d\n",
-		port->name, actual_count, ret);
-	ccci_free_skb(&port->mtk_dev->pools, skb);
+		port_static->name, actual_count, ret);
+	dev_kfree_skb(skb);
 	return ret;
 }
 
@@ -287,9 +297,9 @@ static const struct file_operations char_fops = {
 static int port_char_init(struct t7xx_port *port)
 {
 	struct cdev *dev;
+	struct t7xx_port_static *port_static = port->port_static;
 
 	port->rx_length_th = MAX_RX_QUEUE_LENGTH;
-	port->skb_from_pool = true;
 	if (port->flags & PORT_F_RX_CHAR_NODE) {
 		dev = cdev_alloc();
 		if (!dev)
@@ -297,7 +307,8 @@ static int port_char_init(struct t7xx_port *port)
 
 		dev->ops = &char_fops;
 		dev->owner = THIS_MODULE;
-		if (cdev_add(dev, MKDEV(port->major, port->minor_base + port->minor), 1)) {
+		if (cdev_add(dev, MKDEV(port_static->major,
+					port_static->minor_base + port_static->minor), 1)) {
 			kobject_put(&dev->kobj);
 			return -ENOMEM;
 		}
@@ -308,7 +319,7 @@ static int port_char_init(struct t7xx_port *port)
 		port->cdev = dev;
 	}
 
-	if (port->rx_ch == CCCI_UART2_RX)
+	if (port_static->rx_ch == PORT_CH_UART2_RX)
 		port->flags |= PORT_F_RX_CH_TRAFFIC;
 
 	return 0;
@@ -318,10 +329,12 @@ static void port_char_uninit(struct t7xx_port *port)
 {
 	unsigned long flags;
 	struct sk_buff *skb;
+	struct t7xx_port_static *port_static = port->port_static;
 
 	if (port->flags & PORT_F_RX_CHAR_NODE && port->cdev) {
 		if (port->chn_crt_stat == CCCI_CHAN_ENABLE) {
-			port_unregister_device(port->major, port->minor_base + port->minor);
+			port_unregister_device(port_static->major,
+					       port_static->minor_base + port_static->minor);
 			spin_lock(&port->port_update_lock);
 			port->chn_crt_stat = CCCI_CHAN_DISABLE;
 			spin_unlock(&port->port_update_lock);
@@ -334,32 +347,35 @@ static void port_char_uninit(struct t7xx_port *port)
 	/* interrupts need to be disabled */
 	spin_lock_irqsave(&port->rx_wq.lock, flags);
 	while ((skb = __skb_dequeue(&port->rx_skb_list)) != NULL)
-		ccci_free_skb(&port->mtk_dev->pools, skb);
+		dev_kfree_skb(skb);
 	spin_unlock_irqrestore(&port->rx_wq.lock, flags);
 }
 
 static int port_char_recv_skb(struct t7xx_port *port, struct sk_buff *skb)
 {
-	if ((port->flags & PORT_F_RX_CHAR_NODE) && !atomic_read(&port->usage_cnt)) {
+	struct t7xx_port_static *port_static = port->port_static;
+
+	if ((port_static->flags & PORT_F_RX_CHAR_NODE) && !atomic_read(&port->usage_cnt)) {
 		dev_err_ratelimited(port->dev,
-				    "port %s is not opened, dropping packets\n", port->name);
+				    "port %s is not opened, dropping packets\n", port_static->name);
 		return -ENETDOWN;
 	}
-
-	return port_recv_skb(port, skb);
+	return t7xx_port_recv_skb(port, skb);
 }
 
 static int port_status_update(struct t7xx_port *port)
 {
-	if (!(port->flags & PORT_F_RX_CHAR_NODE))
+	struct t7xx_port_static *port_static = port->port_static;
+
+	if (!(port_static->flags & PORT_F_RX_CHAR_NODE))
 		return 0;
 
 	if (port->chan_enable == CCCI_CHAN_ENABLE) {
 		int ret;
 
-		port->flags &= ~PORT_F_RX_ALLOW_DROP;
-		ret = port_register_device(port->name, port->major,
-					   port->minor_base + port->minor);
+		port_static->flags &= ~PORT_F_RX_ALLOW_DROP;
+		ret = port_register_device(port_static->name, port_static->major,
+					   port_static->minor_base + port_static->minor);
 		if (ret)
 			return ret;
 
@@ -371,8 +387,8 @@ static int port_status_update(struct t7xx_port *port)
 		return 0;
 	}
 
-	port->flags |= PORT_F_RX_ALLOW_DROP;
-	port_unregister_device(port->major, port->minor_base + port->minor);
+	port_static->flags |= PORT_F_RX_ALLOW_DROP;
+	port_unregister_device(port_static->major, port_static->minor_base + port_static->minor);
 	spin_lock(&port->port_update_lock);
 	port->chn_crt_stat = CCCI_CHAN_DISABLE;
 	spin_unlock(&port->port_update_lock);

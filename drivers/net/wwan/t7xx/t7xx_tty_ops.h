@@ -2,6 +2,11 @@
  *
  * Copyright (c) 2021, MediaTek Inc.
  * Copyright (c) 2021, Intel Corporation.
+ *
+ * Authors: Haijun Lio <haijun.liu@mediatek.com>
+ * Contributors: Amir Hanania <amir.hanania@intel.com>
+ *               Moises Veleta <moises.veleta@intel.com>
+ *               Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
 #ifndef __T7XX_TTY_OPS_H__

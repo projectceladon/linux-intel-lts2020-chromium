@@ -13,8 +13,8 @@
 #include <dt-bindings/phy/phy.h>
 #include <dt-bindings/pinctrl/mt8195-pinfunc.h>
 #include <dt-bindings/power/mt8195-power.h>
-#include <dt-bindings/reset/ti-syscon.h>
 #include <dt-bindings/reset/mt8195-resets.h>
+#include <dt-bindings/reset/ti-syscon.h>
 #include <dt-bindings/thermal/thermal.h>
 
 / {
@@ -30,13 +30,13 @@
 		ethdr0 = &ethdr0;
 		gce0 = &gce0;
 		gce1 = &gce1;
-		mutex0 = &mutex;
-		mutex1 = &mutex1;
 		merge1 = &merge1;
 		merge2 = &merge2;
 		merge3 = &merge3;
 		merge4 = &merge4;
 		merge5 = &merge5;
+		mutex0 = &mutex0;
+		mutex1 = &mutex1;
 		vdo1_rdma0 = &vdo1_rdma0;
 		vdo1_rdma1 = &vdo1_rdma1;
 		vdo1_rdma2 = &vdo1_rdma2;
@@ -264,6 +264,13 @@
 		wakeup-delay-ms = <50>;
 	};
 
+	hdmiddc0: ddc_i2c {
+		compatible = "mediatek,mt8195-hdmi-ddc";
+		clocks = <&clk26m>;
+		clock-names = "ddc-i2c";
+		status = "disabled";
+	};
+
 	pmu-a55 {
 		compatible = "arm,cortex-a55-pmu";
 		interrupt-parent = <&gic>;
@@ -286,16 +293,6 @@
                 reg = <0 0x0011bc10 0 0x120>, <0 0x0011bd30 0 0x120>;
                 #performance-domain-cells = <1>;
         };
-
-	timer: timer {
-		compatible = "arm,armv8-timer";
-		interrupt-parent = <&gic>;
-		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_HIGH 0>,
-			     <GIC_PPI 14 IRQ_TYPE_LEVEL_HIGH 0>,
-			     <GIC_PPI 11 IRQ_TYPE_LEVEL_HIGH 0>,
-			     <GIC_PPI 10 IRQ_TYPE_LEVEL_HIGH 0>;
-		clock-frequency = <13000000>;
-	};
 
 	soc {
 		#address-cells = <2>;
@@ -1323,7 +1320,7 @@
 			};
 		};
 
-		nor_flash: nor@1132c000 {
+		nor_flash: spi@1132c000 {
 			compatible = "mediatek,mt8195-nor",
 				     "mediatek,mt8173-nor";
 			reg = <0 0x1132c000 0 0x1000>;
@@ -1460,7 +1457,7 @@
 			clock-names = "main", "dma";
 			#address-cells = <1>;
 			#size-cells = <0>;
-			status = "okay";
+			status = "disabled";
 		};
 
 		i2c1: i2c@11e01000 {
@@ -1812,6 +1809,8 @@
 							<&spm MT8195_POWER_DOMAIN_VPPSYS1>;
 			iommus = <&iommu_vpp M4U_PORT_L4_MDP_RDMA>,
 				 <&iommu_vpp M4U_PORT_L4_MDP_WROT>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x2 0x0 0x0 0x40000000 0x1 0x0>; /* 8G - 12G IOVA*/
 			clocks = <&vppsys0 CLK_VPP0_MDP_RDMA>,
 					<&topckgen CLK_TOP_CFG_VPP0>,
@@ -2269,6 +2268,8 @@
 						"TOP_CFG_26M_VPP1";
 			iommus = <&iommu_vdo M4U_PORT_L5_SVPP1_MDP_RDMA>,
 				 <&iommu_vdo M4U_PORT_L5_SVPP1_MDP_WROT>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x2 0x0 0x0 0x40000000 0x1 0x0>; /* 8G - 12G IOVA*/
 			power-domains = <&spm MT8195_POWER_DOMAIN_VPPSYS1>;
 		};
@@ -2288,6 +2289,8 @@
 						"TOP_CFG_26M_VPP1";
 			iommus = <&iommu_vdo M4U_PORT_L5_SVPP2_MDP_RDMA>,
 				 <&iommu_vdo M4U_PORT_L5_SVPP2_MDP_WROT>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x2 0x0 0x0 0x40000000 0x1 0x0>; /* 8G - 12G IOVA*/
 			power-domains = <&spm MT8195_POWER_DOMAIN_VPPSYS1>;
 		};
@@ -2307,6 +2310,8 @@
 						"TOP_CFG_26M_VPP1";
 			iommus = <&iommu_vpp M4U_PORT_L6_SVPP3_MDP_RDMA>,
 				 <&iommu_vpp M4U_PORT_L6_SVPP3_MDP_WROT>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x2 0x0 0x0 0x40000000 0x1 0x0>; /* 8G - 12G IOVA*/
 			power-domains = <&spm MT8195_POWER_DOMAIN_VPPSYS1>;
 		};
@@ -2889,6 +2894,8 @@
 			reg = <0 0x18000000 0 0x1000>;		/* VDEC_SYS */
 			mediatek,scp = <&scp>;
 			iommus = <&iommu_vdo M4U_PORT_L21_VDEC_MC_EXT>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x1 0x0 0x0 0x40000000 0x0 0xfff00000>;
 		};
 
@@ -2905,6 +2912,8 @@
 				 assigned-clocks = <&topckgen CLK_TOP_VDEC>;
 			assigned-clock-parents = <&topckgen CLK_TOP_UNIVPLL_D4>;
 			power-domains = <&spm MT8195_POWER_DOMAIN_VDEC0>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x1 0x0 0x0 0x40000000 0x0 0xfff00000>;
 		};
 
@@ -2926,6 +2935,8 @@
 			assigned-clocks = <&topckgen CLK_TOP_VDEC>;
 			assigned-clock-parents = <&topckgen CLK_TOP_UNIVPLL_D4>;
 			power-domains =  <&spm MT8195_POWER_DOMAIN_VDEC0>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x1 0x0 0x0 0x40000000 0x0 0xfff00000>;
 		};
 
@@ -2951,6 +2962,8 @@
 			assigned-clocks = <&topckgen CLK_TOP_VDEC>;
 			assigned-clock-parents = <&topckgen CLK_TOP_UNIVPLL_D4>;
 			power-domains = <&spm MT8195_POWER_DOMAIN_VDEC1>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x1 0x0 0x0 0x40000000 0x0 0xfff00000>;
 		};
 
@@ -2976,6 +2989,8 @@
 			assigned-clocks = <&topckgen CLK_TOP_VDEC>;
 			assigned-clock-parents = <&topckgen CLK_TOP_UNIVPLL_D4>;
 			power-domains = <&spm MT8195_POWER_DOMAIN_VDEC2>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x1 0x0 0x0 0x40000000 0x0 0xfff00000>;
 		};
 
@@ -3105,6 +3120,8 @@
 			assigned-clocks = <&topckgen CLK_TOP_VENC>;
 			assigned-clock-parents = <&topckgen CLK_TOP_UNIVPLL_D4>;
 			power-domains = <&spm MT8195_POWER_DOMAIN_VENC>;
+			#address-cells = <2>;
+			#size-cells = <2>;
 			dma-ranges = <0x1 0x0 0x0 0x40000000 0x0 0xfff00000>;
 		};
 
@@ -3246,7 +3263,7 @@
 				      "TVDPLL_D16";
 		};
 
-		mutex: disp_mutex0@1c016000 {
+		mutex0: disp_mutex0@1c016000 {
 			compatible = "mediatek,mt8195-disp-mutex";
 			reg = <0 0x1c016000 0 0x1000>;
 			reg-names = "vdo0_mutex";
@@ -3633,13 +3650,6 @@
 		};
 	};
 
-	hdmiddc0: ddc_i2c {
-		compatible = "mediatek,mt8195-hdmi-ddc";
-		clocks = <&clk26m>;
-		clock-names = "ddc-i2c";
-		status = "disabled";
-	};
-
 	sound: mt8195-sound {
 		mediatek,platform = <&afe>;
 		status = "disabled";
@@ -3791,5 +3801,15 @@
 			polling-delay-passive = <0>; /* milliseconds */
 			thermal-sensors = <&lvts 17>;
 		};
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupt-parent = <&gic>;
+		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_HIGH 0>,
+			     <GIC_PPI 14 IRQ_TYPE_LEVEL_HIGH 0>,
+			     <GIC_PPI 11 IRQ_TYPE_LEVEL_HIGH 0>,
+			     <GIC_PPI 10 IRQ_TYPE_LEVEL_HIGH 0>;
+		clock-frequency = <13000000>;
 	};
 };

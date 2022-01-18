@@ -4162,7 +4162,6 @@ static void run_state_machine(struct tcpm_port *port)
 			port->debouncing = false;
 		}
 		break;
-
 	case SRC_TRY:
 		port->try_src_count++;
 		tcpm_set_cc(port, tcpm_rp_cc(port));

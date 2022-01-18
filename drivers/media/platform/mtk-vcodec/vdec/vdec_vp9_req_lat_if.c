@@ -546,7 +546,8 @@ static int vdec_vp9_slice_init_default_frame_ctx(
 		goto out;
 	}
 
-	memcpy_fromio(frame_ctx, remote_frame_ctx, sizeof(*frame_ctx));
+	memcpy_fromio(frame_ctx,
+		      (void __iomem *)remote_frame_ctx, sizeof(*frame_ctx));
 	vdec_vp9_slice_default_frame_ctx = frame_ctx;
 
 out:
@@ -692,21 +693,22 @@ static void vdec_vp9_slice_vsi_from_remote(
 	if (!skip) {
 		rf = &remote_vsi->frame;
 		f = &vsi->frame;
-		memcpy_fromio(&f->ch, &rf->ch, sizeof(f->ch));
-		memcpy_fromio(&f->uh.dequant, &rf->uh.dequant,
+		memcpy_fromio(&f->ch, (void __iomem *)&rf->ch, sizeof(f->ch));
+		memcpy_fromio(&f->uh.dequant, (void __iomem *)&rf->uh.dequant,
 			sizeof(f->uh.dequant));
-		memcpy_fromio(&vsi->trans, &remote_vsi->trans,
+		memcpy_fromio(&vsi->trans, (void __iomem *)&remote_vsi->trans,
 			sizeof(vsi->trans));
 	}
 
-	memcpy_fromio(&vsi->state, &remote_vsi->state, sizeof(vsi->state));
+	memcpy_fromio(&vsi->state,
+		      (void __iomem *)&remote_vsi->state, sizeof(vsi->state));
 }
 
 static void vdec_vp9_slice_vsi_to_remote(
 	struct vdec_vp9_slice_vsi *vsi,
 	struct vdec_vp9_slice_vsi *remote_vsi)
 {
-	memcpy_toio(remote_vsi, vsi, sizeof(*vsi));
+	memcpy_toio((void __iomem *)remote_vsi, vsi, sizeof(*vsi));
 }
 
 static int vdec_vp9_slice_tile_offset(int idx,
@@ -1942,7 +1944,7 @@ static int vdec_vp9_slice_lat_decode(void *h_vdec,
 	}
 	vdec_vp9_slice_vsi_to_remote(vsi, instance->vsi);
 
-	ret = vpu_dec_start(&instance->vpu, 0, 0);
+	ret = vpu_dec_start(&instance->vpu, NULL, 0);
 	if (ret) {
 		mtk_vcodec_err(instance,
 			"Failed to dec VP9 ret %d\n", ret);
@@ -1957,7 +1959,7 @@ static int vdec_vp9_slice_lat_decode(void *h_vdec,
 		if (ret) {
 			mtk_vcodec_err(instance,
 				"VP9 decode timeout %d\n", ret);
-			writel(1, &instance->vsi->state.timeout);
+			writel(1, (void __iomem *)&instance->vsi->state.timeout);
 		}
 		vpu_dec_end(&instance->vpu);
 	}
@@ -1983,8 +1985,8 @@ static int vdec_vp9_slice_lat_decode(void *h_vdec,
 		return -EBUSY;
 	}
 
-	mtk_vcodec_debug(instance, "lat dma 1 0x%llx 0x%llx\n",
-		pfc->vsi.trans.dma_addr, pfc->vsi.trans.dma_addr_end);
+	mtk_vcodec_debug(instance, "lat dma 1 0x%pad 0x%pad\n",
+		&pfc->vsi.trans.dma_addr, &pfc->vsi.trans.dma_addr_end);
 
 	vdec_msg_queue_update_ube_wptr(&ctx->msg_queue,
 		vsi->trans.dma_addr_end  + ctx->msg_queue.wdma_addr.dma_addr);
@@ -2040,7 +2042,7 @@ static int vdec_vp9_slice_core_decode(
 		/* update remote vsi if decode timeout */
 		if (ret) {
 			mtk_vcodec_err(instance, "VP9 core timeout\n");
-			writel(1, &instance->core_vsi->state.timeout);
+			writel(1, (void __iomem *)&instance->core_vsi->state.timeout);
 		}
 		vpu_dec_core_end(&instance->vpu);
 	}
@@ -2053,8 +2055,8 @@ static int vdec_vp9_slice_core_decode(
 	}
 
 	pfc->vsi.trans.dma_addr_end += ctx->msg_queue.wdma_addr.dma_addr;
-	mtk_vcodec_debug(instance, "core dma_addr_end 0x%llx\n",
-		pfc->vsi.trans.dma_addr_end);
+	mtk_vcodec_debug(instance, "core dma_addr_end 0x%pad\n",
+		&pfc->vsi.trans.dma_addr_end);
 	vdec_msg_queue_update_ube_rptr(&ctx->msg_queue,
 		pfc->vsi.trans.dma_addr_end);
 	ctx->dev->vdec_pdata->cap_to_disp(ctx, fb, 0);

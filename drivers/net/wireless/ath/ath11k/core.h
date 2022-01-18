@@ -47,6 +47,11 @@ enum ath11k_supported_bw {
 	ATH11K_BW_160	= 3,
 };
 
+enum ath11k_bdf_search {
+	ATH11K_BDF_SEARCH_DEFAULT,
+	ATH11K_BDF_SEARCH_BUS_AND_BOARD,
+};
+
 enum wme_ac {
 	WME_AC_BE,
 	WME_AC_BK,
@@ -193,7 +198,9 @@ enum ath11k_dev_flags {
 };
 
 enum ath11k_monitor_flags {
-	ATH11K_FLAG_MONITOR_ENABLED,
+	ATH11K_FLAG_MONITOR_CONF_ENABLED,
+	ATH11K_FLAG_MONITOR_STARTED,
+	ATH11K_FLAG_MONITOR_VDEV_CREATED,
 };
 
 struct ath11k_vif {
@@ -362,6 +369,7 @@ struct ath11k_sta {
 	enum hal_pn_type pn_type;
 
 	struct work_struct update_wk;
+	struct work_struct set_4addr_wk;
 	struct rate_info txrate;
 	struct rate_info last_txrate;
 	u64 rx_duration;
@@ -374,6 +382,9 @@ struct ath11k_sta {
 	/* protected by conf_mutex */
 	bool aggr_mode;
 #endif
+
+	bool use_4addr_set;
+	u16 tcl_metadata;
 };
 
 #define ATH11K_MIN_5G_FREQ 4150
@@ -484,7 +495,6 @@ struct ath11k {
 	u32 chan_tx_pwr;
 	u32 num_stations;
 	u32 max_num_stations;
-	bool monitor_present;
 	/* To synchronize concurrent synchronous mac80211 callback operations,
 	 * concurrent debugfs configuration and concurrent FW statistics events.
 	 */
@@ -559,6 +569,7 @@ struct ath11k {
 	struct ath11k_per_peer_tx_stats cached_stats;
 	u32 last_ppdu_id;
 	u32 cached_ppdu_id;
+	int monitor_vdev_id;
 #ifdef CONFIG_ATH11K_DEBUGFS
 	struct ath11k_debug debug;
 #endif
@@ -591,6 +602,8 @@ struct ath11k_pdev_cap {
 	u32 tx_chain_mask_shift;
 	u32 rx_chain_mask_shift;
 	struct ath11k_band_cap band[NUM_NL80211_BANDS];
+	bool nss_ratio_enabled;
+	u8 nss_ratio_info;
 };
 
 struct ath11k_pdev {
@@ -747,6 +760,14 @@ struct ath11k_base {
 
 	struct completion htc_suspend;
 
+	struct {
+		enum ath11k_bdf_search bdf_search;
+		u32 vendor;
+		u32 device;
+		u32 subsystem_vendor;
+		u32 subsystem_device;
+	} id;
+
 	/* must be last */
 	u8 drv_priv[0] __aligned(sizeof(void *));
 };
@@ -794,12 +815,15 @@ struct ath11k_fw_stats_pdev {
 	s32 hw_reaped;
 	/* Num underruns */
 	s32 underrun;
+	/* Num hw paused */
+	u32 hw_paused;
 	/* Num PPDUs cleaned up in TX abort */
 	s32 tx_abort;
-	/* Num MPDUs requed by SW */
-	s32 mpdus_requed;
+	/* Num MPDUs requeued by SW */
+	s32 mpdus_requeued;
 	/* excessive retries */
 	u32 tx_ko;
+	u32 tx_xretry;
 	/* data hw rate code */
 	u32 data_rc;
 	/* Scheduler self triggers */
@@ -820,6 +844,30 @@ struct ath11k_fw_stats_pdev {
 	u32 phy_underrun;
 	/* MPDU is more than txop limit */
 	u32 txop_ovf;
+	/* Num sequences posted */
+	u32 seq_posted;
+	/* Num sequences failed in queueing */
+	u32 seq_failed_queueing;
+	/* Num sequences completed */
+	u32 seq_completed;
+	/* Num sequences restarted */
+	u32 seq_restarted;
+	/* Num of MU sequences posted */
+	u32 mu_seq_posted;
+	/* Num MPDUs flushed by SW, HWPAUSED, SW TXABORT
+	 * (Reset,channel change)
+	 */
+	s32 mpdus_sw_flush;
+	/* Num MPDUs filtered by HW, all filter condition (TTL expired) */
+	s32 mpdus_hw_filter;
+	/* Num MPDUs truncated by PDG (TXOP, TBTT,
+	 * PPDU_duration based on rate, dyn_bw)
+	 */
+	s32 mpdus_truncated;
+	/* Num MPDUs that was tried but didn't receive ACK or BA */
+	s32 mpdus_ack_failed;
+	/* Num MPDUs that was dropped du to expiry. */
+	s32 mpdus_expired;
 
 	/* PDEV RX stats */
 	/* Cnts any change in ring routing mid-ppdu */
@@ -845,6 +893,8 @@ struct ath11k_fw_stats_pdev {
 	s32 phy_err_drop;
 	/* Number of mpdu errors - FCS, MIC, ENC etc. */
 	s32 mpdu_errs;
+	/* Num overflow errors */
+	s32 rx_ovfl_errs;
 };
 
 struct ath11k_fw_stats_vdev {

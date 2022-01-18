@@ -336,7 +336,7 @@ static void rtw89_ops_bss_info_changed(struct ieee80211_hw *hw,
 	if (changed & BSS_CHANGED_BSSID) {
 		ether_addr_copy(rtwvif->bssid, conf->bssid);
 		rtw89_cam_bssid_changed(rtwdev, rtwvif);
-		rtw89_fw_h2c_cam(rtwdev, rtwvif);
+		rtw89_fw_h2c_cam(rtwdev, rtwvif, NULL, NULL);
 	}
 
 	if (changed & BSS_CHANGED_ERP_SLOT)
@@ -574,6 +574,7 @@ static int rtw89_ops_set_bitrate_mask(struct ieee80211_hw *hw,
 	struct rtw89_dev *rtwdev = hw->priv;
 
 	mutex_lock(&rtwdev->mutex);
+	rtw89_phy_rate_pattern_vif(rtwdev, vif, mask);
 	rtw89_ra_mask_info_update(rtwdev, vif, mask);
 	mutex_unlock(&rtwdev->mutex);
 
@@ -614,13 +615,16 @@ static void rtw89_ops_sw_scan_start(struct ieee80211_hw *hw,
 				    const u8 *mac_addr)
 {
 	struct rtw89_dev *rtwdev = hw->priv;
+	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
 	struct rtw89_hal *hal = &rtwdev->hal;
 
 	mutex_lock(&rtwdev->mutex);
 	rtwdev->scanning = true;
 	rtw89_leave_lps(rtwdev);
 	rtw89_btc_ntfy_scan_start(rtwdev, RTW89_PHY_0, hal->current_band_type);
+	rtw89_chip_rfk_scan(rtwdev, true);
 	rtw89_hci_recalc_int_mit(rtwdev);
+	rtw89_fw_h2c_cam(rtwdev, rtwvif, NULL, mac_addr);
 	mutex_unlock(&rtwdev->mutex);
 }
 
@@ -628,8 +632,11 @@ static void rtw89_ops_sw_scan_complete(struct ieee80211_hw *hw,
 				       struct ieee80211_vif *vif)
 {
 	struct rtw89_dev *rtwdev = hw->priv;
+	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
 
 	mutex_lock(&rtwdev->mutex);
+	rtw89_fw_h2c_cam(rtwdev, rtwvif, NULL, NULL);
+	rtw89_chip_rfk_scan(rtwdev, false);
 	rtw89_btc_ntfy_scan_finish(rtwdev, RTW89_PHY_0);
 	rtwdev->scanning = false;
 	rtwdev->dig.bypass_dig = true;

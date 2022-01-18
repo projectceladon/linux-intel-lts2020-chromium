@@ -20,6 +20,7 @@
 #include "mtk_dip-dev.h"
 #include "mtk_dip-hw.h"
 #include "mtk-mdp3-cmdq.h"
+#include "mtk-mdp3-core.h"
 
 static int mtk_dip_subdev_open(struct v4l2_subdev *sd,
 			       struct v4l2_subdev_fh *fh)
@@ -284,10 +285,11 @@ static int mtk_dip_vb2_meta_buf_init(struct vb2_buffer *vb)
 
 	dev_buf->scp_daddr[0] = vb2_dma_contig_plane_dma_addr(vb, 0);
 	buf_paddr = dev_buf->scp_daddr[0];
-	dev_buf->isp_daddr[0] =	dma_map_single(pipe->dip_dev->dev,
-						 phys_to_virt(buf_paddr),
+	dev_buf->isp_daddr[0] =	dma_map_resource(pipe->dip_dev->dev,
+						 buf_paddr,
 						 vb->planes[0].length,
-						 DMA_BIDIRECTIONAL);
+						 DMA_BIDIRECTIONAL,
+						 DMA_ATTR_SKIP_CPU_SYNC);
 	if (dma_mapping_error(pipe->dip_dev->dev,
 			      dev_buf->isp_daddr[0])) {
 		dev_err(pipe->dip_dev->dev,
@@ -326,8 +328,9 @@ static void mtk_dip_vb2_queue_meta_buf_cleanup(struct vb2_buffer *vb)
 	struct mtk_dip_dev_buffer *dev_buf = mtk_dip_vb2_buf_to_dev_buf(vb);
 	struct mtk_dip_pipe *pipe = vb2_get_drv_priv(vb->vb2_queue);
 
-	dma_unmap_single(pipe->dip_dev->dev, dev_buf->isp_daddr[0],
-			   vb->planes[0].length, DMA_BIDIRECTIONAL);
+	dma_unmap_resource(pipe->dip_dev->dev, dev_buf->isp_daddr[0],
+			   vb->planes[0].length, DMA_BIDIRECTIONAL,
+			   DMA_ATTR_SKIP_CPU_SYNC);
 }
 
 static void mtk_dip_vb2_buf_queue(struct vb2_buffer *vb)
@@ -2196,10 +2199,13 @@ static int __maybe_unused mtk_dip_pm_suspend(struct device *dev)
 {
 	struct mtk_dip_dev *dip_dev = dev_get_drvdata(dev);
 	int ret, num;
+	struct mdp_dev *mdp = platform_get_drvdata(dip_dev->mdp_pdev);
 
 	if (pm_runtime_suspended(dev))
 		return 0;
 
+	if (MDP_STAGE_ERROR(mdp->stage_flag[0]) || MDP_STAGE_ERROR(mdp->stage_flag[1]))
+		dev_err(dev, "suspend enter : stage flag 1st %x, 2nd %x\n", mdp ->stage_flag[0], mdp->stage_flag[1]);
 	ret = wait_event_timeout
 		(dip_dev->flushing_waitq,
 		 !(num = atomic_read(&dip_dev->num_composing)),
@@ -2208,27 +2214,42 @@ static int __maybe_unused mtk_dip_pm_suspend(struct device *dev)
 		dev_err(dev, "%s: flushing SCP job timeout, num(%d)\n",
 			__func__, num);
 
+		if (MDP_STAGE_ERROR(mdp->stage_flag[0]) || MDP_STAGE_ERROR(mdp->stage_flag[1]))
+			dev_err(dev, "suspend timeout : stage flag 1st %x, 2nd %x\n", mdp ->stage_flag[0], mdp->stage_flag[1]);
 		return -EBUSY;
 	}
 
 	ret = pm_runtime_force_suspend(dev);
-	if (ret)
+	if (ret) {
+		if (MDP_STAGE_ERROR(mdp->stage_flag[0]) || MDP_STAGE_ERROR(mdp->stage_flag[1]))
+			dev_err(dev, "suspend force : stage flag 1st %x, 2nd %x\n", mdp ->stage_flag[0], mdp->stage_flag[1]);
 		return ret;
-
+	}
+	if (MDP_STAGE_ERROR(mdp->stage_flag[0]) || MDP_STAGE_ERROR(mdp->stage_flag[1]))
+		dev_err(dev, "suspend done : stage flag 1st %x, 2nd %x\n", mdp ->stage_flag[0], mdp->stage_flag[1]);
 	return 0;
 }
 
 static int __maybe_unused mtk_dip_pm_resume(struct device *dev)
 {
 	int ret;
+	struct mtk_dip_dev *dip_dev = dev_get_drvdata(dev);
+	struct mdp_dev *mdp = platform_get_drvdata(dip_dev->mdp_pdev);
 
 	if (pm_runtime_suspended(dev))
 		return 0;
 
+	if (MDP_STAGE_ERROR(mdp->stage_flag[0]) || MDP_STAGE_ERROR(mdp->stage_flag[1]))
+		dev_err(dev, "resume start : stage flag 1st %x, 2nd %x\n", mdp ->stage_flag[0], mdp->stage_flag[1]);
 	ret = pm_runtime_force_resume(dev);
-	if (ret)
+	if (ret) {
+		if (MDP_STAGE_ERROR(mdp->stage_flag[0]) || MDP_STAGE_ERROR(mdp->stage_flag[1]))
+			dev_err(dev, "resume force : stage flag 1st %x, 2nd %x\n", mdp ->stage_flag[0], mdp->stage_flag[1]);
 		return ret;
+	}
 
+	if (MDP_STAGE_ERROR(mdp->stage_flag[0]) || MDP_STAGE_ERROR(mdp->stage_flag[1]))
+		dev_err(dev, "resume done : stage flag 1st %x, 2nd %x\n", mdp ->stage_flag[0], mdp->stage_flag[1]);
 	return 0;
 }
 
