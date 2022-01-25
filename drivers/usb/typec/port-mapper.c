@@ -69,7 +69,10 @@ int typec_link_ports(struct typec_port *con)
 	 * improvements to the component framework. Right now you can only have
 	 * one master per device.
 	 */
-	return component_master_add_with_match(&con->dev, &typec_aggregate_ops, arg.match);
+	return 0;
+	/*
+	 * FIXME This is temp workaround to fix boot issue on TGL. Comment the below piece of code
+	 * return component_master_add_with_match(&con->dev, &typec_aggregate_ops, arg.match);*/
 }
 
 void typec_unlink_ports(struct typec_port *con)
