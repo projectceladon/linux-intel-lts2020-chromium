@@ -52,26 +52,17 @@ static void t7xx_port_ctrl_stop(struct wwan_port *port)
 	atomic_dec(&port_mtk->usage_cnt);
 }
 
-static bool t7xx_port_wwan_multipkt_capable(struct t7xx_port_static *port)
-{
-	return port->tx_ch == PORT_CH_MBIM_TX ||
-		(port->tx_ch >= PORT_CH_DSS0_TX && port->tx_ch <= PORT_CH_DSS7_TX);
-}
-
 static int t7xx_port_ctrl_tx(struct wwan_port *port, struct sk_buff *skb)
 {
 	struct t7xx_port *port_private = wwan_port_get_drvdata(port);
-	size_t actual_count = 0, alloc_size = 0, txq_mtu = 0;
+	size_t actual_len, alloc_size, txq_mtu = CLDMA_TXQ_MTU;
 	struct t7xx_port_static *port_static;
-	int i, multi_packet = 1, ret = 0;
-	struct sk_buff *skb_ccci = NULL;
+	unsigned int len, i, packets;
 	struct t7xx_fsm_ctl *ctl;
 	enum md_state md_state;
-	unsigned int count;
-	bool port_multi;
 
-	count = skb->len;
-	if (!count)
+	len = skb->len;
+	if (!len)
 		return -EINVAL;
 
 	port_static = port_private->port_static;
@@ -83,31 +74,18 @@ static int t7xx_port_ctrl_tx(struct wwan_port *port, struct sk_buff *skb)
 		return -ENODEV;
 	}
 
-	txq_mtu = CLDMA_TXQ_MTU;
+	alloc_size = min_t(size_t, txq_mtu, len + CCCI_H_ELEN);
+	actual_len = alloc_size - CCCI_H_ELEN;
+	packets = DIV_ROUND_UP(len, txq_mtu - CCCI_H_ELEN);
 
-	if (port_private->flags & PORT_F_USER_HEADER) {
-		if (port_private->flags & PORT_F_USER_HEADER && count > txq_mtu) {
-			dev_err(port_private->dev, "Packet %u larger than MTU on %s port\n",
-				count, port_static->name);
-			return -ENOMEM;
-		}
+	for (i = 0; i < packets; i++) {
+		struct ccci_header *ccci_h;
+		struct sk_buff *skb_ccci;
+		int ret;
 
-		alloc_size = min_t(size_t, txq_mtu, count);
-		actual_count = alloc_size;
-	} else {
-		alloc_size = min_t(size_t, txq_mtu, count + CCCI_H_ELEN);
-		actual_count = alloc_size - CCCI_H_ELEN;
-		port_multi = t7xx_port_wwan_multipkt_capable(port_static);
-		if ((count + CCCI_H_ELEN > txq_mtu) && port_multi)
-			multi_packet = DIV_ROUND_UP(count, txq_mtu - CCCI_H_ELEN);
-	}
-
-	for (i = 0; i < multi_packet; i++) {
-		struct ccci_header *ccci_h = NULL;
-
-		if (multi_packet > 1 && multi_packet == i + 1) {
-			actual_count = count % (txq_mtu - CCCI_H_ELEN);
-			alloc_size = actual_count + CCCI_H_ELEN;
+		if (packets > 1 && packets == i + 1) {
+			actual_len = len % (txq_mtu - CCCI_H_ELEN);
+			alloc_size = actual_len + CCCI_H_ELEN;
 		}
 
 		skb_ccci = __dev_alloc_skb(alloc_size, GFP_KERNEL);
@@ -115,36 +93,25 @@ static int t7xx_port_ctrl_tx(struct wwan_port *port, struct sk_buff *skb)
 			return -ENOMEM;
 
 		ccci_h = skb_put(skb_ccci, CCCI_H_LEN);
-		ccci_h->packet_header = 0;
-		ccci_h->packet_len = cpu_to_le32(actual_count + CCCI_H_LEN);
-		ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
-		ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, port_static->tx_ch));
-		ccci_h->ex_msg = 0;
-
-		memcpy(skb_put(skb_ccci, actual_count), skb->data + i * (txq_mtu - CCCI_H_ELEN),
-		       actual_count);
+		t7xx_ccci_header_init(ccci_h, 0, actual_len + CCCI_H_LEN, port_static->tx_ch, 0);
+		memcpy(skb_put(skb_ccci, actual_len), skb->data + i * (txq_mtu - CCCI_H_ELEN),
+		       actual_len);
 
 		t7xx_port_proxy_set_seq_num(port_private, ccci_h);
 
 		ret = t7xx_port_send_skb_to_md(port_private, skb_ccci, true);
-		if (ret)
-			goto err_free_skb;
+		if (ret) {
+			dev_err(port_private->dev, "Write error on %s port, %d\n",
+				port_static->name, ret);
+			dev_kfree_skb_any(skb_ccci);
+			return ret;
+		}
 
 		port_private->seq_nums[MTK_TX]++;
-
-		if (multi_packet == 1)
-			return actual_count;
-		else if (multi_packet == i + 1)
-			return count;
 	}
 
-err_free_skb:
-	if (ret != -ENOMEM) {
-		dev_err(port_private->dev, "Write error on %s port, %d\n", port_static->name, ret);
-		dev_kfree_skb_any(skb_ccci);
-	}
-
-	return ret;
+	kfree_skb(skb);
+	return 0;
 }
 
 static const struct wwan_port_ops wwan_ops = {
@@ -157,7 +124,7 @@ static int t7xx_port_wwan_init(struct t7xx_port *port)
 {
 	struct t7xx_port_static *port_static = port->port_static;
 
-	port->rx_length_th = MAX_RX_QUEUE_LENGTH;
+	port->rx_length_th = RX_QUEUE_MAXLEN;
 	port->flags |= PORT_F_RX_ADJUST_HEADER;
 
 	if (port_static->rx_ch == PORT_CH_UART2_RX)

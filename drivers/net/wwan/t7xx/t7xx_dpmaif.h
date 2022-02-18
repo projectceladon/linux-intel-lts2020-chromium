@@ -115,8 +115,8 @@ struct dpmaif_hw_intr_st_para {
 #define DP_DL_Q1_STATUS_MASK		(DP_DL_INT_Q1_PITCNT_LEN_ERR | DP_DL_INT_Q1_DONE)
 
 int t7xx_dpmaif_hw_init(struct dpmaif_ctrl *dpmaif_ctrl, struct dpmaif_hw_params *init_param);
-int t7xx_dpmaif_hw_stop_tx_queue(struct dpmaif_ctrl *dpmaif_ctrl);
-int t7xx_dpmaif_hw_stop_rx_queue(struct dpmaif_ctrl *dpmaif_ctrl);
+int t7xx_dpmaif_hw_stop_all_txq(struct dpmaif_ctrl *dpmaif_ctrl);
+int t7xx_dpmaif_hw_stop_all_rxq(struct dpmaif_ctrl *dpmaif_ctrl);
 void t7xx_dpmaif_start_hw(struct dpmaif_ctrl *dpmaif_ctrl);
 int t7xx_dpmaif_hw_get_intr_cnt(struct dpmaif_ctrl *dpmaif_ctrl,
 				struct dpmaif_hw_intr_st_para *para, int qno);
@@ -131,16 +131,16 @@ void t7xx_dpmaif_dlq_unmask_pitcnt_len_err_intr(struct dpmaif_hw_info *hw_info,
 						unsigned char qno);
 void t7xx_dpmaif_dlq_unmask_rx_done(struct dpmaif_hw_info *hw_info, unsigned char qno);
 bool t7xx_dpmaif_ul_clr_done(struct dpmaif_hw_info *hw_info, unsigned char qno);
-unsigned int t7xx_dpmaif_ul_get_ridx(struct dpmaif_hw_info *hw_info, unsigned char q_num);
+unsigned int t7xx_dpmaif_ul_get_rd_idx(struct dpmaif_hw_info *hw_info, unsigned char q_num);
 void t7xx_dpmaif_ul_clr_all_intr(struct dpmaif_hw_info *hw_info);
 void t7xx_dpmaif_dl_clr_all_intr(struct dpmaif_hw_info *hw_info);
 void t7xx_dpmaif_clr_ip_busy_sts(struct dpmaif_hw_info *hw_info);
 void t7xx_dpmaif_dl_unmask_batcnt_len_err_intr(struct dpmaif_hw_info *hw_info);
 void t7xx_dpmaif_dl_unmask_pitcnt_len_err_intr(struct dpmaif_hw_info *hw_info);
-unsigned int t7xx_dpmaif_dl_get_bat_ridx(struct dpmaif_hw_info *hw_info, unsigned char q_num);
-unsigned int t7xx_dpmaif_dl_get_bat_wridx(struct dpmaif_hw_info *hw_info, unsigned char q_num);
-unsigned int t7xx_dpmaif_dl_get_frg_ridx(struct dpmaif_hw_info *hw_info, unsigned char q_num);
-unsigned int t7xx_dpmaif_dl_dlq_pit_get_wridx(struct dpmaif_hw_info *hw_info,
-					      unsigned int dlq_pit_idx);
+unsigned int t7xx_dpmaif_dl_get_bat_rd_idx(struct dpmaif_hw_info *hw_info, unsigned char q_num);
+unsigned int t7xx_dpmaif_dl_get_bat_wr_idx(struct dpmaif_hw_info *hw_info, unsigned char q_num);
+unsigned int t7xx_dpmaif_dl_get_frg_rd_idx(struct dpmaif_hw_info *hw_info, unsigned char q_num);
+unsigned int t7xx_dpmaif_dl_dlq_pit_get_wr_idx(struct dpmaif_hw_info *hw_info,
+					       unsigned int dlq_pit_idx);
 
 #endif /* __T7XX_DPMAIF_H__ */

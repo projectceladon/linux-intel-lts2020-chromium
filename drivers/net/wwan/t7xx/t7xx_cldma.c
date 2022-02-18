@@ -63,13 +63,13 @@ void t7xx_cldma_hw_restore(struct t7xx_cldma_hw *hw_info)
 
 void t7xx_cldma_hw_start_queue(struct t7xx_cldma_hw *hw_info, u8 qno, enum mtk_txrx tx_rx)
 {
-	void __iomem *reg_start_cmd;
+	void __iomem *reg;
 	u32 val;
 
-	reg_start_cmd = (tx_rx == MTK_RX) ? hw_info->ap_pdn_base + REG_CLDMA_DL_START_CMD :
-					    hw_info->ap_pdn_base + REG_CLDMA_UL_START_CMD;
-	val = (qno == CLDMA_ALL_Q) ? CLDMA_ALL_Q : BIT(qno);
-	iowrite32(val, reg_start_cmd);
+	reg = tx_rx == MTK_RX ? hw_info->ap_pdn_base + REG_CLDMA_DL_START_CMD :
+				hw_info->ap_pdn_base + REG_CLDMA_UL_START_CMD;
+	val = qno == CLDMA_ALL_Q ? CLDMA_ALL_Q : BIT(qno);
+	iowrite32(val, reg);
 }
 
 void t7xx_cldma_hw_start(struct t7xx_cldma_hw *hw_info)
@@ -104,7 +104,7 @@ void t7xx_cldma_hw_reset(void __iomem *ao_base)
 
 bool t7xx_cldma_tx_addr_is_set(struct t7xx_cldma_hw *hw_info, unsigned char qno)
 {
-	u32 offset =  REG_CLDMA_UL_START_ADDRL_0 + qno * ADDR_SIZE;
+	u32 offset = REG_CLDMA_UL_START_ADDRL_0 + qno * ADDR_SIZE;
 
 	return !!ioread64(hw_info->ap_pdn_base + offset);
 }
@@ -112,16 +112,12 @@ bool t7xx_cldma_tx_addr_is_set(struct t7xx_cldma_hw *hw_info, unsigned char qno)
 void t7xx_cldma_hw_set_start_addr(struct t7xx_cldma_hw *hw_info, unsigned char qno, u64 address,
 				  enum mtk_txrx tx_rx)
 {
-	void __iomem *base;
-	u32 offset =  qno * ADDR_SIZE;
+	u32 offset = qno * ADDR_SIZE;
+	void __iomem *reg;
 
-	if (tx_rx == MTK_RX) {
-		base = hw_info->ap_ao_base;
-		iowrite64(address, base + REG_CLDMA_DL_START_ADDRL_0 + offset);
-	} else {
-		base = hw_info->ap_pdn_base;
-		iowrite64(address, base + REG_CLDMA_UL_START_ADDRL_0 + offset);
-	}
+	reg = tx_rx == MTK_RX ? hw_info->ap_ao_base + REG_CLDMA_DL_START_ADDRL_0 :
+				hw_info->ap_pdn_base + REG_CLDMA_UL_START_ADDRL_0;
+	iowrite64(address, reg + offset);
 }
 
 void t7xx_cldma_hw_resume_queue(struct t7xx_cldma_hw *hw_info, unsigned char qno,
@@ -138,16 +134,13 @@ void t7xx_cldma_hw_resume_queue(struct t7xx_cldma_hw *hw_info, unsigned char qno
 unsigned int t7xx_cldma_hw_queue_status(struct t7xx_cldma_hw *hw_info, unsigned char qno,
 					enum mtk_txrx tx_rx)
 {
+	void __iomem *reg;
 	u32 mask, val;
 
-	mask = (qno == CLDMA_ALL_Q) ? CLDMA_ALL_Q : BIT(qno);
-
-	if (tx_rx == MTK_RX) {
-		val = ioread32(hw_info->ap_ao_base + REG_CLDMA_DL_STATUS);
-		return val & mask;
-	}
-
-	val = ioread32(hw_info->ap_pdn_base + REG_CLDMA_UL_STATUS);
+	mask = qno == CLDMA_ALL_Q ? CLDMA_ALL_Q : BIT(qno);
+	reg = tx_rx == MTK_RX ? hw_info->ap_ao_base + REG_CLDMA_DL_STATUS :
+				hw_info->ap_pdn_base + REG_CLDMA_UL_STATUS;
+	val = ioread32(reg);
 	return val & mask;
 }
 
@@ -176,12 +169,12 @@ void t7xx_cldma_hw_rx_done(struct t7xx_cldma_hw *hw_info, unsigned int bitmask)
 unsigned int t7xx_cldma_hw_int_status(struct t7xx_cldma_hw *hw_info, unsigned int bitmask,
 				      enum mtk_txrx tx_rx)
 {
-	void __iomem *reg_int_sta;
+	void __iomem *reg;
 	u32 val;
 
-	reg_int_sta = (tx_rx == MTK_RX) ? hw_info->ap_pdn_base + REG_CLDMA_L2RISAR0 :
-					  hw_info->ap_pdn_base + REG_CLDMA_L2TISAR0;
-	val = ioread32(reg_int_sta);
+	reg = tx_rx == MTK_RX ? hw_info->ap_pdn_base + REG_CLDMA_L2RISAR0 :
+				hw_info->ap_pdn_base + REG_CLDMA_L2TISAR0;
+	val = ioread32(reg);
 	return val & bitmask;
 }
 
@@ -191,9 +184,9 @@ void t7xx_cldma_hw_irq_dis_txrx(struct t7xx_cldma_hw *hw_info, unsigned char qno
 	void __iomem *reg;
 	u32 val;
 
-	reg = (tx_rx == MTK_RX) ? hw_info->ap_ao_base + REG_CLDMA_L2RIMSR0 :
-				  hw_info->ap_pdn_base + REG_CLDMA_L2TIMSR0;
-	val = (qno == CLDMA_ALL_Q) ? CLDMA_ALL_Q : BIT(qno);
+	reg = tx_rx == MTK_RX ? hw_info->ap_ao_base + REG_CLDMA_L2RIMSR0 :
+				hw_info->ap_pdn_base + REG_CLDMA_L2TIMSR0;
+	val = qno == CLDMA_ALL_Q ? CLDMA_ALL_Q : BIT(qno);
 	iowrite32(val, reg);
 }
 
@@ -202,10 +195,9 @@ void t7xx_cldma_hw_irq_dis_eq(struct t7xx_cldma_hw *hw_info, unsigned char qno, 
 	void __iomem *reg;
 	u32 val;
 
-	reg = (tx_rx == MTK_RX) ? hw_info->ap_ao_base + REG_CLDMA_L2RIMSR0 :
-				  hw_info->ap_pdn_base + REG_CLDMA_L2TIMSR0;
-
-	val = (qno == CLDMA_ALL_Q) ? CLDMA_ALL_Q : BIT(qno);
+	reg = tx_rx == MTK_RX ? hw_info->ap_ao_base + REG_CLDMA_L2RIMSR0 :
+				hw_info->ap_pdn_base + REG_CLDMA_L2TIMSR0;
+	val = qno == CLDMA_ALL_Q ? CLDMA_ALL_Q : BIT(qno);
 	iowrite32(val << EQ_STA_BIT_OFFSET, reg);
 }
 
@@ -215,9 +207,9 @@ void t7xx_cldma_hw_irq_en_txrx(struct t7xx_cldma_hw *hw_info, unsigned char qno,
 	void __iomem *reg;
 	u32 val;
 
-	reg = (tx_rx == MTK_RX) ? hw_info->ap_ao_base + REG_CLDMA_L2RIMCR0 :
-				  hw_info->ap_pdn_base + REG_CLDMA_L2TIMCR0;
-	val = (qno == CLDMA_ALL_Q) ? CLDMA_ALL_Q : BIT(qno);
+	reg = tx_rx == MTK_RX ? hw_info->ap_ao_base + REG_CLDMA_L2RIMCR0 :
+				hw_info->ap_pdn_base + REG_CLDMA_L2TIMCR0;
+	val = qno == CLDMA_ALL_Q ? CLDMA_ALL_Q : BIT(qno);
 	iowrite32(val, reg);
 }
 
@@ -226,9 +218,9 @@ void t7xx_cldma_hw_irq_en_eq(struct t7xx_cldma_hw *hw_info, unsigned char qno, e
 	void __iomem *reg;
 	u32 val;
 
-	reg = (tx_rx == MTK_RX) ? hw_info->ap_ao_base + REG_CLDMA_L2RIMCR0 :
-				  hw_info->ap_pdn_base + REG_CLDMA_L2TIMCR0;
-	val = (qno == CLDMA_ALL_Q) ? CLDMA_ALL_Q : BIT(qno);
+	reg = tx_rx == MTK_RX ? hw_info->ap_ao_base + REG_CLDMA_L2RIMCR0 :
+				hw_info->ap_pdn_base + REG_CLDMA_L2TIMCR0;
+	val = qno == CLDMA_ALL_Q ? CLDMA_ALL_Q : BIT(qno);
 	iowrite32(val << EQ_STA_BIT_OFFSET, reg);
 }
 
@@ -270,21 +262,21 @@ void t7xx_cldma_hw_init(struct t7xx_cldma_hw *hw_info)
 
 void t7xx_cldma_hw_stop_queue(struct t7xx_cldma_hw *hw_info, u8 qno, enum mtk_txrx tx_rx)
 {
-	void __iomem *reg_stop_cmd;
+	void __iomem *reg;
 	u32 val;
 
-	reg_stop_cmd = (tx_rx == MTK_RX) ? hw_info->ap_pdn_base + REG_CLDMA_DL_STOP_CMD :
-					   hw_info->ap_pdn_base + REG_CLDMA_UL_STOP_CMD;
-	val = (qno == CLDMA_ALL_Q) ? CLDMA_ALL_Q : BIT(qno);
-	iowrite32(val, reg_stop_cmd);
+	reg = tx_rx == MTK_RX ? hw_info->ap_pdn_base + REG_CLDMA_DL_STOP_CMD :
+				hw_info->ap_pdn_base + REG_CLDMA_UL_STOP_CMD;
+	val = qno == CLDMA_ALL_Q ? CLDMA_ALL_Q : BIT(qno);
+	iowrite32(val, reg);
 }
 
 void t7xx_cldma_hw_stop(struct t7xx_cldma_hw *hw_info, enum mtk_txrx tx_rx)
 {
-	void __iomem *reg_ims;
+	void __iomem *reg;
 
-	reg_ims = (tx_rx == MTK_RX) ? hw_info->ap_ao_base + REG_CLDMA_L2RIMSR0 :
-				      hw_info->ap_pdn_base + REG_CLDMA_L2TIMSR0;
-	iowrite32(TXRX_STATUS_BITMASK, reg_ims);
-	iowrite32(EMPTY_STATUS_BITMASK, reg_ims);
+	reg = tx_rx == MTK_RX ? hw_info->ap_ao_base + REG_CLDMA_L2RIMSR0 :
+				hw_info->ap_pdn_base + REG_CLDMA_L2TIMSR0;
+	iowrite32(TXRX_STATUS_BITMASK, reg);
+	iowrite32(EMPTY_STATUS_BITMASK, reg);
 }

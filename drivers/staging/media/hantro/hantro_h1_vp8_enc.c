@@ -100,8 +100,6 @@ static void hantro_h1_vp8_enc_set_params(struct hantro_dev *vpu,
 
 static inline u32 enc_in_img_ctrl(struct hantro_ctx *ctx)
 {
-	struct v4l2_pix_format_mplane *pix_fmt = &ctx->src_fmt;
-	struct v4l2_rect *crop = &ctx->src_crop;
 	unsigned int bytes_per_line, overfill_r, overfill_b;
 
 	/*
@@ -109,13 +107,13 @@ static inline u32 enc_in_img_ctrl(struct hantro_ctx *ctx)
 	 * values of other planes are calculated internally based on
 	 * format setting.
 	 */
-	bytes_per_line = pix_fmt->plane_fmt[0].bytesperline;
-	overfill_r = (pix_fmt->width - crop->width) / 4;
-	overfill_b = pix_fmt->height - crop->height;
+	bytes_per_line = ctx->src_fmt.plane_fmt[0].bytesperline;
+	overfill_r = ctx->src_fmt.width - ctx->dst_fmt.width;
+	overfill_b = ctx->src_fmt.height - ctx->dst_fmt.height;
 
 	return H1_REG_IN_IMG_CTRL_ROW_LEN(bytes_per_line)
-			| H1_REG_IN_IMG_CTRL_OVRFLR_D4(overfill_r)
-			| H1_REG_IN_IMG_CTRL_OVRFLB_D4(overfill_b)
+			| H1_REG_IN_IMG_CTRL_OVRFLR_D4(overfill_r / 4)
+			| H1_REG_IN_IMG_CTRL_OVRFLB(overfill_b)
 			| H1_REG_IN_IMG_CTRL_FMT(ctx->vpu_src_fmt->enc_fmt);
 }
 
@@ -234,7 +232,7 @@ static void hantro_h1_vp8_enc_set_buffers(struct hantro_dev *vpu,
 	vepu_write_relaxed(vpu, enc_in_img_ctrl(ctx), H1_REG_IN_IMG_CTRL);
 }
 
-void hantro_h1_vp8_enc_run(struct hantro_ctx *ctx)
+int hantro_h1_vp8_enc_run(struct hantro_ctx *ctx)
 {
 	struct hantro_dev *vpu = ctx->dev;
 	struct vb2_v4l2_buffer *dst_buf;
@@ -290,4 +288,6 @@ void hantro_h1_vp8_enc_run(struct hantro_ctx *ctx)
 	hantro_end_prepare_run(ctx);
 
 	vepu_write(vpu, reg, H1_REG_ENC_CTRL);
+
+	return 0;
 }

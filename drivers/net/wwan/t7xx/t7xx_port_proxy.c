@@ -133,7 +133,7 @@ static struct t7xx_port_static t7xx_md_ports[] = {
 		.ops = &tty_port_ops,
 		.minor = 1,
 		.name = "ttyCMIPC0",
-	}, {
+ 	}, {
 		.tx_ch = PORT_CH_CONTROL_TX,
 		.rx_ch = PORT_CH_CONTROL_RX,
 		.txq_index = Q_IDX_CTRL,
@@ -184,7 +184,7 @@ static struct t7xx_port_static md_ccci_early_ports[] = {
 		.ops = &char_port_ops,
 		.minor = 21,
 		.name = "ttyDUMP",
-	},
+	}, 
 };
 
 static struct t7xx_port *t7xx_proxy_get_port_by_ch(struct port_proxy *port_prox, enum port_ch ch)
@@ -328,14 +328,14 @@ int t7xx_port_recv_skb(struct t7xx_port *port, struct sk_buff *skb)
 	spin_lock_irqsave(&port->rx_wq.lock, flags);
 	if (port->rx_skb_list.qlen < port->rx_length_th) {
 		struct ccci_header *ccci_h = (struct ccci_header *)skb->data;
-		u32 status;
+		u32 channel;
 
 		port->flags &= ~PORT_F_RX_FULLED;
 		if (port->flags & PORT_F_RX_ADJUST_HEADER)
 			t7xx_port_adjust_skb(port, skb);
 
-		status = FIELD_GET(HDR_FLD_CHN, le32_to_cpu(ccci_h->status));
-		if (!(port->flags & PORT_F_RAW_DATA) && status == PORT_CH_STATUS_RX) {
+		channel = FIELD_GET(HDR_FLD_CHN, le32_to_cpu(ccci_h->status));
+		if (!(port->flags & PORT_F_RAW_DATA) && (channel == PORT_CH_STATUS_RX)) {
 			port->skb_handler(port, skb);
 		} else {
 			if (port->wwan_port)
@@ -352,43 +352,6 @@ int t7xx_port_recv_skb(struct t7xx_port *port, struct sk_buff *skb)
 	port->flags |= PORT_F_RX_FULLED;
 	spin_unlock_irqrestore(&port->rx_wq.lock, flags);
 	return -ENOBUFS;
-}
-
-/**
- * t7xx_port_kthread_handler() - Kthread handler for specific port.
- * @arg: Port pointer.
- *
- * Receive native HIF RX data, which have same RX receive flow.
- *
- * Return: Always 0 to kthread_run.
- */
-int t7xx_port_kthread_handler(void *arg)
-{
-	while (!kthread_should_stop()) {
-		struct t7xx_port *port = arg;
-		struct sk_buff *skb;
-		unsigned long flags;
-
-		spin_lock_irqsave(&port->rx_wq.lock, flags);
-		if (skb_queue_empty(&port->rx_skb_list) &&
-		    wait_event_interruptible_locked_irq(port->rx_wq,
-							!skb_queue_empty(&port->rx_skb_list) ||
-							kthread_should_stop())) {
-			spin_unlock_irqrestore(&port->rx_wq.lock, flags);
-			continue;
-		} else if (kthread_should_stop()) {
-			spin_unlock_irqrestore(&port->rx_wq.lock, flags);
-			break;
-		}
-
-		skb = __skb_dequeue(&port->rx_skb_list);
-		spin_unlock_irqrestore(&port->rx_wq.lock, flags);
-
-		if (port->skb_handler)
-			port->skb_handler(port, skb);
-	}
-
-	return 0;
 }
 
 static struct cldma_ctrl *get_md_ctrl(struct t7xx_port *port)
@@ -447,7 +410,7 @@ int t7xx_port_send_skb_to_md(struct t7xx_port *port, struct sk_buff *skb, bool b
 
 		if (md_state == MD_STATE_EXCEPTION && port_static->tx_ch != PORT_CH_MD_LOG_TX &&
 		    port_static->tx_ch != PORT_CH_UART1_TX)
-			return -ETXTBSY;
+			return -EBUSY;
 
 		if (md_state == MD_STATE_STOPPED || md_state == MD_STATE_WAITING_TO_STOP ||
 		    md_state == MD_STATE_INVALID)
@@ -484,6 +447,24 @@ static void t7xx_proxy_setup_ch_mapping(struct port_proxy *port_prox)
 	}
 }
 
+void t7xx_ccci_header_init(struct ccci_header *ccci_h, unsigned int pkt_header,
+			   size_t pkt_len, enum port_ch ch, unsigned int ex_msg)
+{
+	ccci_h->packet_header = cpu_to_le32(pkt_header);
+	ccci_h->packet_len = cpu_to_le32(pkt_len);
+	ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
+	ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, ch));
+	ccci_h->ex_msg = cpu_to_le32(ex_msg);
+}
+
+void t7xx_ctrl_msg_header_init(struct ctrl_msg_header *ctrl_msg_h, unsigned int msg_id,
+			       unsigned int ex_msg, unsigned int len)
+{
+	ctrl_msg_h->ctrl_msg_id = cpu_to_le32(msg_id);
+	ctrl_msg_h->ex_msg = cpu_to_le32(ex_msg);
+	ctrl_msg_h->data_length = cpu_to_le32(len);
+}
+
 void t7xx_port_proxy_send_msg_to_md(struct port_proxy *port_prox, enum port_ch ch,
 				    unsigned int msg, unsigned int ex_msg)
 {
@@ -503,23 +484,14 @@ void t7xx_port_proxy_send_msg_to_md(struct port_proxy *port_prox, enum port_ch c
 
 	if (ch == PORT_CH_CONTROL_TX) {
 		ccci_h = (struct ccci_header *)(skb->data);
-		ccci_h->packet_header = cpu_to_le32(CCCI_HEADER_NO_DATA);
-		ccci_h->packet_len = cpu_to_le32(sizeof(*ctrl_msg_h) + CCCI_H_LEN);
-		ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
-		ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, ch));
-		ccci_h->ex_msg = 0;
+		t7xx_ccci_header_init(ccci_h, CCCI_HEADER_NO_DATA,
+				      sizeof(*ctrl_msg_h) + CCCI_H_LEN, ch, 0);
 		ctrl_msg_h = (struct ctrl_msg_header *)(skb->data + CCCI_H_LEN);
-		ctrl_msg_h->data_length = 0;
-		ctrl_msg_h->ex_msg = cpu_to_le32(ex_msg);
-		ctrl_msg_h->ctrl_msg_id = cpu_to_le32(msg);
+		t7xx_ctrl_msg_header_init(ctrl_msg_h, msg, ex_msg, 0);
 		skb_put(skb, CCCI_H_LEN + sizeof(*ctrl_msg_h));
 	} else {
 		ccci_h = skb_put(skb, sizeof(*ccci_h));
-		ccci_h->packet_header = cpu_to_le32(CCCI_HEADER_NO_DATA);
-		ccci_h->packet_len = cpu_to_le32(msg);
-		ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
-		ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, ch));
-		ccci_h->ex_msg = cpu_to_le32(ex_msg);
+		t7xx_ccci_header_init(ccci_h, CCCI_HEADER_NO_DATA, msg, ch, ex_msg);
 	}
 
 	ret = t7xx_port_proxy_send_skb(port, skb);
@@ -680,12 +652,8 @@ static void t7xx_proxy_init_all_ports(struct t7xx_modem *md)
 		if (port_static->ops->init)
 			port_static->ops->init(port);
 
-		if (port->flags & PORT_F_RAW_DATA) {
-			unsigned int index = port_static->rxq_index;
-			unsigned int id = port_static->path_id;
-
-			port_proxy->dedicated_ports[id][index] = port;
-		}
+		if (port->flags & PORT_F_RAW_DATA)
+			port_proxy->dedicated_ports[port_static->path_id][port_static->rxq_index] = port;
 	}
 
 	t7xx_proxy_setup_ch_mapping(port_proxy);
@@ -714,12 +682,12 @@ static int port_get_cfg(struct t7xx_port_static **ports, enum port_cfg_id port_c
 
 void port_switch_cfg(struct t7xx_modem *md, enum port_cfg_id cfg_id)
 {
+	int i;
+	struct t7xx_port *port;
+	struct t7xx_port_static *port_static;
 	struct port_proxy *port_proxy = md->port_prox;
 	struct device *dev = &md->t7xx_dev->pdev->dev;
-	struct t7xx_port_static *port_static;
 	struct t7xx_port *ports_private;
-	struct t7xx_port *port;
-	int i;
 
 	if (port_proxy->current_cfg_id != cfg_id) {
 		port_proxy->current_cfg_id = cfg_id;
@@ -730,10 +698,10 @@ void port_switch_cfg(struct t7xx_modem *md, enum port_cfg_id cfg_id)
 
 		port_proxy->port_number = port_get_cfg(&port_proxy->ports_shared, cfg_id);
 
+
 		devm_kfree(dev, port_proxy->ports_private);
 
-		ports_private = devm_kzalloc(dev, sizeof(*ports_private) * port_proxy->port_number,
-					     GFP_KERNEL);
+		ports_private = devm_kzalloc(dev, sizeof(*ports_private) * port_proxy->port_number, GFP_KERNEL);
 		if (!ports_private) {
 			dev_err(dev, "no memory for ports !\n");
 			return;
@@ -743,7 +711,7 @@ void port_switch_cfg(struct t7xx_modem *md, enum port_cfg_id cfg_id)
 			ports_private[i].port_static = &port_proxy->ports_shared[i];
 			ports_private[i].flags = port_proxy->ports_shared[i].flags;
 		}
-
+		
 		port_proxy->ports_private = ports_private;
 		t7xx_proxy_init_all_ports(md);
 	}
@@ -811,29 +779,29 @@ void port_unregister_device(int major, int minor)
 
 static int port_netlink_send_msg(struct t7xx_port *port, int grp, const char *buf, size_t len)
 {
-	struct port_proxy *pprox;
-	struct sk_buff *nl_skb;
-	struct nlmsghdr *nlh;
+        struct port_proxy *pprox;
+        struct sk_buff *nl_skb;
+        struct nlmsghdr *nlh;
 
-	nl_skb = nlmsg_new(len, GFP_KERNEL);
-	if (!nl_skb)
-		return -ENOMEM;
+        nl_skb = nlmsg_new(len, GFP_KERNEL);
+        if (!nl_skb)
+                return -ENOMEM;
 
-	nlh = nlmsg_put(nl_skb, 0, 1, NLMSG_DONE, len, 0);
-	if (!nlh) {
-		dev_err(port->dev, "could not release netlink\n");
-		nlmsg_free(nl_skb);
-		return -EFAULT;
-	}
+        nlh = nlmsg_put(nl_skb, 0, 1, NLMSG_DONE, len, 0);
+        if (!nlh) {
+                dev_err(port->dev, "could not release netlink\n");
+                nlmsg_free(nl_skb);
+                return -EFAULT;
+        }
 
-	/* Add new netlink message to the skb
-	 * after checking if header+payload
-	 * can be handled.
-	 */
-	memcpy(nlmsg_data(nlh), buf, len);
+        /* Add new netlink message to the skb
+         * after checking if header+payload
+         * can be handled.
+         */
+        memcpy(nlmsg_data(nlh), buf, len);
 
-	pprox = port_prox;
-	return netlink_broadcast(pprox->netlink_sock, nl_skb, 0, grp, GFP_KERNEL);
+        pprox = port_prox;
+        return netlink_broadcast(pprox->netlink_sock, nl_skb, 0, grp, GFP_KERNEL);
 }
 
 int port_proxy_broadcast_state(struct t7xx_port *port, int state)

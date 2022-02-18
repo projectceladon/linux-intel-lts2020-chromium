@@ -143,7 +143,6 @@ int t7xx_cldma_init(struct t7xx_modem *md, struct cldma_ctrl *md_ctrl);
 void t7xx_cldma_exception(struct cldma_ctrl *md_ctrl, enum hif_ex_stage stage);
 void t7xx_cldma_exit(struct cldma_ctrl *md_ctrl);
 void t7xx_cldma_switch_cfg(struct cldma_ctrl *md_ctrl, unsigned int cfg_id);
-int t7xx_cldma_write_room(struct cldma_ctrl *md_ctrl, unsigned char qno);
 void t7xx_cldma_start(struct cldma_ctrl *md_ctrl);
 int t7xx_cldma_stop(struct cldma_ctrl *md_ctrl);
 void t7xx_cldma_reset(struct cldma_ctrl *md_ctrl);
@@ -151,6 +150,7 @@ void t7xx_cldma_set_recv_skb(struct cldma_ctrl *md_ctrl,
 			     int (*recv_skb)(struct cldma_queue *queue, struct sk_buff *skb));
 int t7xx_cldma_send_skb(struct cldma_ctrl *md_ctrl, int qno, struct sk_buff *skb, bool blocking);
 int cldma_txq_mtu(unsigned char qno);
+int t7xx_cldma_write_room(struct cldma_ctrl *md_ctrl, unsigned char qno);
 extern bool da_down_stage_flag;
 
 #endif /* __T7XX_HIF_CLDMA_H__ */

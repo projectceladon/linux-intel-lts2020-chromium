@@ -92,7 +92,7 @@ static void control_msg_handler(struct t7xx_port *port, struct sk_buff *skb)
 
 		if (port_static->rx_ch == CCCI_SAP_CONTROL_RX)
 			t7xx_fsm_append_event(ctl, FSM_EVENT_AP_HS2,
-					      skb->data, le32_to_cpu(ctrl_msg_h->data_length));
+					 skb->data, le32_to_cpu(ctrl_msg_h->data_length));
 
 		dev_kfree_skb_any(skb);
 		break;
@@ -128,18 +128,47 @@ static void control_msg_handler(struct t7xx_port *port, struct sk_buff *skb)
 			ret);
 }
 
+static int port_ctl_rx_thread(void *arg)
+{
+	while (!kthread_should_stop()) {
+		struct t7xx_port *port = arg;
+		struct sk_buff *skb;
+		unsigned long flags;
+
+		spin_lock_irqsave(&port->rx_wq.lock, flags);
+		if (skb_queue_empty(&port->rx_skb_list) &&
+		    wait_event_interruptible_locked_irq(port->rx_wq,
+							!skb_queue_empty(&port->rx_skb_list) ||
+							kthread_should_stop())) {
+			spin_unlock_irqrestore(&port->rx_wq.lock, flags);
+			continue;
+		}
+
+		if (kthread_should_stop()) {
+			spin_unlock_irqrestore(&port->rx_wq.lock, flags);
+			break;
+		}
+
+		skb = __skb_dequeue(&port->rx_skb_list);
+		spin_unlock_irqrestore(&port->rx_wq.lock, flags);
+		port->skb_handler(port, skb);
+	}
+
+	return 0;
+}
+
 static int port_ctl_init(struct t7xx_port *port)
 {
 	struct t7xx_port_static *port_static = port->port_static;
 
 	port->skb_handler = &control_msg_handler;
-	port->thread = kthread_run(t7xx_port_kthread_handler, port, "%s", port_static->name);
+	port->thread = kthread_run(port_ctl_rx_thread, port, "%s", port_static->name);
 	if (IS_ERR(port->thread)) {
 		dev_err(port->dev, "Failed to start port control thread\n");
 		return PTR_ERR(port->thread);
 	}
 
-	port->rx_length_th = MAX_CTRL_QUEUE_LENGTH;
+	port->rx_length_th = CTRL_QUEUE_MAXLEN;
 	return 0;
 }
 

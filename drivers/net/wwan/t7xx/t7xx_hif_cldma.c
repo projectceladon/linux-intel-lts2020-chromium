@@ -108,24 +108,6 @@ static void t7xx_cldma_rgpd_set_next_ptr(struct cldma_rgpd *rgpd, dma_addr_t nex
 	rgpd->next_gpd_ptr_l = cpu_to_le32(lower_32_bits(next_ptr));
 }
 
-static struct cldma_request *t7xx_cldma_ring_step_forward(struct cldma_ring *ring,
-							  struct cldma_request *req)
-{
-	if (req->entry.next == &ring->gpd_ring)
-		return list_first_entry(&ring->gpd_ring, struct cldma_request, entry);
-
-	return list_next_entry(req, entry);
-}
-
-static struct cldma_request *t7xx_cldma_ring_step_backward(struct cldma_ring *ring,
-							   struct cldma_request *req)
-{
-	if (req->entry.prev == &ring->gpd_ring)
-		return list_last_entry(&ring->gpd_ring, struct cldma_request, entry);
-
-	return list_prev_entry(req, entry);
-}
-
 static int t7xx_cldma_alloc_and_map_skb(struct cldma_ctrl *md_ctrl, struct cldma_request *req,
 					size_t size)
 {
@@ -134,7 +116,7 @@ static int t7xx_cldma_alloc_and_map_skb(struct cldma_ctrl *md_ctrl, struct cldma
 		return -ENOMEM;
 
 	req->mapped_buff = dma_map_single(md_ctrl->dev, req->skb->data,
-					  t7xx_skb_data_size(req->skb), DMA_FROM_DEVICE);
+					  t7xx_skb_data_area_size(req->skb), DMA_FROM_DEVICE);
 	if (dma_mapping_error(md_ctrl->dev, req->mapped_buff)) {
 		dev_err(md_ctrl->dev, "DMA mapping failed\n");
 		dev_kfree_skb_any(req->skb);
@@ -146,7 +128,7 @@ static int t7xx_cldma_alloc_and_map_skb(struct cldma_ctrl *md_ctrl, struct cldma
 	return 0;
 }
 
-static int t7xx_cldma_gpd_rx_from_queue(struct cldma_queue *queue, int budget, bool *over_budget)
+static int t7xx_cldma_gpd_rx_from_q(struct cldma_queue *queue, int budget, bool *over_budget)
 {
 	struct cldma_ctrl *md_ctrl = queue->md_ctrl;
 	unsigned char hwo_polling_count = 0;
@@ -189,7 +171,7 @@ static int t7xx_cldma_gpd_rx_from_queue(struct cldma_queue *queue, int budget, b
 
 		if (req->mapped_buff) {
 			dma_unmap_single(md_ctrl->dev, req->mapped_buff,
-					 t7xx_skb_data_size(skb), DMA_FROM_DEVICE);
+					 t7xx_skb_data_area_size(skb), DMA_FROM_DEVICE);
 			req->mapped_buff = 0;
 		}
 
@@ -203,7 +185,7 @@ static int t7xx_cldma_gpd_rx_from_queue(struct cldma_queue *queue, int budget, b
 
 		req->skb = NULL;
 		t7xx_cldma_rgpd_set_data_ptr(rgpd, 0);
-		queue->tr_done = t7xx_cldma_ring_step_forward(queue->tr_ring, req);
+		queue->tr_done = list_next_entry_circular(req, &queue->tr_ring->gpd_ring, entry);
 		req = queue->rx_refill;
 
 		ret = t7xx_cldma_alloc_and_map_skb(md_ctrl, req, queue->tr_ring->pkt_size);
@@ -214,7 +196,7 @@ static int t7xx_cldma_gpd_rx_from_queue(struct cldma_queue *queue, int budget, b
 		t7xx_cldma_rgpd_set_data_ptr(rgpd, req->mapped_buff);
 		rgpd->data_buff_len = 0;
 		rgpd->gpd_flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
-		queue->rx_refill = t7xx_cldma_ring_step_forward(queue->tr_ring, req);
+		queue->rx_refill = list_next_entry_circular(req, &queue->tr_ring->gpd_ring, entry);
 		rx_not_done = ++count < budget || !need_resched();
 	} while (rx_not_done);
 
@@ -236,10 +218,11 @@ static int t7xx_cldma_gpd_rx_collect(struct cldma_queue *queue, int budget)
 	do {
 		rx_not_done = false;
 
-		ret = t7xx_cldma_gpd_rx_from_queue(queue, budget, &over_budget);
+		ret = t7xx_cldma_gpd_rx_from_q(queue, budget, &over_budget);
 		if (ret == -ENODATA)
 			return 0;
-		else if (ret)
+
+		if (ret)
 			return ret;
 
 		spin_lock_irqsave(&md_ctrl->cldma_lock, flags);
@@ -290,10 +273,10 @@ static int t7xx_cldma_gpd_tx_collect(struct cldma_queue *queue)
 	struct cldma_ctrl *md_ctrl = queue->md_ctrl;
 	unsigned int dma_len, count = 0;
 	struct cldma_request *req;
-	struct sk_buff *skb_free;
 	struct cldma_tgpd *tgpd;
 	unsigned long flags;
 	dma_addr_t dma_free;
+	struct sk_buff *skb;
 
 	while (!kthread_should_stop()) {
 		spin_lock_irqsave(&queue->ring_lock, flags);
@@ -312,13 +295,13 @@ static int t7xx_cldma_gpd_tx_collect(struct cldma_queue *queue)
 		queue->budget++;
 		dma_free = req->mapped_buff;
 		dma_len = le16_to_cpu(tgpd->data_buff_len);
-		skb_free = req->skb;
+		skb = req->skb;
 		req->skb = NULL;
-		queue->tr_done = t7xx_cldma_ring_step_forward(queue->tr_ring, req);
+		queue->tr_done = list_next_entry_circular(req, &queue->tr_ring->gpd_ring, entry);
 		spin_unlock_irqrestore(&queue->ring_lock, flags);
 		count++;
 		dma_unmap_single(md_ctrl->dev, dma_free, dma_len, DMA_TO_DEVICE);
-		dev_kfree_skb_any(skb_free);
+		dev_kfree_skb_any(skb);
 	}
 
 	if (count)
@@ -340,7 +323,7 @@ static void t7xx_cldma_txq_empty_hndl(struct cldma_queue *queue)
 		return;
 
 	spin_lock_irqsave(&queue->ring_lock, flags);
-	req = t7xx_cldma_ring_step_backward(queue->tr_ring, queue->tx_xmit);
+	req = list_prev_entry_circular(queue->tx_xmit, &queue->tr_ring->gpd_ring, entry);
 	tgpd = req->gpd;
 	pending_gpd = (tgpd->gpd_flags & GPD_FLAGS_HWO) && req->skb;
 	spin_unlock_irqrestore(&queue->ring_lock, flags);
@@ -353,17 +336,13 @@ static void t7xx_cldma_txq_empty_hndl(struct cldma_queue *queue)
 		ul_curr_addr = ioread64(hw_info->ap_pdn_base + REG_CLDMA_UL_CURRENT_ADDRL_0 +
 					queue->index * sizeof(u64));
 		if (req->gpd_addr != ul_curr_addr) {
-			/* struct t7xx_fsm_ctl *ctl = queue->md->fsm_ctl; */
-
-			/* spin_unlock_irqrestore(&md_ctrl->cldma_lock, flags); */
+			spin_unlock_irqrestore(&md_ctrl->cldma_lock, flags);
 			dev_err(md_ctrl->dev, "CLDMA%d queue %d is not empty\n",
 				md_ctrl->hif_id, queue->index);
-			/* t7xx_fsm_append_cmd(ctl, FSM_CMD_RECOVER, 0);
-			 * return;
-			 */
-		} else {
-			t7xx_cldma_hw_resume_queue(hw_info, queue->index, MTK_TX);
+			return;
 		}
+
+		t7xx_cldma_hw_resume_queue(hw_info, queue->index, MTK_TX);
 	}
 
 	spin_unlock_irqrestore(&md_ctrl->cldma_lock, flags);
@@ -412,7 +391,7 @@ static void t7xx_cldma_ring_free(struct cldma_ctrl *md_ctrl,
 	list_for_each_entry_safe(req_cur, req_next, &ring->gpd_ring, entry) {
 		if (req_cur->mapped_buff && req_cur->skb) {
 			dma_unmap_single(md_ctrl->dev, req_cur->mapped_buff,
-					 t7xx_skb_data_size(req_cur->skb), tx_rx);
+					 t7xx_skb_data_area_size(req_cur->skb), tx_rx);
 			req_cur->mapped_buff = 0;
 		}
 
@@ -428,121 +407,121 @@ static void t7xx_cldma_ring_free(struct cldma_ctrl *md_ctrl,
 
 static struct cldma_request *t7xx_alloc_rx_request(struct cldma_ctrl *md_ctrl, size_t pkt_size)
 {
-	struct cldma_request *item;
+	struct cldma_request *req;
 	int val;
 
-	item = kzalloc(sizeof(*item), GFP_KERNEL);
-	if (!item)
+	req = kzalloc(sizeof(*req), GFP_KERNEL);
+	if (!req)
 		return NULL;
 
-	item->gpd = dma_pool_zalloc(md_ctrl->gpd_dmapool, GFP_KERNEL, &item->gpd_addr);
-	if (!item->gpd)
+	req->gpd = dma_pool_zalloc(md_ctrl->gpd_dmapool, GFP_KERNEL, &req->gpd_addr);
+	if (!req->gpd)
 		goto err_free_req;
 
-	val = t7xx_cldma_alloc_and_map_skb(md_ctrl, item, pkt_size);
+	val = t7xx_cldma_alloc_and_map_skb(md_ctrl, req, pkt_size);
 	if (val)
 		goto err_free_pool;
 
-	return item;
+	return req;
 
 err_free_pool:
-	dma_pool_free(md_ctrl->gpd_dmapool, item->gpd, item->gpd_addr);
+	dma_pool_free(md_ctrl->gpd_dmapool, req->gpd, req->gpd_addr);
 
 err_free_req:
-	kfree(item);
+	kfree(req);
 
 	return NULL;
 }
 
 static int t7xx_cldma_rx_ring_init(struct cldma_ctrl *md_ctrl, struct cldma_ring *ring)
 {
-	struct cldma_request *item, *first_item = NULL;
+	struct cldma_request *req, *first_req = NULL;
 	struct cldma_rgpd *prev_gpd, *gpd = NULL;
 	int i;
 
 	for (i = 0; i < ring->length; i++) {
-		item = t7xx_alloc_rx_request(md_ctrl, ring->pkt_size);
-		if (!item) {
+		req = t7xx_alloc_rx_request(md_ctrl, ring->pkt_size);
+		if (!req) {
 			t7xx_cldma_ring_free(md_ctrl, ring, DMA_FROM_DEVICE);
 			return -ENOMEM;
 		}
 
-		gpd = item->gpd;
-		t7xx_cldma_rgpd_set_data_ptr(gpd, item->mapped_buff);
+		gpd = req->gpd;
+		t7xx_cldma_rgpd_set_data_ptr(gpd, req->mapped_buff);
 		gpd->data_allow_len = cpu_to_le16(ring->pkt_size);
 		gpd->gpd_flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
 
 		if (i)
-			t7xx_cldma_rgpd_set_next_ptr(prev_gpd, item->gpd_addr);
+			t7xx_cldma_rgpd_set_next_ptr(prev_gpd, req->gpd_addr);
 		else
-			first_item = item;
+			first_req = req;
 
-		INIT_LIST_HEAD(&item->entry);
-		list_add_tail(&item->entry, &ring->gpd_ring);
+		INIT_LIST_HEAD(&req->entry);
+		list_add_tail(&req->entry, &ring->gpd_ring);
 		prev_gpd = gpd;
 	}
 
-	if (first_item)
-		t7xx_cldma_rgpd_set_next_ptr(gpd, first_item->gpd_addr);
+	if (first_req)
+		t7xx_cldma_rgpd_set_next_ptr(gpd, first_req->gpd_addr);
 
 	return 0;
 }
 
 static struct cldma_request *t7xx_alloc_tx_request(struct cldma_ctrl *md_ctrl)
 {
-	struct cldma_request *item;
+	struct cldma_request *req;
 
-	item = kzalloc(sizeof(*item), GFP_KERNEL);
-	if (!item)
+	req = kzalloc(sizeof(*req), GFP_KERNEL);
+	if (!req)
 		return NULL;
 
-	item->gpd = dma_pool_zalloc(md_ctrl->gpd_dmapool, GFP_KERNEL, &item->gpd_addr);
-	if (!item->gpd) {
-		kfree(item);
+	req->gpd = dma_pool_zalloc(md_ctrl->gpd_dmapool, GFP_KERNEL, &req->gpd_addr);
+	if (!req->gpd) {
+		kfree(req);
 		return NULL;
 	}
 
-	return item;
+	return req;
 }
 
 static int t7xx_cldma_tx_ring_init(struct cldma_ctrl *md_ctrl, struct cldma_ring *ring)
 {
-	struct cldma_request *item, *first_item = NULL;
+	struct cldma_request *req, *first_req = NULL;
 	struct cldma_tgpd *tgpd, *prev_gpd;
 	int i;
 
 	for (i = 0; i < ring->length; i++) {
-		item = t7xx_alloc_tx_request(md_ctrl);
-		if (!item) {
+		req = t7xx_alloc_tx_request(md_ctrl);
+		if (!req) {
 			t7xx_cldma_ring_free(md_ctrl, ring, DMA_TO_DEVICE);
 			return -ENOMEM;
 		}
 
-		tgpd = item->gpd;
+		tgpd = req->gpd;
 		tgpd->gpd_flags = GPD_FLAGS_IOC;
 
-		if (!first_item)
-			first_item = item;
+		if (!first_req)
+			first_req = req;
 		else
-			t7xx_cldma_tgpd_set_next_ptr(prev_gpd, item->gpd_addr);
+			t7xx_cldma_tgpd_set_next_ptr(prev_gpd, req->gpd_addr);
 
-		INIT_LIST_HEAD(&item->entry);
-		list_add_tail(&item->entry, &ring->gpd_ring);
+		INIT_LIST_HEAD(&req->entry);
+		list_add_tail(&req->entry, &ring->gpd_ring);
 		prev_gpd = tgpd;
 	}
 
-	if (first_item)
-		t7xx_cldma_tgpd_set_next_ptr(tgpd, first_item->gpd_addr);
+	if (first_req)
+		t7xx_cldma_tgpd_set_next_ptr(tgpd, first_req->gpd_addr);
 
 	return 0;
 }
 
 /**
- * t7xx_cldma_queue_reset() - Reset CLDMA request pointers to their initial values.
+ * t7xx_cldma_q_reset() - Reset CLDMA request pointers to their initial values.
  * @queue: Pointer to the queue structure.
  *
  */
-static void t7xx_cldma_queue_reset(struct cldma_queue *queue)
+static void t7xx_cldma_q_reset(struct cldma_queue *queue)
 {
 	struct cldma_request *req;
 
@@ -556,24 +535,24 @@ static void t7xx_cldma_queue_reset(struct cldma_queue *queue)
 		queue->rx_refill = req;
 }
 
-static void t7xx_cldma_rx_queue_init(struct cldma_queue *queue)
+static void t7xx_cldma_rxq_init(struct cldma_queue *queue)
 {
 	struct cldma_ctrl *md_ctrl = queue->md_ctrl;
 
 	queue->dir = MTK_RX;
 	queue->tr_ring = &md_ctrl->rx_ring[queue->index];
 	queue->q_type = rxq_type[queue->index];
-	t7xx_cldma_queue_reset(queue);
+	t7xx_cldma_q_reset(queue);
 }
 
-static void t7xx_cldma_tx_queue_init(struct cldma_queue *queue)
+static void t7xx_cldma_txq_init(struct cldma_queue *queue)
 {
 	struct cldma_ctrl *md_ctrl = queue->md_ctrl;
 
 	queue->dir = MTK_TX;
 	queue->tr_ring = &md_ctrl->tx_ring[queue->index];
 	queue->q_type = txq_type[queue->index];
-	t7xx_cldma_queue_reset(queue);
+	t7xx_cldma_q_reset(queue);
 }
 
 static void t7xx_cldma_enable_irq(struct cldma_ctrl *md_ctrl)
@@ -636,7 +615,7 @@ static void t7xx_cldma_irq_work_cb(struct cldma_ctrl *md_ctrl)
 
 		t7xx_cldma_hw_rx_done(hw_info, l2_rx_int);
 		if (l2_rx_int & (TXRX_STATUS_BITMASK | EMPTY_STATUS_BITMASK)) {
-			l2_rx_int |=  l2_rx_int >> CLDMA_RXQ_NUM;
+			l2_rx_int |= l2_rx_int >> CLDMA_RXQ_NUM;
 			for_each_set_bit(i, (unsigned long *)&l2_rx_int, CLDMA_RXQ_NUM) {
 				pm_runtime_get(md_ctrl->dev);
 				t7xx_cldma_hw_irq_dis_eq(hw_info, i, MTK_RX);
@@ -647,7 +626,7 @@ static void t7xx_cldma_irq_work_cb(struct cldma_ctrl *md_ctrl)
 	}
 }
 
-static bool t7xx_cldma_queues_active(struct t7xx_cldma_hw *hw_info)
+static bool t7xx_cldma_qs_are_active(struct t7xx_cldma_hw *hw_info)
 {
 	unsigned int tx_active;
 	unsigned int rx_active;
@@ -696,7 +675,7 @@ int t7xx_cldma_stop(struct cldma_ctrl *md_ctrl)
 			flush_work(&md_ctrl->rxq[i].cldma_work);
 	}
 
-	ret = read_poll_timeout(t7xx_cldma_queues_active, active, !active, CHECK_Q_STOP_STEP_US,
+	ret = read_poll_timeout(t7xx_cldma_qs_are_active, active, !active, CHECK_Q_STOP_STEP_US,
 				CHECK_Q_STOP_TIMEOUT_US, true, hw_info);
 	if (ret)
 		dev_err(md_ctrl->dev, "Could not stop CLDMA%d queues", md_ctrl->hif_id);
@@ -803,7 +782,7 @@ static void t7xx_cldma_clear_txq(struct cldma_ctrl *md_ctrl, int qnum)
 	unsigned long flags;
 
 	spin_lock_irqsave(&txq->ring_lock, flags);
-	t7xx_cldma_queue_reset(txq);
+	t7xx_cldma_q_reset(txq);
 	list_for_each_entry(req, &txq->tr_ring->gpd_ring, entry) {
 		tgpd = req->gpd;
 		tgpd->gpd_flags &= ~GPD_FLAGS_HWO;
@@ -824,7 +803,7 @@ static int t7xx_cldma_clear_rxq(struct cldma_ctrl *md_ctrl, int qnum)
 	unsigned long flags;
 
 	spin_lock_irqsave(&rxq->ring_lock, flags);
-	t7xx_cldma_queue_reset(rxq);
+	t7xx_cldma_q_reset(rxq);
 	list_for_each_entry(req, &rxq->tr_ring->gpd_ring, entry) {
 		rgpd = req->gpd;
 		rgpd->gpd_flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
@@ -853,7 +832,7 @@ static int t7xx_cldma_clear_rxq(struct cldma_ctrl *md_ctrl, int qnum)
 	return 0;
 }
 
-static void t7xx_cldma_clear_all_queue(struct cldma_ctrl *md_ctrl, enum mtk_txrx tx_rx)
+static void t7xx_cldma_clear_all_qs(struct cldma_ctrl *md_ctrl, enum mtk_txrx tx_rx)
 {
 	int i;
 
@@ -866,8 +845,7 @@ static void t7xx_cldma_clear_all_queue(struct cldma_ctrl *md_ctrl, enum mtk_txrx
 	}
 }
 
-static void t7xx_cldma_stop_queue(struct cldma_ctrl *md_ctrl, unsigned char qno,
-				  enum mtk_txrx tx_rx)
+static void t7xx_cldma_stop_q(struct cldma_ctrl *md_ctrl, unsigned char qno, enum mtk_txrx tx_rx)
 {
 	struct t7xx_cldma_hw *hw_info = &md_ctrl->hw_info;
 	unsigned long flags;
@@ -936,8 +914,8 @@ static void t7xx_cldma_hw_start_send(struct cldma_ctrl *md_ctrl, u8 qno)
 	/* Check whether the device was powered off (CLDMA start address is not set) */
 	if (!t7xx_cldma_tx_addr_is_set(hw_info, qno)) {
 		t7xx_cldma_hw_init(hw_info);
-		req = t7xx_cldma_ring_step_backward(md_ctrl->txq[qno].tr_ring,
-						    md_ctrl->txq[qno].tx_xmit);
+		req = list_prev_entry_circular(md_ctrl->txq[qno].tx_xmit,
+					       &md_ctrl->txq[qno].tr_ring->gpd_ring, entry);
 		t7xx_cldma_hw_set_start_addr(hw_info, qno, req->gpd_addr, MTK_TX);
 		md_ctrl->txq_started &= ~BIT(qno);
 	}
@@ -1022,9 +1000,11 @@ int t7xx_cldma_send_skb(struct cldma_ctrl *md_ctrl, int qno, struct sk_buff *skb
 		spin_lock_irqsave(&queue->ring_lock, flags);
 		tx_req = queue->tx_xmit;
 		if (queue->budget > 0 && !tx_req->skb) {
+			struct list_head *gpd_ring = &queue->tr_ring->gpd_ring;
+
 			queue->budget--;
 			t7xx_cldma_gpd_handle_tx_request(queue, tx_req, skb);
-			queue->tx_xmit = t7xx_cldma_ring_step_forward(queue->tr_ring, tx_req);
+			queue->tx_xmit = list_next_entry_circular(tx_req, gpd_ring, entry);
 			spin_unlock_irqrestore(&queue->ring_lock, flags);
 
 			if (!t7xx_pci_sleep_disable_complete(md_ctrl->t7xx_dev)) {
@@ -1155,7 +1135,7 @@ static int t7xx_cldma_late_init(struct cldma_ctrl *md_ctrl, unsigned int cfg_id)
 		md_ctrl->rx_ring[j].pkt_size = rxq_buff_size[j];
 
 		if (j == CLDMA_RXQ_NUM - 1)
-			md_ctrl->rx_ring[j].pkt_size  = MTK_SKB_64K;
+			md_ctrl->rx_ring[j].pkt_size = MTK_SKB_64K;
 
 		ret = t7xx_cldma_rx_ring_init(md_ctrl, &md_ctrl->rx_ring[j]);
 		if (ret) {
@@ -1165,10 +1145,10 @@ static int t7xx_cldma_late_init(struct cldma_ctrl *md_ctrl, unsigned int cfg_id)
 	}
 
 	for (i = 0; i < CLDMA_TXQ_NUM; i++)
-		t7xx_cldma_tx_queue_init(&md_ctrl->txq[i]);
+		t7xx_cldma_txq_init(&md_ctrl->txq[i]);
 
 	for (j = 0; j < CLDMA_RXQ_NUM; j++)
-		t7xx_cldma_rx_queue_init(&md_ctrl->rxq[j]);
+		t7xx_cldma_rxq_init(&md_ctrl->rxq[j]);
 
 	md_ctrl->is_late_init = true;
 	return 0;
@@ -1277,21 +1257,21 @@ void t7xx_cldma_exception(struct cldma_ctrl *md_ctrl, enum hif_ex_stage stage)
 {
 	switch (stage) {
 	case HIF_EX_INIT:
-		t7xx_cldma_stop_queue(md_ctrl, CLDMA_ALL_Q, MTK_TX);
-		t7xx_cldma_clear_all_queue(md_ctrl, MTK_TX);
+		t7xx_cldma_stop_q(md_ctrl, CLDMA_ALL_Q, MTK_TX);
+		t7xx_cldma_clear_all_qs(md_ctrl, MTK_TX);
 		break;
 
 	case HIF_EX_CLEARQ_DONE:
 		/* We do not want to get CLDMA IRQ when MD is
 		 * resetting CLDMA after it got clearq_ack.
 		 */
-		t7xx_cldma_stop_queue(md_ctrl, CLDMA_ALL_Q, MTK_RX);
+		t7xx_cldma_stop_q(md_ctrl, CLDMA_ALL_Q, MTK_RX);
 		t7xx_cldma_stop(md_ctrl);
 
 		if (md_ctrl->hif_id == ID_CLDMA1)
 			t7xx_cldma_hw_reset(md_ctrl->t7xx_dev->base_addr.infracfg_ao_base);
 
-		t7xx_cldma_clear_all_queue(md_ctrl, MTK_RX);
+		t7xx_cldma_clear_all_qs(md_ctrl, MTK_RX);
 		break;
 
 	case HIF_EX_ALLQ_RESET:

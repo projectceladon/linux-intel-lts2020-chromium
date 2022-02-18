@@ -54,6 +54,7 @@
  * 0:reserved, 1: to sAP, 2: to MD
  */
 enum port_ch {
+
 	/* to sAP */
 	CCCI_SAP_CONTROL_RX = 0X1000,
 	CCCI_SAP_CONTROL_TX = 0X1001,
@@ -163,11 +164,10 @@ struct t7xx_port {
 	struct port_proxy  *port_proxy;
 };
 
-int t7xx_port_kthread_handler(void *arg);
 int t7xx_port_recv_skb(struct t7xx_port *port, struct sk_buff *skb);
-int t7xx_port_write_room_to_md(struct t7xx_port *port);
 int t7xx_port_send_skb_to_md(struct t7xx_port *port, struct sk_buff *skb, bool blocking);
 int port_register_device(const char *name, int major, int minor);
 void port_unregister_device(int major, int minor);
+int t7xx_port_write_room_to_md(struct t7xx_port *port);
 
 #endif /* __T7XX_PORT_H__ */

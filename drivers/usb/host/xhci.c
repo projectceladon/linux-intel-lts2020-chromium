@@ -80,6 +80,19 @@ int xhci_handshake(void __iomem *ptr, u32 mask, u32 done, int usec)
 	return ret;
 }
 
+/* return 1 if there is a pending interrupt, -ENODEV on error, 0 otherwise */
+int xhci_pending_interrupt(struct xhci_hcd *xhci)
+{
+	u32 status;
+
+	status = readl(&xhci->op_regs->status);
+
+	if (status == ~(u32)0)
+		return -ENODEV;
+
+	return !!(status & STS_EINT);
+}
+
 /*
  * Disable interrupts and begin the xHCI halting process.
  */
@@ -931,12 +944,11 @@ static bool xhci_pending_portevent(struct xhci_hcd *xhci)
 {
 	struct xhci_port	**ports;
 	int			port_index;
-	u32			status;
 	u32			portsc;
 
-	status = readl(&xhci->op_regs->status);
-	if (status & STS_EINT)
+	if (xhci_pending_interrupt(xhci) > 0)
 		return true;
+
 	/*
 	 * Checking STS_EINT is not enough as there is a lag between a change
 	 * bit being set and the Port Status Change Event that it generated
@@ -993,7 +1005,8 @@ int xhci_suspend(struct xhci_hcd *xhci, bool do_wakeup)
 	xhci_dbc_suspend(xhci);
 
 	/* Don't poll the roothubs on bus suspend. */
-	xhci_dbg(xhci, "%s: stopping port polling.\n", __func__);
+	xhci_dbg(xhci, "%s: stopping usb%d port polling.\n",
+		 __func__, hcd->self.busnum);
 	clear_bit(HCD_FLAG_POLL_RH, &hcd->flags);
 	del_timer_sync(&hcd->rh_timer);
 	clear_bit(HCD_FLAG_POLL_RH, &xhci->shared_hcd->flags);
@@ -1257,7 +1270,8 @@ int xhci_resume(struct xhci_hcd *xhci, bool hibernated)
 		usb_asmedia_modifyflowcontrol(to_pci_dev(hcd->self.controller));
 
 	/* Re-enable port polling. */
-	xhci_dbg(xhci, "%s: starting port polling.\n", __func__);
+	xhci_dbg(xhci, "%s: starting usb%d port polling.\n",
+		 __func__, hcd->self.busnum);
 	set_bit(HCD_FLAG_POLL_RH, &xhci->shared_hcd->flags);
 	usb_hcd_poll_rh_status(xhci->shared_hcd);
 	set_bit(HCD_FLAG_POLL_RH, &hcd->flags);
@@ -1713,9 +1727,6 @@ static int xhci_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 			goto done;
 		}
 		ep->ep_state |= EP_STOP_CMD_PENDING;
-		ep->stop_cmd_timer.expires = jiffies +
-			XHCI_STOP_EP_CMD_TIMEOUT * HZ;
-		add_timer(&ep->stop_cmd_timer);
 		xhci_queue_stop_endpoint(xhci, command, urb->dev->slot_id,
 					 ep_index, 0);
 		xhci_ring_cmd_db(xhci);
@@ -3860,10 +3871,8 @@ static void xhci_free_dev(struct usb_hcd *hcd, struct usb_device *udev)
 	trace_xhci_free_dev(slot_ctx);
 
 	/* Stop any wayward timer functions (which may grab the lock) */
-	for (i = 0; i < 31; i++) {
+	for (i = 0; i < 31; i++)
 		virt_dev->eps[i].ep_state &= ~EP_STOP_CMD_PENDING;
-		del_timer_sync(&virt_dev->eps[i].stop_cmd_timer);
-	}
 	virt_dev->udev = NULL;
 	xhci_disable_slot(xhci, udev->slot_id);
 	xhci_free_virt_device(xhci, udev->slot_id);

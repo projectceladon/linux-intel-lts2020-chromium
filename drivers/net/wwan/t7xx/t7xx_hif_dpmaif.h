@@ -184,13 +184,6 @@ struct dpmaif_tx_queue {
 	bool			drb_lack;
 };
 
-struct dpmaif_skb_info {
-	struct list_head	entry;
-	struct sk_buff		*skb;
-	unsigned int		data_len;
-	dma_addr_t		data_bus_addr;
-};
-
 struct dpmaif_isr_para {
 	struct dpmaif_ctrl	*dpmaif_ctrl;
 	unsigned char		pcie_int;
@@ -244,7 +237,6 @@ struct dpmaif_ctrl {
 
 	wait_queue_head_t		tx_wq;
 	struct task_struct		*tx_thread;
-	unsigned char			txq_select_times;
 
 	struct dpmaif_callbacks		*callbacks;
 };
@@ -253,8 +245,8 @@ struct dpmaif_ctrl *t7xx_dpmaif_hif_init(struct t7xx_pci_dev *t7xx_dev,
 					 struct dpmaif_callbacks *callbacks);
 void t7xx_dpmaif_hif_exit(struct dpmaif_ctrl *dpmaif_ctrl);
 int t7xx_dpmaif_md_state_callback(struct dpmaif_ctrl *dpmaif_ctrl, unsigned char state);
-unsigned int t7xx_ring_buf_get_next_wrdx(unsigned int buf_len, unsigned int buf_idx);
+unsigned int t7xx_ring_buf_get_next_wr_idx(unsigned int buf_len, unsigned int buf_idx);
 unsigned int t7xx_ring_buf_rd_wr_count(unsigned int total_cnt, unsigned int rd_idx,
-				       unsigned int wrt_idx, enum dpmaif_rdwr);
+				       unsigned int wr_idx, enum dpmaif_rdwr);
 
 #endif /* __T7XX_DPMA_TX_H__ */

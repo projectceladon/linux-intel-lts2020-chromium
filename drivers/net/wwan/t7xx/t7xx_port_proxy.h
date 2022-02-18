@@ -31,9 +31,9 @@
 #define CCCI_CHAN_ENABLE	1
 #define CCCI_CHAN_DISABLE	0
 
-#define MTK_MAX_QUEUE_NUM	16
-#define MAX_RX_QUEUE_LENGTH	32
-#define MAX_CTRL_QUEUE_LENGTH	16
+#define MTK_QUEUES		16
+#define RX_QUEUE_MAXLEN		32
+#define CTRL_QUEUE_MAXLEN	16
 
 #define MTK_PORT_STATE_ENABLE	0
 #define MTK_PORT_STATE_DISABLE	1
@@ -49,13 +49,13 @@ struct port_proxy {
 	int				port_number;
 	struct t7xx_port_static		*ports_shared;
 	struct t7xx_port		*ports_private;
-	struct t7xx_port		*dedicated_ports[CLDMA_NUM][MTK_MAX_QUEUE_NUM];
-	struct list_head		rx_ch_ports[PORT_CH_ID_MASK];
-	struct list_head		queue_ports[CLDMA_NUM][MTK_MAX_QUEUE_NUM];
+	struct t7xx_port		*dedicated_ports[CLDMA_NUM][MTK_QUEUES];
+	struct list_head		rx_ch_ports[PORT_CH_ID_MASK + 1];
+	struct list_head		queue_ports[CLDMA_NUM][MTK_QUEUES];
 	struct device			*dev;
 	unsigned char			current_cfg_id;
-	unsigned int			major;
-	unsigned int			minor_base;
+	unsigned int 			major;
+	unsigned int 			minor_base;
 	struct sock			*netlink_sock;
 };
 
@@ -104,6 +104,10 @@ void t7xx_port_proxy_send_msg_to_md(struct port_proxy *port_prox, enum port_ch c
 void t7xx_port_proxy_uninit(struct port_proxy *port_prox);
 int t7xx_port_proxy_init(struct t7xx_modem *md);
 void t7xx_port_proxy_md_status_notify(struct port_proxy *port_prox, unsigned int state);
+void t7xx_ccci_header_init(struct ccci_header *ccci_h, unsigned int pkt_header,
+			   size_t pkt_len, enum port_ch ch, unsigned int ex_msg);
+void t7xx_ctrl_msg_header_init(struct ctrl_msg_header *ctrl_msg_h, unsigned int msg_id,
+			       unsigned int ex_msg, unsigned int len);
 void port_switch_cfg(struct t7xx_modem *md, enum port_cfg_id cfg_id);
 struct t7xx_port *port_proxy_get_port(int major, int minor);
 int port_proxy_broadcast_state(struct t7xx_port *port, int state);

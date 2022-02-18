@@ -302,17 +302,11 @@ static void t7xx_prepare_host_rt_data_query(struct t7xx_sys_info *core)
 	skb_put(skb, packet_size);
 
 	ccci_h = (struct ccci_header *)skb->data;
-	ccci_h->packet_header = 0;
-	ccci_h->packet_len = cpu_to_le32(packet_size);
-	ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
-	ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, port_static->tx_ch));
+	t7xx_ccci_header_init(ccci_h, 0, packet_size, port_static->tx_ch, 0);
 	ccci_h->status &= cpu_to_le32(~HDR_FLD_SEQ);
-	ccci_h->ex_msg = 0;
 
 	ctrl_msg_h = (struct ctrl_msg_header *)(skb->data + sizeof(*ccci_h));
-	ctrl_msg_h->ctrl_msg_id = cpu_to_le32(CTL_ID_HS1_MSG);
-	ctrl_msg_h->ex_msg = 0;
-	ctrl_msg_h->data_length = cpu_to_le32(sizeof(*ft_query));
+	t7xx_ctrl_msg_header_init(ctrl_msg_h, CTL_ID_HS1_MSG, 0, sizeof(*ft_query));
 
 	ft_query = (struct feature_query *)(skb->data + sizeof(*ccci_h) + sizeof(*ctrl_msg_h));
 	ft_query->head_pattern = cpu_to_le32(MD_FEATURE_QUERY_ID);
@@ -342,15 +336,10 @@ static int t7xx_prepare_device_rt_data(struct t7xx_sys_info *core, struct device
 		return -EFAULT;
 
 	ccci_h = (struct ccci_header *)skb->data;
-	ccci_h->packet_header = 0;
-	ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
-	ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, port_static->tx_ch));
+	t7xx_ccci_header_init(ccci_h, 0, packet_size, port_static->tx_ch, 0);
 	ccci_h->status &= cpu_to_le32(~HDR_FLD_SEQ);
-	ccci_h->ex_msg = 0;
-
 	ctrl_msg_h = (struct ctrl_msg_header *)(skb->data + sizeof(*ccci_h));
-	ctrl_msg_h->ctrl_msg_id = cpu_to_le32(CTL_ID_HS3_MSG);
-	ctrl_msg_h->ex_msg = 0;
+	t7xx_ctrl_msg_header_init(ctrl_msg_h, CTL_ID_HS3_MSG, 0, 0);
 	rt_data = skb->data + sizeof(*ccci_h) + sizeof(*ctrl_msg_h);
 
 	/* Parse MD runtime data query */
@@ -448,10 +437,10 @@ static void t7xx_core_reset(struct t7xx_modem *md)
 	md->core_md.handshake_ongoing = false;
 }
 
-static void t7xx_core_hk_handler(struct t7xx_modem *md, struct t7xx_sys_info *core_info,
-				 struct t7xx_fsm_ctl *ctl,
-				 enum t7xx_fsm_event_state event_id,
-				 enum t7xx_fsm_event_state err_detect)
+static void t7xx_core_hk_handler(struct t7xx_modem *md, struct t7xx_sys_info *core_info, 
+				struct t7xx_fsm_ctl *ctl,
+				enum t7xx_fsm_event_state event_id,
+				enum t7xx_fsm_event_state err_detect)
 {
 	struct device *dev = &md->t7xx_dev->pdev->dev;
 	struct t7xx_fsm_event *event, *event_next;

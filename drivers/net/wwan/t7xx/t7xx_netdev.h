@@ -53,6 +53,7 @@ struct t7xx_ccmni_ctrl {
 	unsigned int			md_sta;
 	unsigned int			capability;
 	struct t7xx_fsm_notifier	md_status_notify;
+	bool				wwan_reg_status;
 };
 
 int t7xx_ccmni_init(struct t7xx_pci_dev *t7xx_dev);

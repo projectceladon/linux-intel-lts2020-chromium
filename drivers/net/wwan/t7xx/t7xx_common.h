@@ -82,12 +82,12 @@ enum md_state {
 };
 
 #ifdef NET_SKBUFF_DATA_USES_OFFSET
-static inline unsigned int t7xx_skb_data_size(struct sk_buff *skb)
+static inline unsigned int t7xx_skb_data_area_size(struct sk_buff *skb)
 {
 	return skb->head + skb->end - skb->data;
 }
 #else
-static inline unsigned int t7xx_skb_data_size(struct sk_buff *skb)
+static inline unsigned int t7xx_skb_data_area_size(struct sk_buff *skb)
 {
 	return skb->end - skb->data;
 }

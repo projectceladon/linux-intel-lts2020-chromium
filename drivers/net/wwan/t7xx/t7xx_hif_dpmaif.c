@@ -33,7 +33,7 @@
 #include "t7xx_pci.h"
 #include "t7xx_pcie_mac.h"
 
-unsigned int t7xx_ring_buf_get_next_wrdx(unsigned int buf_len, unsigned int buf_idx)
+unsigned int t7xx_ring_buf_get_next_wr_idx(unsigned int buf_len, unsigned int buf_idx)
 {
 	buf_idx++;
 
@@ -41,14 +41,14 @@ unsigned int t7xx_ring_buf_get_next_wrdx(unsigned int buf_len, unsigned int buf_
 }
 
 unsigned int t7xx_ring_buf_rd_wr_count(unsigned int total_cnt, unsigned int rd_idx,
-				       unsigned int wrt_idx, enum dpmaif_rdwr rd_wr)
+				       unsigned int wr_idx, enum dpmaif_rdwr rd_wr)
 {
 	int pkt_cnt;
 
 	if (rd_wr == DPMAIF_READ)
-		pkt_cnt = wrt_idx - rd_idx;
+		pkt_cnt = wr_idx - rd_idx;
 	else
-		pkt_cnt = rd_idx - wrt_idx - 1;
+		pkt_cnt = rd_idx - wr_idx - 1;
 
 	if (pkt_cnt < 0)
 		pkt_cnt += total_cnt;
@@ -380,8 +380,8 @@ static void t7xx_dpmaif_stop_sw(struct dpmaif_ctrl *dpmaif_ctrl)
 
 static void t7xx_dpmaif_stop_hw(struct dpmaif_ctrl *dpmaif_ctrl)
 {
-	t7xx_dpmaif_hw_stop_tx_queue(dpmaif_ctrl);
-	t7xx_dpmaif_hw_stop_rx_queue(dpmaif_ctrl);
+	t7xx_dpmaif_hw_stop_all_txq(dpmaif_ctrl);
+	t7xx_dpmaif_hw_stop_all_rxq(dpmaif_ctrl);
 }
 
 static int t7xx_dpmaif_stop(struct dpmaif_ctrl *dpmaif_ctrl)
@@ -407,8 +407,8 @@ static int t7xx_dpmaif_suspend(struct t7xx_pci_dev *t7xx_dev, void *param)
 	struct dpmaif_ctrl *dpmaif_ctrl = param;
 
 	t7xx_dpmaif_tx_stop(dpmaif_ctrl);
-	t7xx_dpmaif_hw_stop_tx_queue(dpmaif_ctrl);
-	t7xx_dpmaif_hw_stop_rx_queue(dpmaif_ctrl);
+	t7xx_dpmaif_hw_stop_all_txq(dpmaif_ctrl);
+	t7xx_dpmaif_hw_stop_all_rxq(dpmaif_ctrl);
 	t7xx_dpmaif_disable_irq(dpmaif_ctrl);
 	t7xx_dpmaif_rx_stop(dpmaif_ctrl);
 	return 0;

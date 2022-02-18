@@ -54,7 +54,6 @@ enum t7xx_fsm_cmd_state {
 	FSM_CMD_EXCEPTION,
 	FSM_CMD_PRE_STOP,
 	FSM_CMD_STOP,
-	FSM_CMD_RECOVER,
 };
 
 enum t7xx_ex_reason {
@@ -70,6 +69,7 @@ enum t7xx_md_irq_type {
 
 #define FSM_CMD_FLAG_WAIT_FOR_COMPLETION	BIT(0)
 #define FSM_CMD_FLAG_FLIGHT_MODE		BIT(1)
+#define FSM_CMD_FLAG_IN_INTERRUPT		BIT(2)
 #define FSM_CMD_EX_REASON			GENMASK(23, 16)
 
 struct coprocessor_ctl {
@@ -81,7 +81,6 @@ struct t7xx_fsm_ctl {
 	struct t7xx_modem	*md;
 	enum md_state		md_state;
 	unsigned int		curr_state;
-	unsigned int		last_state;
 	u32			prev_status;
 	struct list_head	command_queue;
 	struct list_head	event_queue;

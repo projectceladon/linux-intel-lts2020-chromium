@@ -80,7 +80,7 @@ static int t7xx_dpmaif_init_intr(struct dpmaif_hw_info *hw_info)
 	return 0;
 }
 
-static void t7xx_dpmaif_mask_ulq_interrupt(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int q_num)
+static void t7xx_dpmaif_mask_ulq_intr(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int q_num)
 {
 	struct dpmaif_hw_info *hw_info = &dpmaif_ctrl->hif_hw_info;
 	struct dpmaif_isr_en_mask *isr_en_msk;
@@ -122,22 +122,10 @@ void t7xx_dpmaif_unmask_ulq_intr(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int q
 			value);
 }
 
-static void t7xx_dpmaif_dl_mask_batcnt_len_err_intr(struct dpmaif_hw_info *hw_info)
-{
-	hw_info->isr_en_mask.ap_dl_l2intr_en_msk &= ~DP_DL_INT_BATCNT_LEN_ERR;
-	iowrite32(DP_DL_INT_BATCNT_LEN_ERR, hw_info->pcie_base + DPMAIF_AO_UL_APDL_L2TIMSR0);
-}
-
 void t7xx_dpmaif_dl_unmask_batcnt_len_err_intr(struct dpmaif_hw_info *hw_info)
 {
 	hw_info->isr_en_mask.ap_dl_l2intr_en_msk |= DP_DL_INT_BATCNT_LEN_ERR;
 	iowrite32(DP_DL_INT_BATCNT_LEN_ERR, hw_info->pcie_base + DPMAIF_AO_UL_APDL_L2TIMCR0);
-}
-
-static void t7xx_dpmaif_dl_mask_pitcnt_len_err_intr(struct dpmaif_hw_info *hw_info)
-{
-	hw_info->isr_en_mask.ap_dl_l2intr_en_msk &= ~DP_DL_INT_PITCNT_LEN_ERR;
-	iowrite32(DP_DL_INT_PITCNT_LEN_ERR, hw_info->pcie_base + DPMAIF_AO_UL_APDL_L2TIMSR0);
 }
 
 void t7xx_dpmaif_dl_unmask_pitcnt_len_err_intr(struct dpmaif_hw_info *hw_info)
@@ -146,7 +134,7 @@ void t7xx_dpmaif_dl_unmask_pitcnt_len_err_intr(struct dpmaif_hw_info *hw_info)
 	iowrite32(DP_DL_INT_PITCNT_LEN_ERR, hw_info->pcie_base + DPMAIF_AO_UL_APDL_L2TIMCR0);
 }
 
-static u32 t7xx_update_dlq_interrupt(struct dpmaif_hw_info *hw_info, u32 q_done)
+static u32 t7xx_update_dlq_intr(struct dpmaif_hw_info *hw_info, u32 q_done)
 {
 	u32 value;
 
@@ -155,16 +143,16 @@ static u32 t7xx_update_dlq_interrupt(struct dpmaif_hw_info *hw_info, u32 q_done)
 	return value;
 }
 
-static int t7xx_mask_dlq_interrupt(struct dpmaif_ctrl *dpmaif_ctrl, unsigned char qno)
+static int t7xx_mask_dlq_intr(struct dpmaif_ctrl *dpmaif_ctrl, unsigned char qno)
 {
 	struct dpmaif_hw_info *hw_info = &dpmaif_ctrl->hif_hw_info;
 	u32 value, q_done;
 	int ret;
 
-	q_done = (qno == DPF_RX_QNO0) ? DPMAIF_DL_INT_DLQ0_QDONE : DPMAIF_DL_INT_DLQ1_QDONE;
+	q_done = qno == DPF_RX_QNO0 ? DPMAIF_DL_INT_DLQ0_QDONE : DPMAIF_DL_INT_DLQ1_QDONE;
 	iowrite32(q_done, hw_info->pcie_base + DPMAIF_AO_UL_APDL_L2TIMSR0);
 
-	ret = read_poll_timeout_atomic(t7xx_update_dlq_interrupt, value, value & q_done,
+	ret = read_poll_timeout_atomic(t7xx_update_dlq_intr, value, value & q_done,
 				       0, DPMAIF_CHECK_TIMEOUT_US, false, hw_info, q_done);
 	if (ret) {
 		dev_err(dpmaif_ctrl->dev,
@@ -181,7 +169,7 @@ void t7xx_dpmaif_dlq_unmask_rx_done(struct dpmaif_hw_info *hw_info, unsigned cha
 {
 	u32 mask;
 
-	mask = (qno == DPF_RX_QNO0) ? DPMAIF_DL_INT_DLQ0_QDONE : DPMAIF_DL_INT_DLQ1_QDONE;
+	mask = qno == DPF_RX_QNO0 ? DPMAIF_DL_INT_DLQ0_QDONE : DPMAIF_DL_INT_DLQ1_QDONE;
 	iowrite32(mask, hw_info->pcie_base + DPMAIF_AO_UL_APDL_L2TIMCR0);
 	hw_info->isr_en_mask.ap_dl_l2intr_en_msk |= mask;
 }
@@ -226,12 +214,20 @@ void t7xx_dpmaif_dl_clr_all_intr(struct dpmaif_hw_info *hw_info)
 	iowrite32(DPMAIF_AP_APDL_ALL_L2TISAR0_MASK, hw_info->pcie_base + DPMAIF_AP_APDL_L2TISAR0);
 }
 
+static void t7xx_dpmaif_set_intr_para(struct dpmaif_hw_intr_st_para *para,
+				      enum dpmaif_hw_intr_type intr_type, unsigned int intr_queue)
+{
+	para->intr_types[para->intr_cnt] = intr_type;
+	para->intr_queues[para->intr_cnt] = intr_queue;
+	para->intr_cnt++;
+}
+
 /* The para->intr_cnt counter is set to zero before this function is called.
  * It does not check for overflow as there is no risk of overflowing intr_types or intr_queues.
  */
-static void t7xx_dpmaif_hw_check_tx_interrupt(struct dpmaif_ctrl *dpmaif_ctrl,
-					      unsigned int l2_txisar0,
-					      struct dpmaif_hw_intr_st_para *para)
+static void t7xx_dpmaif_hw_check_tx_intr(struct dpmaif_ctrl *dpmaif_ctrl,
+					 unsigned int l2_txisar0,
+					 struct dpmaif_hw_intr_st_para *para)
 {
 	unsigned long value;
 
@@ -239,49 +235,35 @@ static void t7xx_dpmaif_hw_check_tx_interrupt(struct dpmaif_ctrl *dpmaif_ctrl,
 	if (value) {
 		unsigned int index;
 
-		para->intr_types[para->intr_cnt] = DPF_INTR_UL_DONE;
-		para->intr_queues[para->intr_cnt] = value;
-		para->intr_cnt++;
+		t7xx_dpmaif_set_intr_para(para, DPF_INTR_UL_DONE, value);
 
 		for_each_set_bit(index, &value, DPMAIF_TXQ_NUM)
-			t7xx_dpmaif_mask_ulq_interrupt(dpmaif_ctrl, index);
+			t7xx_dpmaif_mask_ulq_intr(dpmaif_ctrl, index);
 	}
 
 	value = FIELD_GET(DP_UL_INT_EMPTY_MSK, l2_txisar0);
-	if (value) {
-		para->intr_types[para->intr_cnt] = DPF_INTR_UL_DRB_EMPTY;
-		para->intr_queues[para->intr_cnt] = value;
-		para->intr_cnt++;
-	}
+	if (value)
+		t7xx_dpmaif_set_intr_para(para, DPF_INTR_UL_DRB_EMPTY, value);
 
 	value = FIELD_GET(DP_UL_INT_MD_NOTREADY_MSK, l2_txisar0);
-	if (value) {
-		para->intr_types[para->intr_cnt] = DPF_INTR_UL_MD_NOTREADY;
-		para->intr_queues[para->intr_cnt] = value;
-		para->intr_cnt++;
-	}
+	if (value)
+		t7xx_dpmaif_set_intr_para(para, DPF_INTR_UL_MD_NOTREADY, value);
 
 	value = FIELD_GET(DP_UL_INT_MD_PWR_NOTREADY_MSK, l2_txisar0);
-	if (value) {
-		para->intr_types[para->intr_cnt] = DPF_INTR_UL_MD_PWR_NOTREADY;
-		para->intr_queues[para->intr_cnt] = value;
-		para->intr_cnt++;
-	}
+	if (value)
+		t7xx_dpmaif_set_intr_para(para, DPF_INTR_UL_MD_PWR_NOTREADY, value);
 
 	value = FIELD_GET(DP_UL_INT_ERR_MSK, l2_txisar0);
-	if (value) {
-		para->intr_types[para->intr_cnt] = DPF_INTR_UL_LEN_ERR;
-		para->intr_queues[para->intr_cnt] = value;
-		para->intr_cnt++;
-	}
+	if (value)
+		t7xx_dpmaif_set_intr_para(para, DPF_INTR_UL_LEN_ERR, value);
 }
 
 /* The para->intr_cnt counter is set to zero before this function is called.
  * It does not check for overflow as there is no risk of overflowing intr_types or intr_queues.
  */
-static void t7xx_dpmaif_hw_check_rx_interrupt(struct dpmaif_ctrl *dpmaif_ctrl,
-					      unsigned int *pl2_rxisar0,
-					      struct dpmaif_hw_intr_st_para *para, int qno)
+static void t7xx_dpmaif_hw_check_rx_intr(struct dpmaif_ctrl *dpmaif_ctrl,
+					 unsigned int *pl2_rxisar0,
+					 struct dpmaif_hw_intr_st_para *para, int qno)
 {
 	struct dpmaif_hw_info *hw_info = &dpmaif_ctrl->hif_hw_info;
 	unsigned int l2_rxisar0 = *pl2_rxisar0;
@@ -289,78 +271,57 @@ static void t7xx_dpmaif_hw_check_rx_interrupt(struct dpmaif_ctrl *dpmaif_ctrl,
 
 	if (qno == DPF_RX_QNO_DFT) {
 		value = l2_rxisar0 & DP_DL_INT_SKB_LEN_ERR;
-		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_SKB_LEN_ERR;
-			para->intr_queues[para->intr_cnt] = DPF_RX_QNO_DFT;
-			para->intr_cnt++;
-		}
+		if (value)
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_SKB_LEN_ERR, DPF_RX_QNO_DFT);
 
 		value = l2_rxisar0 & DP_DL_INT_BATCNT_LEN_ERR;
 		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_BATCNT_LEN_ERR;
-			para->intr_queues[para->intr_cnt] = DPF_RX_QNO_DFT;
-			para->intr_cnt++;
-			t7xx_dpmaif_dl_mask_batcnt_len_err_intr(hw_info);
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_BATCNT_LEN_ERR, DPF_RX_QNO_DFT);
+			hw_info->isr_en_mask.ap_dl_l2intr_en_msk &= ~DP_DL_INT_BATCNT_LEN_ERR;
+			iowrite32(DP_DL_INT_BATCNT_LEN_ERR,
+				  hw_info->pcie_base + DPMAIF_AO_UL_APDL_L2TIMSR0);
 		}
 
 		value = l2_rxisar0 & DP_DL_INT_PITCNT_LEN_ERR;
 		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_PITCNT_LEN_ERR;
-			para->intr_queues[para->intr_cnt] = DPF_RX_QNO_DFT;
-			para->intr_cnt++;
-			t7xx_dpmaif_dl_mask_pitcnt_len_err_intr(hw_info);
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_PITCNT_LEN_ERR, DPF_RX_QNO_DFT);
+			hw_info->isr_en_mask.ap_dl_l2intr_en_msk &= ~DP_DL_INT_PITCNT_LEN_ERR;
+			iowrite32(DP_DL_INT_PITCNT_LEN_ERR,
+				  hw_info->pcie_base + DPMAIF_AO_UL_APDL_L2TIMSR0);
 		}
 
 		value = l2_rxisar0 & DP_DL_INT_PKT_EMPTY_MSK;
-		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_PKT_EMPTY_SET;
-			para->intr_queues[para->intr_cnt] = DPF_RX_QNO_DFT;
-			para->intr_cnt++;
-		}
+		if (value)
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_PKT_EMPTY_SET, DPF_RX_QNO_DFT);
 
 		value = l2_rxisar0 & DP_DL_INT_FRG_EMPTY_MSK;
-		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_FRG_EMPTY_SET;
-			para->intr_queues[para->intr_cnt] = DPF_RX_QNO_DFT;
-			para->intr_cnt++;
-		}
+		if (value)
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_FRG_EMPTY_SET, DPF_RX_QNO_DFT);
 
 		value = l2_rxisar0 & DP_DL_INT_MTU_ERR_MSK;
-		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_MTU_ERR;
-			para->intr_queues[para->intr_cnt] = DPF_RX_QNO_DFT;
-			para->intr_cnt++;
-		}
+		if (value)
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_MTU_ERR, DPF_RX_QNO_DFT);
 
 		value = l2_rxisar0 & DP_DL_INT_FRG_LENERR_MSK;
-		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_FRGCNT_LEN_ERR;
-			para->intr_queues[para->intr_cnt] = DPF_RX_QNO_DFT;
-			para->intr_cnt++;
-		}
+		if (value)
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_FRGCNT_LEN_ERR, DPF_RX_QNO_DFT);
 
 		value = l2_rxisar0 & DP_DL_INT_Q0_PITCNT_LEN_ERR;
 		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_Q0_PITCNT_LEN_ERR;
-			para->intr_queues[para->intr_cnt] = BIT(qno);
-			para->intr_cnt++;
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_Q0_PITCNT_LEN_ERR, BIT(qno));
 			t7xx_dpmaif_dlq_mask_rx_pitcnt_len_err_intr(hw_info, qno);
 		}
 
 		value = l2_rxisar0 & DP_DL_INT_HPC_ENT_TYPE_ERR;
-		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_HPC_ENT_TYPE_ERR;
-			para->intr_queues[para->intr_cnt] = DPF_RX_QNO_DFT;
-			para->intr_cnt++;
-		}
+		if (value)
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_HPC_ENT_TYPE_ERR,
+						  DPF_RX_QNO_DFT);
 
 		value = l2_rxisar0 & DP_DL_INT_Q0_DONE;
 		if (value) {
 			/* Mask RX done interrupt immediately after it occurs */
-			if (!t7xx_mask_dlq_interrupt(dpmaif_ctrl, qno)) {
-				para->intr_types[para->intr_cnt] = DPF_INTR_DL_Q0_DONE;
-				para->intr_queues[para->intr_cnt] = BIT(qno);
-				para->intr_cnt++;
+			if (!t7xx_mask_dlq_intr(dpmaif_ctrl, qno)) {
+				t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_Q0_DONE, BIT(qno));
 			} else {
 				/* Unable to clear the interrupt, try again on the next one
 				 * device entered low power mode or suffer exception
@@ -371,21 +332,16 @@ static void t7xx_dpmaif_hw_check_rx_interrupt(struct dpmaif_ctrl *dpmaif_ctrl,
 	} else {
 		value = l2_rxisar0 & DP_DL_INT_Q1_PITCNT_LEN_ERR;
 		if (value) {
-			para->intr_types[para->intr_cnt] = DPF_INTR_DL_Q1_PITCNT_LEN_ERR;
-			para->intr_queues[para->intr_cnt] = BIT(qno);
-			para->intr_cnt++;
+			t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_Q1_PITCNT_LEN_ERR, BIT(qno));
 			t7xx_dpmaif_dlq_mask_rx_pitcnt_len_err_intr(hw_info, qno);
 		}
 
 		value = l2_rxisar0 & DP_DL_INT_Q1_DONE;
 		if (value) {
-			if (!t7xx_mask_dlq_interrupt(dpmaif_ctrl, qno)) {
-				para->intr_types[para->intr_cnt] = DPF_INTR_DL_Q1_DONE;
-				para->intr_queues[para->intr_cnt] = BIT(qno);
-				para->intr_cnt++;
-			} else {
+			if (!t7xx_mask_dlq_intr(dpmaif_ctrl, qno))
+				t7xx_dpmaif_set_intr_para(para, DPF_INTR_DL_Q1_DONE, BIT(qno));
+			else
 				*pl2_rxisar0 = l2_rxisar0 & ~DP_DL_INT_Q1_DONE;
-			}
 		}
 	}
 }
@@ -427,7 +383,7 @@ int t7xx_dpmaif_hw_get_intr_cnt(struct dpmaif_ctrl *dpmaif_ctrl,
 		 */
 		tx_intr_status &= ~tx_intr_qdone;
 		if (tx_intr_status) {
-			t7xx_dpmaif_hw_check_tx_interrupt(dpmaif_ctrl, tx_intr_status, para);
+			t7xx_dpmaif_hw_check_tx_intr(dpmaif_ctrl, tx_intr_status, para);
 			/* Clear interrupt status */
 			iowrite32(tx_intr_status, hw_info->pcie_base + DPMAIF_AP_L2TISAR0);
 		}
@@ -448,7 +404,7 @@ int t7xx_dpmaif_hw_get_intr_cnt(struct dpmaif_ctrl *dpmaif_ctrl,
 		}
 
 		if (rx_intr_status) {
-			t7xx_dpmaif_hw_check_rx_interrupt(dpmaif_ctrl, &rx_intr_status, para, qno);
+			t7xx_dpmaif_hw_check_rx_intr(dpmaif_ctrl, &rx_intr_status, para, qno);
 			rx_intr_status |= DP_DL_INT_BATCNT_LEN_ERR;
 			/* Clear interrupt status */
 			iowrite32(rx_intr_status, hw_info->pcie_base + DPMAIF_AP_APDL_L2TISAR0);
@@ -517,12 +473,6 @@ static void t7xx_dpmaif_dl_performance(struct dpmaif_hw_info *hw_info)
 	enable_pit_burst = ioread32(hw_info->pcie_base + DPMAIF_AO_DL_RDY_CHK_THRES);
 	enable_pit_burst |= DPMAIF_DL_BURST_PIT_EN;
 	iowrite32(enable_pit_burst, hw_info->pcie_base + DPMAIF_AO_DL_RDY_CHK_THRES);
-}
-
-static void t7xx_dpmaif_common_hw_init(struct dpmaif_hw_info *hw_info)
-{
-	t7xx_dpmaif_pcie_dpmaif_sign(hw_info);
-	t7xx_dpmaif_dl_performance(hw_info);
 }
 
  /* DPMAIF DL DLQ part HW setting */
@@ -881,7 +831,7 @@ static void t7xx_dpmaif_config_all_dlq_hw(struct dpmaif_ctrl *dpmaif_ctrl)
 		t7xx_dpmaif_config_dlq_pit_hw(dpmaif_ctrl, i, &hw_info->dl_que[i]);
 }
 
-static void t7xx_dpmaif_dl_all_queue_en(struct dpmaif_ctrl *dpmaif_ctrl, bool enable)
+static void t7xx_dpmaif_dl_all_q_en(struct dpmaif_ctrl *dpmaif_ctrl, bool enable)
 {
 	struct dpmaif_hw_info *hw_info = &dpmaif_ctrl->hif_hw_info;
 	u32 dl_bat_init, value;
@@ -965,7 +915,7 @@ static int t7xx_dpmaif_config_dlq_hw(struct dpmaif_ctrl *dpmaif_ctrl)
 
 	/* Init PIT (two PIT table) */
 	t7xx_dpmaif_config_all_dlq_hw(dpmaif_ctrl);
-	t7xx_dpmaif_dl_all_queue_en(dpmaif_ctrl, true);
+	t7xx_dpmaif_dl_all_q_en(dpmaif_ctrl, true);
 	t7xx_dpmaif_dl_set_pkt_checksum(hw_info);
 	return 0;
 }
@@ -1057,21 +1007,6 @@ static int t7xx_dpmaif_hw_init_done(struct dpmaif_hw_info *hw_info)
 	return 0;
 }
 
-static int t7xx_dpmaif_config_que_hw(struct dpmaif_ctrl *dpmaif_ctrl)
-{
-	struct dpmaif_hw_info *hw_info = &dpmaif_ctrl->hif_hw_info;
-	int ret;
-
-	t7xx_dpmaif_common_hw_init(hw_info);
-
-	ret = t7xx_dpmaif_config_dlq_hw(dpmaif_ctrl);
-	if (ret)
-		return ret;
-
-	t7xx_dpmaif_config_ulq_hw(hw_info);
-	return t7xx_dpmaif_hw_init_done(hw_info);
-}
-
 static bool t7xx_dpmaif_dl_idle_check(struct dpmaif_hw_info *hw_info)
 {
 	u32 dpmaif_dl_is_busy = ioread32(hw_info->pcie_base + DPMAIF_DL_CHK_BUSY);
@@ -1079,7 +1014,7 @@ static bool t7xx_dpmaif_dl_idle_check(struct dpmaif_hw_info *hw_info)
 	return !(dpmaif_dl_is_busy & DPMAIF_DL_IDLE_STS);
 }
 
-static void t7xx_dpmaif_ul_all_queue_en(struct dpmaif_hw_info *hw_info, bool enable)
+static void t7xx_dpmaif_ul_all_q_en(struct dpmaif_hw_info *hw_info, bool enable)
 {
 	u32 ul_arb_en = ioread32(hw_info->pcie_base + DPMAIF_AO_UL_CHNL_ARB0);
 
@@ -1131,7 +1066,7 @@ int t7xx_dpmaif_ul_update_hw_drb_cnt(struct dpmaif_ctrl *dpmaif_ctrl, unsigned c
 	return 0;
 }
 
-unsigned int t7xx_dpmaif_ul_get_ridx(struct dpmaif_hw_info *hw_info, unsigned char q_num)
+unsigned int t7xx_dpmaif_ul_get_rd_idx(struct dpmaif_hw_info *hw_info, unsigned char q_num)
 {
 	unsigned int value = ioread32(hw_info->pcie_base + DPMAIF_ULQ_STA0_n(q_num));
 
@@ -1169,8 +1104,8 @@ int t7xx_dpmaif_dlq_add_pit_remain_cnt(struct dpmaif_ctrl *dpmaif_ctrl, unsigned
 	return 0;
 }
 
-unsigned int t7xx_dpmaif_dl_dlq_pit_get_wridx(struct dpmaif_hw_info *hw_info,
-					      unsigned int dlq_pit_idx)
+unsigned int t7xx_dpmaif_dl_dlq_pit_get_wr_idx(struct dpmaif_hw_info *hw_info,
+					       unsigned int dlq_pit_idx)
 {
 	u32 value;
 
@@ -1212,7 +1147,7 @@ int t7xx_dpmaif_dl_snd_hw_bat_cnt(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int 
 	return 0;
 }
 
-unsigned int t7xx_dpmaif_dl_get_bat_ridx(struct dpmaif_hw_info *hw_info, unsigned char q_num)
+unsigned int t7xx_dpmaif_dl_get_bat_rd_idx(struct dpmaif_hw_info *hw_info, unsigned char q_num)
 {
 	u32 value;
 
@@ -1220,7 +1155,7 @@ unsigned int t7xx_dpmaif_dl_get_bat_ridx(struct dpmaif_hw_info *hw_info, unsigne
 	return value & DPMAIF_DL_BAT_WRIDX_MSK;
 }
 
-unsigned int t7xx_dpmaif_dl_get_bat_wridx(struct dpmaif_hw_info *hw_info, unsigned char q_num)
+unsigned int t7xx_dpmaif_dl_get_bat_wr_idx(struct dpmaif_hw_info *hw_info, unsigned char q_num)
 {
 	u32 value;
 
@@ -1250,7 +1185,7 @@ int t7xx_dpmaif_dl_snd_hw_frg_cnt(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int 
 	return 0;
 }
 
-unsigned int t7xx_dpmaif_dl_get_frg_ridx(struct dpmaif_hw_info *hw_info, unsigned char q_num)
+unsigned int t7xx_dpmaif_dl_get_frg_rd_idx(struct dpmaif_hw_info *hw_info, unsigned char q_num)
 {
 	u32 value;
 
@@ -1298,7 +1233,7 @@ static void t7xx_dpmaif_set_queue_property(struct dpmaif_hw_info *hw_info,
 }
 
 /**
- * t7xx_dpmaif_hw_stop_tx_queue() - Stop all TX queues.
+ * t7xx_dpmaif_hw_stop_all_txq() - Stop all TX queues.
  * @dpmaif_ctrl: Pointer to struct dpmaif_ctrl.
  *
  * Disable HW UL queues. Checks busy UL queues to go to idle
@@ -1308,12 +1243,12 @@ static void t7xx_dpmaif_set_queue_property(struct dpmaif_hw_info *hw_info,
  * * 0			- Success
  * * -ETIMEDOUT		- Timed out checking busy queues
  */
-int t7xx_dpmaif_hw_stop_tx_queue(struct dpmaif_ctrl *dpmaif_ctrl)
+int t7xx_dpmaif_hw_stop_all_txq(struct dpmaif_ctrl *dpmaif_ctrl)
 {
 	struct dpmaif_hw_info *hw_info = &dpmaif_ctrl->hif_hw_info;
 	int count = 0;
 
-	t7xx_dpmaif_ul_all_queue_en(hw_info, false);
+	t7xx_dpmaif_ul_all_q_en(hw_info, false);
 	while (t7xx_dpmaif_ul_idle_check(hw_info)) {
 		if (++count >= DPMAIF_MAX_CHECK_COUNT) {
 			dev_err(dpmaif_ctrl->dev, "Failed to stop TX, status: 0x%x\n",
@@ -1326,7 +1261,7 @@ int t7xx_dpmaif_hw_stop_tx_queue(struct dpmaif_ctrl *dpmaif_ctrl)
 }
 
 /**
- * t7xx_dpmaif_hw_stop_rx_queue() - Stop all RX queues.
+ * t7xx_dpmaif_hw_stop_all_rxq() - Stop all RX queues.
  * @dpmaif_ctrl: Pointer to struct dpmaif_ctrl.
  *
  * Disable HW DL queue. Checks busy UL queues to go to idle
@@ -1338,13 +1273,13 @@ int t7xx_dpmaif_hw_stop_tx_queue(struct dpmaif_ctrl *dpmaif_ctrl)
  * * 0			- Success.
  * * -ETIMEDOUT		- Timed out checking busy queues.
  */
-int t7xx_dpmaif_hw_stop_rx_queue(struct dpmaif_ctrl *dpmaif_ctrl)
+int t7xx_dpmaif_hw_stop_all_rxq(struct dpmaif_ctrl *dpmaif_ctrl)
 {
 	struct dpmaif_hw_info *hw_info = &dpmaif_ctrl->hif_hw_info;
-	unsigned int wridx, ridx;
+	unsigned int wr_idx, rd_idx;
 	int count = 0;
 
-	t7xx_dpmaif_dl_all_queue_en(dpmaif_ctrl, false);
+	t7xx_dpmaif_dl_all_q_en(dpmaif_ctrl, false);
 	while (t7xx_dpmaif_dl_idle_check(hw_info)) {
 		if (++count >= DPMAIF_MAX_CHECK_COUNT) {
 			dev_err(dpmaif_ctrl->dev, "Failed to stop RX, status: 0x%x\n",
@@ -1356,12 +1291,12 @@ int t7xx_dpmaif_hw_stop_rx_queue(struct dpmaif_ctrl *dpmaif_ctrl)
 	/* Check middle PIT sync done */
 	count = 0;
 	do {
-		wridx = ioread32(hw_info->pcie_base + DPMAIF_AO_DL_PIT_WRIDX);
-		wridx &= DPMAIF_DL_PIT_WRIDX_MSK;
-		ridx = ioread32(hw_info->pcie_base + DPMAIF_AO_DL_PIT_RIDX);
-		ridx &= DPMAIF_DL_PIT_WRIDX_MSK;
+		wr_idx = ioread32(hw_info->pcie_base + DPMAIF_AO_DL_PIT_WRIDX);
+		wr_idx &= DPMAIF_DL_PIT_WRIDX_MSK;
+		rd_idx = ioread32(hw_info->pcie_base + DPMAIF_AO_DL_PIT_RIDX);
+		rd_idx &= DPMAIF_DL_PIT_WRIDX_MSK;
 
-		if (wridx == ridx)
+		if (wr_idx == rd_idx)
 			return 0;
 	} while (++count < DPMAIF_MAX_CHECK_COUNT);
 
@@ -1371,8 +1306,8 @@ int t7xx_dpmaif_hw_stop_rx_queue(struct dpmaif_ctrl *dpmaif_ctrl)
 
 void t7xx_dpmaif_start_hw(struct dpmaif_ctrl *dpmaif_ctrl)
 {
-	t7xx_dpmaif_ul_all_queue_en(&dpmaif_ctrl->hif_hw_info, true);
-	t7xx_dpmaif_dl_all_queue_en(dpmaif_ctrl, true);
+	t7xx_dpmaif_ul_all_q_en(&dpmaif_ctrl->hif_hw_info, true);
+	t7xx_dpmaif_dl_all_q_en(dpmaif_ctrl, true);
 }
 
 /**
@@ -1404,8 +1339,18 @@ int t7xx_dpmaif_hw_init(struct dpmaif_ctrl *dpmaif_ctrl, struct dpmaif_hw_params
 	}
 
 	t7xx_dpmaif_set_queue_property(hw_info, init_param);
+	t7xx_dpmaif_pcie_dpmaif_sign(hw_info);
+	t7xx_dpmaif_dl_performance(hw_info);
 
-	ret = t7xx_dpmaif_config_que_hw(dpmaif_ctrl);
+	ret = t7xx_dpmaif_config_dlq_hw(dpmaif_ctrl);
+	if (ret) {
+		dev_err(dpmaif_ctrl->dev, "DPMAIF HW dlq config failed\n");
+		return ret;
+	}
+
+	t7xx_dpmaif_config_ulq_hw(hw_info);
+
+	ret = t7xx_dpmaif_hw_init_done(hw_info);
 	if (ret)
 		dev_err(dpmaif_ctrl->dev, "DPMAIF HW queue init failed\n");
 

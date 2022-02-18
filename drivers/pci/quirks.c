@@ -3842,6 +3842,40 @@ static int reset_chelsio_generic_dev(struct pci_dev *dev, int probe)
 	return 0;
 }
 
+/*
+ * Some Marvell Wifi devices may utilize FLR for reset/recovery when their
+ * firmware crashes. However, Marvell firmware can have trouble reinitializing
+ * the device correctly after just a single reset, so we instead perform 2
+ * resets, allowing the driver to reinitialize the driver in between.
+ *
+ * Lifted partially from pci_reset_function(), but done entirely under
+ * pci_dev_lock().
+ */
+static int reset_marvell_wifi_double_flr(struct pci_dev *dev, int probe)
+{
+	int ret;
+
+	/* Just checking for support. */
+	if (probe)
+		return 0;
+
+	/* Perform first reset. */
+	ret = pcie_flr(dev);
+	if (ret)
+		return ret;
+
+	/*
+	 * Notify and restore any driver in between resets, to give it a chance
+	 * to reload firmware. Without this, the device may not come up
+	 * completely correctly.
+	 */
+	pci_dev_restore(dev);
+	pci_dev_save_and_disable(dev);
+
+	/* Perform second reset. */
+	return pcie_flr(dev);
+}
+
 #define PCI_DEVICE_ID_INTEL_82599_SFP_VF   0x10ed
 #define PCI_DEVICE_ID_INTEL_IVB_M_VGA      0x0156
 #define PCI_DEVICE_ID_INTEL_IVB_M2_VGA     0x0166
@@ -4011,6 +4045,8 @@ reset_complete:
 	return 0;
 }
 
+#define PCIE_DEVICE_ID_MARVELL_88W8997     0x2b42
+
 static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 	{ PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82599_SFP_VF,
 		 reset_intel_82599_sfp_virtfn },
@@ -4024,6 +4060,10 @@ static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 		reset_chelsio_generic_dev },
 	{ PCI_VENDOR_ID_HUAWEI, PCI_DEVICE_ID_HINIC_VF,
 		reset_hinic_vf_dev },
+	{ PCI_VENDOR_ID_MARVELL, PCIE_DEVICE_ID_MARVELL_88W8997,
+		reset_marvell_wifi_double_flr },
+	{ PCI_VENDOR_ID_MARVELL_EXT, PCIE_DEVICE_ID_MARVELL_88W8997,
+		reset_marvell_wifi_double_flr },
 	{ 0 }
 };
 
@@ -4076,6 +4116,9 @@ static void quirk_dma_func1_alias(struct pci_dev *dev)
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_MARVELL_EXT, 0x9120,
 			 quirk_dma_func1_alias);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_MARVELL_EXT, 0x9123,
+			 quirk_dma_func1_alias);
+/* https://bugzilla.kernel.org/show_bug.cgi?id=42679#c136 */
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_MARVELL_EXT, 0x9125,
 			 quirk_dma_func1_alias);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_MARVELL_EXT, 0x9128,
 			 quirk_dma_func1_alias);
@@ -5773,42 +5816,3 @@ static void nvidia_ion_ahci_fixup(struct pci_dev *pdev)
 	pdev->dev_flags |= PCI_DEV_FLAGS_HAS_MSI_MASKING;
 }
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_NVIDIA, 0x0ab8, nvidia_ion_ahci_fixup);
-
-/*
- * Bayhub OZ711LV2 SD controller has an errata that only allows DWORD accesses
- * to the LTR max latency registers. Thus need to save and restore these
- * registers manually.
- */
-static void o2_seabird1_save_ltr(struct pci_dev *dev)
-{
-	struct pci_cap_saved_state *save_state;
-	u32 *reg32;
-
-	save_state = pci_find_saved_ext_cap(dev, PCI_EXT_CAP_ID_LTR);
-	if (save_state) {
-		reg32 = &save_state->cap.data[0];
-		/* Preserve PCI_LTR_MAX_SNOOP_LAT & PCI_LTR_MAX_NOSNOOP_LAT */
-		pci_read_config_dword(dev, 0x234, reg32);
-	} else {
-		pci_err(dev, "quirk can't save LTR snoop latency\n");
-	}
-}
-
-static void o2_seabird1_restore_ltr(struct pci_dev *dev)
-{
-	struct pci_cap_saved_state *save_state;
-	u32 *reg32;
-
-	save_state = pci_find_saved_ext_cap(dev, PCI_EXT_CAP_ID_LTR);
-	if (save_state) {
-		reg32 = &save_state->cap.data[0];
-		/* Restore PCI_LTR_MAX_SNOOP_LAT & PCI_LTR_MAX_NOSNOOP_LAT */
-		pci_write_config_dword(dev, 0x234, *reg32);
-	} else {
-		pci_err(dev, "quirk can't restore LTR snoop latency\n");
-	}
-}
-DECLARE_PCI_FIXUP_SUSPEND_LATE(PCI_VENDOR_ID_O2, PCI_DEVICE_ID_O2_SEABIRD1,
-			       o2_seabird1_save_ltr);
-DECLARE_PCI_FIXUP_RESUME_EARLY(PCI_VENDOR_ID_O2, PCI_DEVICE_ID_O2_SEABIRD1,
-			       o2_seabird1_restore_ltr);

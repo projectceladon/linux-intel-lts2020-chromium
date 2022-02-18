@@ -51,7 +51,7 @@
 #define OV2740_REG_MWB_R_GAIN		0x500a
 #define OV2740_REG_MWB_G_GAIN		0x500c
 #define OV2740_REG_MWB_B_GAIN		0x500e
-#define OV2740_DGTL_GAIN_MIN		0
+#define OV2740_DGTL_GAIN_MIN		1024
 #define OV2740_DGTL_GAIN_MAX		4095
 #define OV2740_DGTL_GAIN_STEP		1
 #define OV2740_DGTL_GAIN_DEFAULT	1024
@@ -60,6 +60,12 @@
 #define OV2740_REG_TEST_PATTERN		0x5040
 #define OV2740_TEST_PATTERN_ENABLE	BIT(7)
 #define OV2740_TEST_PATTERN_BAR_SHIFT	2
+
+/* Group Access */
+#define OV2740_REG_GROUP_ACCESS		0x3208
+#define OV2740_GROUP_HOLD_START		0x0
+#define OV2740_GROUP_HOLD_END		0x10
+#define OV2740_GROUP_HOLD_LAUNCH	0xa0
 
 /* ISP CTRL00 */
 #define OV2740_REG_ISP_CTRL00		0x5000
@@ -465,6 +471,11 @@ static int ov2740_update_digital_gain(struct ov2740 *ov2740, u32 d_gain)
 {
 	int ret = 0;
 
+	ret = ov2740_write_reg(ov2740, OV2740_REG_GROUP_ACCESS, 1,
+			       OV2740_GROUP_HOLD_START);
+	if (ret)
+		return ret;
+
 	ret = ov2740_write_reg(ov2740, OV2740_REG_MWB_R_GAIN, 2, d_gain);
 	if (ret)
 		return ret;
@@ -473,7 +484,18 @@ static int ov2740_update_digital_gain(struct ov2740 *ov2740, u32 d_gain)
 	if (ret)
 		return ret;
 
-	return ov2740_write_reg(ov2740, OV2740_REG_MWB_B_GAIN, 2, d_gain);
+	ret = ov2740_write_reg(ov2740, OV2740_REG_MWB_B_GAIN, 2, d_gain);
+	if (ret)
+		return ret;
+
+	ret = ov2740_write_reg(ov2740, OV2740_REG_GROUP_ACCESS, 1,
+			       OV2740_GROUP_HOLD_END);
+	if (ret)
+		return ret;
+
+	ret = ov2740_write_reg(ov2740, OV2740_REG_GROUP_ACCESS, 1,
+			       OV2740_GROUP_HOLD_LAUNCH);
+	return ret;
 }
 
 static int ov2740_test_pattern(struct ov2740 *ov2740, u32 pattern)
@@ -1138,6 +1160,7 @@ static int ov2740_probe(struct i2c_client *client)
 	if (!ov2740)
 		return -ENOMEM;
 
+	v4l2_i2c_subdev_init(&ov2740->sd, client, &ov2740_subdev_ops);
 	full_power = acpi_dev_state_d0(&client->dev);
 	if (full_power) {
 		ret = ov2740_identify_module(ov2740);
@@ -1145,13 +1168,6 @@ static int ov2740_probe(struct i2c_client *client)
 			dev_err(&client->dev, "failed to find sensor: %d", ret);
 			return ret;
 		}
-	}
-
-	v4l2_i2c_subdev_init(&ov2740->sd, client, &ov2740_subdev_ops);
-	ret = ov2740_identify_module(ov2740);
-	if (ret) {
-		dev_err(&client->dev, "failed to find sensor: %d", ret);
-		return ret;
 	}
 
 	mutex_init(&ov2740->mutex);

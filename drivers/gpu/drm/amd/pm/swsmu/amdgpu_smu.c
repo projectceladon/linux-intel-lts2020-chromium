@@ -190,10 +190,6 @@ static int smu_dpm_set_vcn_enable_locked(struct smu_context *smu,
 	struct smu_power_gate *power_gate = &smu_power->power_gate;
 	int ret = 0;
 
-	// Do not perform VCN power gating to avoid SMU Hang
-	if (smu->adev->asic_type == CHIP_RENOIR)
-		return ret;
-
 	if (!smu->ppt_funcs->dpm_set_vcn_enable)
 		return 0;
 
@@ -1517,9 +1513,7 @@ static int smu_suspend(void *handle)
 
 	smu->watermarks_bitmap &= ~(WATERMARKS_LOADED);
 
-	/* skip CGPG when in S0ix */
-	if (smu->is_apu && !adev->in_s0ix)
-		smu_set_gfx_cgpg(&adev->smu, false);
+	smu_set_gfx_cgpg(&adev->smu, false);
 
 	return 0;
 }
@@ -1550,8 +1544,7 @@ static int smu_resume(void *handle)
 		return ret;
 	}
 
-	if (smu->is_apu)
-		smu_set_gfx_cgpg(&adev->smu, true);
+	smu_set_gfx_cgpg(&adev->smu, true);
 
 	smu->disable_uclk_switch = 0;
 

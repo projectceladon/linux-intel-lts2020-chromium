@@ -837,6 +837,17 @@ static const struct dmi_system_id chromebook_broken_opregion_version[] = {
 			DMI_MATCH(DMI_PRODUCT_FAMILY, "Google_Coral"),
 		},
 	},
+	{
+		.callback = chromebook_broken_opregion_version_callback,
+		.ident = "Chromebook baseboard Reef",
+		.matches = {
+			/*
+			 * There are many vendors of the Reef-based devices,
+			 * so it is enough to use the product family wildcard.
+			 */
+			DMI_MATCH(DMI_PRODUCT_FAMILY, "Google_Reef"),
+		},
+	},
 	{ }
 };
 
@@ -963,10 +974,10 @@ int intel_opregion_setup(struct drm_i915_private *dev_priv)
 
 	if (dmi_check_system(chromebook_broken_opregion_version)) {
 		typeof(opregion->header->over) *over = &(opregion->header->over);
-		int bios_year = dmi_get_bios_year();
 		u8 tmp;
 
-		if (bios_year > 0 && bios_year < 2022) {
+		if (over->major == 0 && over->minor == 0 &&
+		    over->revision == 0 && over->rsvd == 2) {
 			drm_info(&dev_priv->drm,
 				 "Quirk: swapping fields in opregion %hhu %hhu %hhu %hhu\n",
 				 over->major, over->minor, over->revision, over->rsvd);

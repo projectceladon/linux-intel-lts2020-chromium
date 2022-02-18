@@ -76,14 +76,6 @@ static unsigned int t7xx_normal_pit_bid(const struct dpmaif_normal_pit *pit_info
 	return value;
 }
 
-static void t7xx_dpmaif_set_skb_cs_type(const unsigned int cs_result, struct sk_buff *skb)
-{
-	if (cs_result == DPMAIF_CS_RESULT_PASS)
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-	else
-		skb->ip_summed = CHECKSUM_NONE;
-}
-
 static int t7xx_dpmaif_net_rx_push_thread(void *arg)
 {
 	struct dpmaif_rx_queue *q = arg;
@@ -136,12 +128,12 @@ static int t7xx_dpmaif_update_bat_wr_idx(struct dpmaif_ctrl *dpmaif_ctrl,
 	old_wr_idx = bat_req->bat_wr_idx;
 	new_wr_idx = old_wr_idx + bat_cnt;
 
-	if (old_rl_idx > old_wr_idx) {
-		if (new_wr_idx >= old_rl_idx) {
-			dev_err(dpmaif_ctrl->dev, "RX BAT flow check fail\n");
-			return -EINVAL;
-		}
-	} else if (new_wr_idx >= bat_req->bat_size_cnt) {
+	if (old_rl_idx > old_wr_idx && new_wr_idx >= old_rl_idx) {
+		dev_err(dpmaif_ctrl->dev, "RX BAT flow check fail\n");
+		return -EINVAL;
+	}
+
+	if (new_wr_idx >= bat_req->bat_size_cnt) {
 		new_wr_idx -= bat_req->bat_size_cnt;
 		if (new_wr_idx >= old_rl_idx) {
 			dev_err(dpmaif_ctrl->dev, "RX BAT flow check fail\n");
@@ -153,52 +145,43 @@ static int t7xx_dpmaif_update_bat_wr_idx(struct dpmaif_ctrl *dpmaif_ctrl,
 	return 0;
 }
 
-#define GET_SKB_BY_ENTRY(skb_entry)\
-	((struct dpmaif_skb_info *)list_entry(skb_entry, struct dpmaif_skb_info, entry))
-
-static struct dpmaif_skb_info *t7xx_alloc_and_map_skb_info(const struct dpmaif_ctrl *dpmaif_ctrl,
-							   struct sk_buff *skb)
+static bool t7xx_alloc_and_map_skb_info(const struct dpmaif_ctrl *dpmaif_ctrl,
+					const unsigned int size, struct dpmaif_bat_skb *cur_skb)
 {
-	struct dpmaif_skb_info *skb_info;
 	dma_addr_t data_bus_addr;
+	struct sk_buff *skb;
 	size_t data_len;
 
-	skb_info = kmalloc(sizeof(*skb_info), GFP_KERNEL);
-	if (!skb_info)
-		return NULL;
+	skb = __dev_alloc_skb(size, GFP_KERNEL);
+	if (!skb)
+		return false;
 
-	/* DMA mapping */
-	data_len = t7xx_skb_data_size(skb);
+	data_len = t7xx_skb_data_area_size(skb);
 
 	data_bus_addr = dma_map_single(dpmaif_ctrl->dev, skb->data, data_len, DMA_FROM_DEVICE);
 	if (dma_mapping_error(dpmaif_ctrl->dev, data_bus_addr)) {
 		dev_err_ratelimited(dpmaif_ctrl->dev, "DMA mapping error\n");
-		kfree(skb_info);
-		return NULL;
+		dev_kfree_skb_any(skb);
+		return false;
 	}
 
-	INIT_LIST_HEAD(&skb_info->entry);
-	skb_info->skb = skb;
-	skb_info->data_len = data_len;
-	skb_info->data_bus_addr = data_bus_addr;
-	return skb_info;
+	cur_skb->skb = skb;
+	cur_skb->data_bus_addr = data_bus_addr;
+	cur_skb->data_len = data_len;
+
+	return true;
 }
 
-static struct dpmaif_skb_info *t7xx_dpmaif_dev_alloc_skb(struct dpmaif_ctrl *dpmaif_ctrl,
-							 const unsigned int size)
+static void t7xx_unmap_bat_skb(struct device *dev, struct dpmaif_bat_skb *bat_skb_base,
+			       unsigned int index)
 {
-	struct dpmaif_skb_info *skb_info;
-	struct sk_buff *skb;
+	struct dpmaif_bat_skb *bat_skb = bat_skb_base + index;
 
-	skb = __dev_alloc_skb(size, GFP_KERNEL);
-	if (!skb)
-		return NULL;
-
-	skb_info = t7xx_alloc_and_map_skb_info(dpmaif_ctrl, skb);
-	if (!skb_info)
-		dev_kfree_skb_any(skb);
-
-	return skb_info;
+	if (bat_skb->skb) {
+		dma_unmap_single(dev, bat_skb->data_bus_addr, bat_skb->data_len, DMA_FROM_DEVICE);
+		kfree_skb(bat_skb->skb);
+		bat_skb->skb = NULL;
+	}
 }
 
 /**
@@ -247,18 +230,9 @@ int t7xx_dpmaif_rx_buf_alloc(struct dpmaif_ctrl *dpmaif_ctrl,
 			cur_bat_idx -= bat_max_cnt;
 
 		cur_skb = (struct dpmaif_bat_skb *)bat_req->bat_skb + cur_bat_idx;
-		if (!cur_skb->skb) {
-			struct dpmaif_skb_info *skb_info;
-
-			skb_info = t7xx_dpmaif_dev_alloc_skb(dpmaif_ctrl, bat_req->pkt_buf_sz);
-			if (!skb_info)
-				break;
-
-			cur_skb->skb = skb_info->skb;
-			cur_skb->data_bus_addr = skb_info->data_bus_addr;
-			cur_skb->data_len = skb_info->data_len;
-			kfree(skb_info);
-		}
+		if (!cur_skb->skb &&
+		    !t7xx_alloc_and_map_skb_info(dpmaif_ctrl, bat_req->pkt_buf_sz, cur_skb))
+			break;
 
 		cur_bat = (struct dpmaif_bat *)bat_req->bat_base + cur_bat_idx;
 		cur_bat->buffer_addr_ext = upper_32_bits(cur_skb->data_bus_addr);
@@ -270,19 +244,27 @@ int t7xx_dpmaif_rx_buf_alloc(struct dpmaif_ctrl *dpmaif_ctrl,
 
 	ret = t7xx_dpmaif_update_bat_wr_idx(dpmaif_ctrl, q_num, i);
 	if (ret)
-		return ret;
+		goto err_unmap_skbs;
 
 	if (!initial) {
 		ret = t7xx_dpmaif_dl_snd_hw_bat_cnt(dpmaif_ctrl, i);
 		if (ret)
-			return ret;
+			goto err_unmap_skbs;
 
-		hw_wr_idx = t7xx_dpmaif_dl_get_bat_wridx(&dpmaif_ctrl->hif_hw_info, DPF_RX_QNO_DFT);
+		hw_wr_idx = t7xx_dpmaif_dl_get_bat_wr_idx(&dpmaif_ctrl->hif_hw_info,
+							  DPF_RX_QNO_DFT);
 		if (hw_wr_idx != bat_req->bat_wr_idx) {
 			ret = -EFAULT;
 			dev_err(dpmaif_ctrl->dev, "Write index mismatch in RX ring\n");
+			goto err_unmap_skbs;
 		}
 	}
+
+	return 0;
+
+err_unmap_skbs:
+	while (--i > 0)
+		t7xx_unmap_bat_skb(dpmaif_ctrl->dev, bat_req->bat_skb, i);
 
 	return ret;
 }
@@ -305,7 +287,7 @@ static int t7xx_dpmaifq_release_pit_entry(struct dpmaif_rx_queue *rxq,
 	new_sw_rel_idx = old_sw_rel_idx + rel_entry_num;
 	old_hw_wr_idx = rxq->pit_wr_idx;
 	if (old_hw_wr_idx < old_sw_rel_idx && new_sw_rel_idx >= rxq->pit_size_cnt)
-		new_sw_rel_idx = new_sw_rel_idx - rxq->pit_size_cnt;
+		new_sw_rel_idx -= rxq->pit_size_cnt;
 
 	ret = t7xx_dpmaif_dlq_add_pit_remain_cnt(rxq->dpmaif_ctrl, rxq->index, rel_entry_num);
 	if (ret) {
@@ -343,6 +325,18 @@ static int t7xx_frag_bat_cur_bid_check(struct dpmaif_rx_queue *rxq,
 	return 0;
 }
 
+static void t7xx_unmap_bat_page(struct device *dev, struct dpmaif_bat_page *bat_page_base,
+				unsigned int index)
+{
+	struct dpmaif_bat_page *bat_page = bat_page_base + index;
+
+	if (bat_page->page) {
+		dma_unmap_page(dev, bat_page->data_bus_addr, bat_page->data_len, DMA_FROM_DEVICE);
+		put_page(bat_page->page);
+		bat_page->page = NULL;
+	}
+}
+
 /**
  * t7xx_dpmaif_rx_frag_alloc() - Allocates buffers for the Fragment BAT ring.
  * @dpmaif_ctrl: Pointer to DPMAIF context structure.
@@ -365,7 +359,7 @@ int t7xx_dpmaif_rx_frag_alloc(struct dpmaif_ctrl *dpmaif_ctrl, struct dpmaif_bat
 	struct dpmaif_bat_page *bat_skb = bat_req->bat_skb;
 	unsigned short cur_bat_idx = bat_req->bat_wr_idx;
 	unsigned int buf_space;
-	int i;
+	int ret, i;
 
 	if (!buf_cnt || buf_cnt > bat_req->bat_size_cnt)
 		return -EINVAL;
@@ -414,18 +408,21 @@ int t7xx_dpmaif_rx_frag_alloc(struct dpmaif_ctrl *dpmaif_ctrl, struct dpmaif_bat
 		cur_bat = (struct dpmaif_bat *)bat_req->bat_base + cur_bat_idx;
 		cur_bat->buffer_addr_ext = upper_32_bits(data_base_addr);
 		cur_bat->p_buffer_addr = lower_32_bits(data_base_addr);
-		cur_bat_idx = t7xx_ring_buf_get_next_wrdx(bat_req->bat_size_cnt, cur_bat_idx);
+		cur_bat_idx = t7xx_ring_buf_get_next_wr_idx(bat_req->bat_size_cnt, cur_bat_idx);
 	}
-
-	if (i < buf_cnt)
-		return -ENOMEM;
 
 	bat_req->bat_wr_idx = cur_bat_idx;
 
 	if (!initial)
 		t7xx_dpmaif_dl_snd_hw_frg_cnt(dpmaif_ctrl, i);
 
-	return 0;
+	ret = i < buf_cnt ? -ENOMEM : 0;
+	if (ret && initial) {
+		while (--i > 0)
+			t7xx_unmap_bat_page(dpmaif_ctrl->dev, bat_req->bat_skb, i);
+	}
+
+	return ret;
 }
 
 static int t7xx_dpmaif_set_frag_to_skb(const struct dpmaif_rx_queue *rxq,
@@ -549,10 +546,10 @@ static int t7xx_dpmaif_release_bat_entry(const struct dpmaif_rx_queue *rxq,
 
 	if (buf_type == BAT_TYPE_FRAG) {
 		bat = rxq->bat_frag;
-		hw_rd_idx = t7xx_dpmaif_dl_get_frg_ridx(&dpmaif_ctrl->hif_hw_info, rxq->index);
+		hw_rd_idx = t7xx_dpmaif_dl_get_frg_rd_idx(&dpmaif_ctrl->hif_hw_info, rxq->index);
 	} else {
 		bat = rxq->bat_req;
-		hw_rd_idx = t7xx_dpmaif_dl_get_bat_ridx(&dpmaif_ctrl->hif_hw_info, rxq->index);
+		hw_rd_idx = t7xx_dpmaif_dl_get_bat_rd_idx(&dpmaif_ctrl->hif_hw_info, rxq->index);
 	}
 
 	if (rel_entry_num >= bat->bat_size_cnt)
@@ -568,7 +565,9 @@ static int t7xx_dpmaif_release_bat_entry(const struct dpmaif_rx_queue *rxq,
 	if (hw_rd_idx >= old_sw_rel_idx) {
 		if (new_sw_rel_idx > hw_rd_idx)
 			return -EINVAL;
-	} else if (new_sw_rel_idx >= bat->bat_size_cnt) {
+	}
+
+	if (new_sw_rel_idx >= bat->bat_size_cnt) {
 		new_sw_rel_idx -= bat->bat_size_cnt;
 		if (new_sw_rel_idx > hw_rd_idx)
 			return -EINVAL;
@@ -637,7 +636,7 @@ static int t7xx_dpmaif_frag_bat_release_and_add(const struct dpmaif_rx_queue *rx
 
 	ret = t7xx_dpmaif_release_bat_entry(rxq, bid_cnt, BAT_TYPE_FRAG);
 	if (ret <= 0) {
-		dev_err(rxq->dpmaif_ctrl->dev, "Release PKT BAT failed: %d\n", ret);
+		dev_err(rxq->dpmaif_ctrl->dev, "Release BAT entry failed: %d\n", ret);
 		return ret;
 	}
 
@@ -738,7 +737,8 @@ static void t7xx_dpmaif_rx_skb_enqueue(struct dpmaif_rx_queue *rxq, struct sk_bu
 	spin_unlock_irqrestore(&rxq->skb_list.lock, flags);
 }
 
-static void t7xx_dpmaif_rx_skb(struct dpmaif_rx_queue *rxq, struct dpmaif_cur_rx_skb_info *skb_info)
+static void t7xx_dpmaif_rx_skb(struct dpmaif_rx_queue *rxq,
+			       struct dpmaif_cur_rx_skb_info *skb_info)
 {
 	struct sk_buff *skb = skb_info->cur_skb;
 	u8 netif_id;
@@ -750,7 +750,8 @@ static void t7xx_dpmaif_rx_skb(struct dpmaif_rx_queue *rxq, struct dpmaif_cur_rx
 		return;
 	}
 
-	t7xx_dpmaif_set_skb_cs_type(skb_info->check_sum, skb);
+	skb->ip_summed = skb_info->check_sum == DPMAIF_CS_RESULT_PASS ? CHECKSUM_UNNECESSARY :
+									CHECKSUM_NONE;
 	netif_id = FIELD_GET(NETIF_MASK, skb_info->cur_chn_idx);
 	skb->cb[RX_CB_NETIF_IDX] = netif_id;
 	skb->cb[RX_CB_PKT_TYPE] = skb_info->pkt_type;
@@ -764,7 +765,7 @@ static int t7xx_dpmaif_rx_start(struct dpmaif_rx_queue *rxq, const unsigned shor
 	struct dpmaif_cur_rx_skb_info *skb_info;
 	unsigned short rx_cnt, recv_skb_cnt = 0;
 	unsigned int cur_pit, pit_len;
-	int ret = 0, ret_hw = 0;
+	int ret = 0;
 
 	pit_len = rxq->pit_size_cnt;
 	skb_info = &rxq->rx_data_info;
@@ -824,13 +825,13 @@ static int t7xx_dpmaif_rx_start(struct dpmaif_rx_queue *rxq, const unsigned shor
 			}
 		}
 
-		cur_pit = t7xx_ring_buf_get_next_wrdx(pit_len, cur_pit);
+		cur_pit = t7xx_ring_buf_get_next_wr_idx(pit_len, cur_pit);
 		rxq->pit_rd_idx = cur_pit;
 		rxq->pit_remain_release_cnt++;
 
 		if (rx_cnt > 0 && !(rx_cnt % DPMAIF_NOTIFY_RELEASE_COUNT)) {
-			ret_hw = t7xx_dpmaifq_rx_notify_hw(rxq);
-			if (ret_hw < 0)
+			ret = t7xx_dpmaifq_rx_notify_hw(rxq);
+			if (ret < 0)
 				break;
 		}
 	}
@@ -838,13 +839,13 @@ static int t7xx_dpmaif_rx_start(struct dpmaif_rx_queue *rxq, const unsigned shor
 	if (recv_skb_cnt)
 		wake_up_all(&rxq->rx_wq);
 
-	if (!ret_hw)
-		ret_hw = t7xx_dpmaifq_rx_notify_hw(rxq);
+	if (!ret)
+		ret = t7xx_dpmaifq_rx_notify_hw(rxq);
 
-	if (ret_hw < 0 && !ret)
-		ret = ret_hw;
+	if (ret)
+		return ret;
 
-	return ret < 0 ? ret : rx_cnt;
+	return rx_cnt;
 }
 
 static unsigned int t7xx_dpmaifq_poll_pit(struct dpmaif_rx_queue *rxq)
@@ -855,7 +856,7 @@ static unsigned int t7xx_dpmaifq_poll_pit(struct dpmaif_rx_queue *rxq)
 	if (!rxq->que_started)
 		return 0;
 
-	hw_wr_idx = t7xx_dpmaif_dl_dlq_pit_get_wridx(&rxq->dpmaif_ctrl->hif_hw_info, rxq->index);
+	hw_wr_idx = t7xx_dpmaif_dl_dlq_pit_get_wr_idx(&rxq->dpmaif_ctrl->hif_hw_info, rxq->index);
 	pit_cnt = t7xx_ring_buf_rd_wr_count(rxq->pit_size_cnt, rxq->pit_rd_idx, hw_wr_idx,
 					    DPMAIF_READ);
 	rxq->pit_wr_idx = hw_wr_idx;
@@ -878,16 +879,19 @@ static int t7xx_dpmaif_rx_data_collect(struct dpmaif_ctrl *dpmaif_ctrl,
 		cnt = t7xx_dpmaifq_poll_pit(rxq);
 		if (!cnt)
 			break;
-		else if (!rxq->pit_base)
+
+		if (!rxq->pit_base)
 			return -EAGAIN;
 
-		rd_cnt = (cnt > budget) ? budget : cnt;
+		rd_cnt = cnt > budget ? budget : cnt;
 
 		real_cnt = t7xx_dpmaif_rx_start(rxq, rd_cnt, time_limit);
 		if (real_cnt < 0)
 			return real_cnt;
-		else if (real_cnt < cnt)
+
+		if (real_cnt < cnt)
 			return -EAGAIN;
+
 	} while (cnt);
 
 	return 0;
@@ -1021,36 +1025,9 @@ err_free_dma_mem:
 	return -ENOMEM;
 }
 
-static void t7xx_unmap_bat_skb(struct device *dev, struct dpmaif_bat_skb *bat_skb_base,
-			       unsigned int index)
-{
-	struct dpmaif_bat_skb *bat_skb = bat_skb_base + index;
-
-	if (bat_skb->skb) {
-		dma_unmap_single(dev, bat_skb->data_bus_addr, bat_skb->data_len, DMA_FROM_DEVICE);
-		kfree_skb(bat_skb->skb);
-		bat_skb->skb = NULL;
-	}
-}
-
-static void t7xx_unmap_bat_page(struct device *dev, struct dpmaif_bat_page *bat_page_base,
-				unsigned int index)
-{
-	struct dpmaif_bat_page *bat_page = bat_page_base + index;
-
-	if (bat_page->page) {
-		dma_unmap_page(dev, bat_page->data_bus_addr, bat_page->data_len, DMA_FROM_DEVICE);
-		put_page(bat_page->page);
-		bat_page->page = NULL;
-	}
-}
-
 void t7xx_dpmaif_bat_free(const struct dpmaif_ctrl *dpmaif_ctrl, struct dpmaif_bat_request *bat_req)
 {
-	if (!bat_req)
-		return;
-
-	if (!atomic_dec_and_test(&bat_req->refcnt))
+	if (!bat_req || !atomic_dec_and_test(&bat_req->refcnt))
 		return;
 
 	kfree(bat_req->bat_mask);

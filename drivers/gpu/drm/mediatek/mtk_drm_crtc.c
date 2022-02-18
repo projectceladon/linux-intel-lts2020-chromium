@@ -67,6 +67,10 @@ struct mtk_drm_crtc {
 	/* lock for display hardware access */
 	struct mutex			hw_lock;
 	bool				config_updating;
+
+	u32				atomic_cnt;
+	u32				event_cnt;
+	u32				irq_cnt;
 };
 
 struct mtk_crtc_state {
@@ -91,33 +95,42 @@ static inline struct mtk_crtc_state *to_mtk_crtc_state(struct drm_crtc_state *s)
 static void mtk_drm_crtc_finish_page_flip(struct mtk_drm_crtc *mtk_crtc)
 {
 	struct drm_crtc *crtc = &mtk_crtc->base;
-	unsigned long flags;
+
+	mtk_crtc->irq_cnt++;
 
 	if (!crtc->dev)
-		DRM_WARN("crtc 0x%px already free!!!! %s %d\n", crtc, __func__, __LINE__);
+		DRM_WARN("crtc 0x%px already free=== %s %d\n", crtc, __func__, __LINE__);
 
-	if (!mtk_crtc->event)
-		DRM_WARN("crtc event 0x%px already free!!!! %s %d\n", mtk_crtc->event, __func__, __LINE__);
+	if (!mtk_crtc->event) {
+		DRM_WARN("crtc event 0x%px already free %s %d atomic %u %u %u\n",
+			 mtk_crtc->event, __func__, __LINE__,
+			 mtk_crtc->atomic_cnt,
+			 mtk_crtc->event_cnt,
+			 mtk_crtc->irq_cnt);
+		return;
+	}
 
-	spin_lock_irqsave(&crtc->dev->event_lock, flags);
 	drm_crtc_send_vblank_event(crtc, mtk_crtc->event);
 	drm_crtc_vblank_put(crtc);
 	mtk_crtc->event = NULL;
-	spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
 }
 
 static void mtk_drm_finish_page_flip(struct mtk_drm_crtc *mtk_crtc)
 {
 	struct drm_crtc *crtc = &mtk_crtc->base;
+	unsigned long flags;
 
 	if (!crtc->dev)
 		DRM_WARN("crtc 0x%px already free!!!! %s %d\n", crtc, __func__, __LINE__);
 
 	drm_crtc_handle_vblank(&mtk_crtc->base);
+
+	spin_lock_irqsave(&crtc->dev->event_lock, flags);
 	if (!mtk_crtc->config_updating && mtk_crtc->pending_needs_vblank) {
 		mtk_drm_crtc_finish_page_flip(mtk_crtc);
 		mtk_crtc->pending_needs_vblank = false;
 	}
+	spin_unlock_irqrestore(&crtc->dev->event_lock, flags);
 }
 
 #if IS_REACHABLE(CONFIG_MTK_CMDQ)
@@ -466,6 +479,10 @@ static void mtk_crtc_ddp_hw_fini(struct mtk_drm_crtc *mtk_crtc)
 		crtc->state->event = NULL;
 		spin_unlock_irq(&crtc->dev->event_lock);
 	}
+
+	mtk_crtc->atomic_cnt = 0;
+	mtk_crtc->event_cnt = 0;
+	mtk_crtc->irq_cnt = 0;
 }
 
 static void mtk_crtc_ddp_config(struct drm_crtc *crtc,
@@ -766,11 +783,14 @@ static void mtk_drm_crtc_atomic_begin(struct drm_crtc *crtc,
 	if (mtk_crtc->event && mtk_crtc_state->base.event)
 		DRM_ERROR("new event while there is still a pending event\n");
 
+	mtk_crtc->atomic_cnt++;
+
 	if (mtk_crtc_state->base.event) {
 		mtk_crtc_state->base.event->pipe = drm_crtc_index(crtc);
 		WARN_ON(drm_crtc_vblank_get(crtc) != 0);
 		mtk_crtc->event = mtk_crtc_state->base.event;
 		mtk_crtc_state->base.event = NULL;
+		mtk_crtc->event_cnt++;
 	}
 }
 
@@ -992,7 +1012,8 @@ int mtk_drm_crtc_create(struct drm_device *drm_dev,
 	mutex_init(&mtk_crtc->hw_lock);
 
 #if IS_REACHABLE(CONFIG_MTK_CMDQ)
-	i = (priv->data->mbox_index) ? priv->data->mbox_index[drm_crtc_index(&mtk_crtc->base)] : 0;
+	i = (priv->data->mbox_index) ? priv->data->mbox_index[drm_crtc_index(&mtk_crtc->base)] :
+				       drm_crtc_index(&mtk_crtc->base);
 	mtk_crtc->cmdq_client.client.dev = mtk_crtc->mmsys_dev;
 	mtk_crtc->cmdq_client.client.tx_block = false;
 	mtk_crtc->cmdq_client.client.knows_txdone = true;
@@ -1000,7 +1021,7 @@ int mtk_drm_crtc_create(struct drm_device *drm_dev,
 	mtk_crtc->cmdq_client.chan =
 			mbox_request_channel(&mtk_crtc->cmdq_client.client, i);
 	if (IS_ERR(mtk_crtc->cmdq_client.chan)) {
-		dev_dbg(dev, "mtk_crtc %d failed to create mailbox client, writing register by CPU now\n",
+		dev_info(dev, "mtk_crtc %d failed to create mailbox client, writing register by CPU now\n",
 			drm_crtc_index(&mtk_crtc->base));
 		mtk_crtc->cmdq_client.chan = NULL;
 	}
