@@ -2634,6 +2634,7 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 				put_task_struct(next);
 				next = NULL;
 			}
+			trace_android_vh_futex_sleep_start(current);
 			freezable_schedule();
 		}
 	}

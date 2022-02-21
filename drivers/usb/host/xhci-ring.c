@@ -1054,6 +1054,7 @@ static int xhci_invalidate_cancelled_tds(struct xhci_virt_ep *ep)
 			td->cancel_status = TD_CLEARED;
 		}
 	}
+
 	/* If there's no need to move the dequeue pointer then we're done */
 	if (!cached_td)
 		return 0;

@@ -1505,6 +1505,8 @@ static void update_sibling_cpumasks(struct cpuset *parent, struct cpuset *cs,
 	struct cpuset *sibling;
 	struct cgroup_subsys_state *pos_css;
 
+	lockdep_assert_held(&cpuset_mutex);
+
 	/*
 	 * Check all its siblings and call update_cpumasks_hier()
 	 * if their use_parent_ecpus flag is set in order for them
@@ -3305,7 +3307,6 @@ void cpuset_wait_for_hotplug(void)
 {
 	flush_work(&cpuset_hotplug_work);
 }
-EXPORT_SYMBOL_GPL(cpuset_wait_for_hotplug);
 
 /*
  * Keep top_cpuset.mems_allowed tracking node_states[N_MEMORY].
