@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -47,7 +47,6 @@ typedef irqreturn_t (*t7xx_intr_callback)(int irq, void *param);
  * @intr_handler: array of handler function for request_threaded_irq
  * @intr_thread: array of thread_fn for request_threaded_irq
  * @callback_param: array of cookie passed back to interrupt functions
- * @mhccif_bitmask: device to host interrupt mask
  * @pdev: PCI device
  * @base_addr: memory base addresses of HW components
  * @md: modem interface
@@ -66,7 +65,6 @@ struct t7xx_pci_dev {
 	t7xx_intr_callback	intr_handler[EXT_INT_NUM];
 	t7xx_intr_callback	intr_thread[EXT_INT_NUM];
 	void			*callback_param[EXT_INT_NUM];
-	u32			mhccif_bitmask;
 	struct pci_dev		*pdev;
 	struct t7xx_addr_base	base_addr;
 	struct t7xx_modem	*md;
@@ -89,6 +87,7 @@ enum t7xx_pm_id {
 	PM_ENTITY_ID_CTRL1,
 	PM_ENTITY_ID_CTRL2,
 	PM_ENTITY_ID_DATA,
+	PM_ENTITY_ID_INVALID
 };
 
 /* struct md_pm_entity - device power management entity

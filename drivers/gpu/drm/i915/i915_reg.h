@@ -10928,6 +10928,12 @@ enum skl_power_gate {
 #define _DKL_PHY6_BASE			0x16D000
 
 /* DEKEL PHY MMIO Address = Phy base + (internal address & ~index_mask) */
+#define _DKL_PCS_DW5			0x14
+#define DKL_PCS_DW5(tc_port)		_MMIO(_PORT(tc_port, _DKL_PHY1_BASE, \
+						    _DKL_PHY2_BASE) + \
+						    _DKL_PCS_DW5)
+#define   DKL_PCS_DW5_CORE_SOFTRESET	REG_BIT(11)
+
 #define _DKL_PLL_DIV0			0x200
 #define   DKL_PLL_DIV0_INTEG_COEFF(x)	((x) << 16)
 #define   DKL_PLL_DIV0_INTEG_COEFF_MASK	(0x1F << 16)
@@ -11108,12 +11114,6 @@ enum skl_power_gate {
 #define  DC_STATE_DEBUG_MASK_CORES	(1 << 0)
 #define  DC_STATE_DEBUG_MASK_MEMORY_UP	(1 << 1)
 
-#define BXT_P_CR_MC_BIOS_REQ_0_0_0	_MMIO(MCHBAR_MIRROR_BASE_SNB + 0x7114)
-#define  BXT_REQ_DATA_MASK			0x3F
-#define  BXT_DRAM_CHANNEL_ACTIVE_SHIFT		12
-#define  BXT_DRAM_CHANNEL_ACTIVE_MASK		(0xF << 12)
-#define  BXT_MEMORY_FREQ_MULTIPLIER_HZ		133333333
-
 #define BXT_D_CR_DRP0_DUNIT8			0x1000
 #define BXT_D_CR_DRP0_DUNIT9			0x1200
 #define  BXT_D_CR_DRP0_DUNIT_START		8
@@ -11144,9 +11144,8 @@ enum skl_power_gate {
 #define  BXT_DRAM_TYPE_LPDDR4			(0x2 << 22)
 #define  BXT_DRAM_TYPE_DDR4			(0x4 << 22)
 
-#define SKL_MEMORY_FREQ_MULTIPLIER_HZ		266666666
 #define SKL_MC_BIOS_DATA_0_0_0_MCHBAR_PCU	_MMIO(MCHBAR_MIRROR_BASE_SNB + 0x5E04)
-#define  SKL_REQ_DATA_MASK			(0xF << 0)
+#define  DG1_GEAR_TYPE				REG_BIT(16)
 
 #define SKL_MAD_INTER_CHANNEL_0_0_0_MCHBAR_MCMAIN _MMIO(MCHBAR_MIRROR_BASE_SNB + 0x5000)
 #define  SKL_DRAM_DDR_TYPE_MASK			(0x3 << 0)
@@ -11181,6 +11180,17 @@ enum skl_power_gate {
 #define  CNL_DRAM_RANK_2			(0x1 << 9)
 #define  CNL_DRAM_RANK_3			(0x2 << 9)
 #define  CNL_DRAM_RANK_4			(0x3 << 9)
+
+#define SA_PERF_STATUS_0_0_0_MCHBAR_PC		_MMIO(MCHBAR_MIRROR_BASE_SNB + 0x5918)
+#define  DG1_QCLK_RATIO_MASK			REG_GENMASK(9, 2)
+#define  DG1_QCLK_REFERENCE			REG_BIT(10)
+
+#define MCHBAR_CH0_CR_TC_PRE_0_0_0_MCHBAR	_MMIO(MCHBAR_MIRROR_BASE_SNB + 0x4000)
+#define   DG1_DRAM_T_RDPRE_MASK			REG_GENMASK(16, 11)
+#define   DG1_DRAM_T_RP_MASK			REG_GENMASK(6, 0)
+#define MCHBAR_CH0_CR_TC_PRE_0_0_0_MCHBAR_HIGH	_MMIO(MCHBAR_MIRROR_BASE_SNB + 0x4004)
+#define   DG1_DRAM_T_RCD_MASK			REG_GENMASK(15, 9)
+#define   DG1_DRAM_T_RAS_MASK			REG_GENMASK(8, 1)
 
 /*
  * Please see hsw_read_dcomp() and hsw_write_dcomp() before using this register,

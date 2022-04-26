@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -17,7 +17,6 @@
 #include <linux/bits.h>
 #include <linux/bitfield.h>
 #include <linux/completion.h>
-#include <linux/dev_printk.h>
 #include <linux/device.h>
 #include <linux/delay.h>
 #include <linux/err.h>
@@ -43,6 +42,8 @@
 #include "t7xx_state_monitor.h"
 #include "t7xx_pci_rescan.h"
 #include "t7xx_netdev.h"
+#include "t7xx_port_devlink.h"
+#include "t7xx_uevent.h"
 
 #define FSM_DRM_DISABLE_DELAY_MS		200
 #define FSM_EVENT_POLL_INTERVAL_MS		20
@@ -56,6 +57,15 @@
 static int count;
 static int brom_dl_flag = 1;
 bool da_down_stage_flag = true;
+extern int fastboot_dl_mode;
+
+
+enum host_event_e {
+	HOST_EVENT_INIT = 0,
+	BROM_REBOOT_ACK = 0x1,
+	BROM_DLPT_NOTY = 0x2,
+	FASTBOOT_DL_NOTY = 0x3,
+};
 
 void t7xx_fsm_notifier_register(struct t7xx_modem *md, struct t7xx_fsm_notifier *notifier)
 {
@@ -78,7 +88,6 @@ void t7xx_fsm_notifier_unregister(struct t7xx_modem *md, struct t7xx_fsm_notifie
 		if (notifier_cur == notifier)
 			list_del(&notifier->entry);
 	}
-
 	spin_unlock_irqrestore(&ctl->notifier_lock, flags);
 }
 
@@ -96,20 +105,15 @@ static void fsm_state_notify(struct t7xx_modem *md, enum md_state state)
 
 		spin_lock_irqsave(&ctl->notifier_lock, flags);
 	}
-
 	spin_unlock_irqrestore(&ctl->notifier_lock, flags);
 }
 
 void t7xx_fsm_broadcast_state(struct t7xx_fsm_ctl *ctl, enum md_state state)
 {
-	if (ctl->md_state != MD_STATE_WAITING_FOR_HS2 && state == MD_STATE_READY)
-		return;
-
 	ctl->md_state = state;
 
 	/* Update to port first, otherwise sending message on HS2 may fail */
 	t7xx_port_proxy_md_status_notify(ctl->md->port_prox, state);
-
 	fsm_state_notify(ctl->md, state);
 }
 
@@ -142,46 +146,43 @@ static void fsm_flush_event_cmd_qs(struct t7xx_fsm_ctl *ctl)
 		list_del(&cmd->entry);
 		fsm_finish_command(ctl, cmd, -EINVAL);
 	}
-
 	spin_unlock_irqrestore(&ctl->command_lock, flags);
+
 	spin_lock_irqsave(&ctl->event_lock, flags);
 	list_for_each_entry_safe(event, evt_next, &ctl->event_queue, entry) {
 		dev_warn(dev, "Unhandled event %d\n", event->event_id);
 		fsm_del_kf_event(event);
 	}
-
 	spin_unlock_irqrestore(&ctl->event_lock, flags);
 }
 
-static void fsm_wait_for_event(struct t7xx_fsm_ctl *ctl, enum t7xx_fsm_event_state event_id,
-			       enum t7xx_fsm_event_state event_ignore, int timeout)
+static void fsm_wait_for_event(struct t7xx_fsm_ctl *ctl, enum t7xx_fsm_event_state event_expected,
+			       enum t7xx_fsm_event_state event_ignore, int retries)
 {
 	struct t7xx_fsm_event *event;
+	bool event_received = false;
 	unsigned long flags;
-	bool ackd = false;
 	int cnt = 0;
 
-	while (cnt++ < timeout / FSM_EVENT_POLL_INTERVAL_MS) {
+	while (cnt++ < retries && !event_received) {
+		bool sleep_required = true;
+
 		if (kthread_should_stop())
 			return;
 
 		spin_lock_irqsave(&ctl->event_lock, flags);
-		event = list_first_entry_or_null(&ctl->event_queue,
-						 struct t7xx_fsm_event, entry);
+		event = list_first_entry_or_null(&ctl->event_queue, struct t7xx_fsm_event, entry);
 		if (event) {
-			if (event->event_id == event_ignore) {
+			event_received = event->event_id == event_expected;
+			if (event_received || event->event_id == event_ignore) {
 				fsm_del_kf_event(event);
-			} else if (event->event_id == event_id) {
-				ackd = true;
-				fsm_del_kf_event(event);
+				sleep_required = false;
 			}
 		}
-
 		spin_unlock_irqrestore(&ctl->event_lock, flags);
-		if (ackd)
-			break;
 
-		msleep(FSM_EVENT_POLL_INTERVAL_MS);
+		if (sleep_required)
+			msleep(FSM_EVENT_POLL_INTERVAL_MS);
 	}
 }
 
@@ -189,8 +190,6 @@ static void fsm_routine_exception(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_comm
 				  enum t7xx_ex_reason reason)
 {
 	struct device *dev = &ctl->md->t7xx_dev->pdev->dev;
-
-	dev_err(dev, "Exception %d, from %ps\n", reason, __builtin_return_address(0));
 
 	if (ctl->curr_state != FSM_STATE_READY && ctl->curr_state != FSM_STATE_STARTING) {
 		if (cmd)
@@ -203,22 +202,26 @@ static void fsm_routine_exception(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_comm
 
 	switch (reason) {
 	case EXCEPTION_HS_TIMEOUT:
-		dev_err(dev, "BOOT_HS_FAIL\n");
+		dev_err(dev, "Boot Handshake failure\n");
+		t7xx_uevent_send(&ctl->md->t7xx_dev->pdev->dev, T7XX_UEVENT_MODEM_BOOT_HS_FAIL);
 		break;
 
 	case EXCEPTION_EVENT:
+		dev_err(dev, "Exception event\n");
 		port_ee_disable_wwan();
 		t7xx_fsm_broadcast_state(ctl, MD_STATE_EXCEPTION);
+		t7xx_uevent_send(&ctl->md->t7xx_dev->pdev->dev, T7XX_UEVENT_MODEM_EXCEPTION);
 		t7xx_pci_pm_exp_detected(ctl->md->t7xx_dev);
 		t7xx_md_exception_handshake(ctl->md);
 
 		fsm_wait_for_event(ctl, FSM_EVENT_MD_EX_REC_OK, FSM_EVENT_MD_EX,
-				   FSM_MD_EX_REC_OK_TIMEOUT_MS);
+				   FSM_MD_EX_REC_OK_TIMEOUT_MS / FSM_EVENT_POLL_INTERVAL_MS);
 		fsm_wait_for_event(ctl, FSM_EVENT_MD_EX_PASS, FSM_EVENT_INVALID,
-				   FSM_MD_EX_PASS_TIMEOUT_MS);
+				   FSM_MD_EX_PASS_TIMEOUT_MS / FSM_EVENT_POLL_INTERVAL_MS);
 		break;
 
 	default:
+		dev_err(dev, "Exception %d\n", reason);
 		break;
 	}
 
@@ -238,7 +241,7 @@ static void brom_event_monitor(struct timer_list *timer)
 	md = fsm_ctl->md;
 
 	/*store dummy register*/
-	dummy_reg = ioread32(IREG_BASE(md->t7xx_dev) + PCIE_MISC_DEV_STATUS);
+	dummy_reg = ioread32(IREG_BASE(md->t7xx_dev) + T7XX_PCIE_MISC_DEV_STATUS);
 	dummy_reg &= MISC_DEV_STATUS_MASK;
 	if (dummy_reg != fsm_ctl->prev_status)
 		t7xx_fsm_append_cmd(fsm_ctl, FSM_CMD_START, FSM_CMD_FLAG_IN_INTERRUPT);
@@ -269,13 +272,13 @@ static inline void host_event_notify(struct t7xx_modem *md, unsigned int event_i
 {
 	u32 dummy_reg_val_temp = 0;
 
-	dummy_reg_val_temp = ioread32(IREG_BASE(md->t7xx_dev) + PCIE_MISC_DEV_STATUS);
+	dummy_reg_val_temp = ioread32(IREG_BASE(md->t7xx_dev) + T7XX_PCIE_MISC_DEV_STATUS);
 	dummy_reg_val_temp &= ~HOST_EVENT_MASK;
 	dummy_reg_val_temp |= event_id << HOST_EVENT_OFFSET;
-	iowrite32(dummy_reg_val_temp, IREG_BASE(md->t7xx_dev) + PCIE_MISC_DEV_STATUS);
+	iowrite32(dummy_reg_val_temp, IREG_BASE(md->t7xx_dev) + T7XX_PCIE_MISC_DEV_STATUS);
 }
 
-static inline void brom_stage_event_handling(struct t7xx_fsm_ctl *ctl, unsigned int dummy_reg)
+static inline int brom_stage_event_handling(struct t7xx_fsm_ctl *ctl, unsigned int dummy_reg)
 {
 	unsigned char brom_event;
 	struct t7xx_port *dl_port = NULL;
@@ -283,6 +286,7 @@ static inline void brom_stage_event_handling(struct t7xx_fsm_ctl *ctl, unsigned 
 	struct t7xx_modem *md = ctl->md;
 	struct device *dev;
 	struct cldma_ctrl *md_ctrl;
+	int ret = 0;
 
 	dev = &md->t7xx_dev->pdev->dev;
 
@@ -300,8 +304,11 @@ static inline void brom_stage_event_handling(struct t7xx_fsm_ctl *ctl, unsigned 
 		if (dl_port) {
 			dl_port_static = dl_port->port_static;
 			dl_port_static->ops->disable_chl(dl_port);
-		} else
-			dev_err(dev, "can't found DL port\n");
+		} else {
+			dev_err(dev, "can't find DL port\n");
+			ret = -EINVAL;
+		}
+
 		start_brom_event_start_timer(ctl);
 		break;
 	case BROM_EVENT_JUMP_DA:
@@ -314,7 +321,7 @@ static inline void brom_stage_event_handling(struct t7xx_fsm_ctl *ctl, unsigned 
 	case BROM_EVENT_CREATE_DL_PORT:
 		dev_info(dev, "create DL port,brom_dl_flag:%d\n", brom_dl_flag);
 		da_down_stage_flag = true;
-		md_ctrl = ctl->md->md_ctrl[ID_CLDMA0];
+		md_ctrl = ctl->md->md_ctrl[CLDMA_ID_AP];
 		t7xx_cldma_hif_hw_init(md_ctrl);
 		t7xx_cldma_stop(md_ctrl);
 		t7xx_cldma_switch_cfg(md_ctrl, HIF_CFG2);
@@ -326,7 +333,8 @@ static inline void brom_stage_event_handling(struct t7xx_fsm_ctl *ctl, unsigned 
 				t7xx_cldma_start(md_ctrl);
 			}
 		} else {
-			dev_err(dev, "can't found DL port\n");
+			dev_err(dev, "can't find DL port\n");
+			ret = -EINVAL;
 		}
 		/*start brom event check thread */
 		start_brom_event_start_timer(ctl);
@@ -338,8 +346,11 @@ static inline void brom_stage_event_handling(struct t7xx_fsm_ctl *ctl, unsigned 
 		break;
 	default:
 		dev_err(dev, "Brom Event region content error\n");
+		ret = -EINVAL;
 		break;
 	}
+
+	return ret;
 }
 
 static inline void lk_stage_event_handling(struct t7xx_fsm_ctl *ctl,
@@ -357,20 +368,31 @@ static inline void lk_stage_event_handling(struct t7xx_fsm_ctl *ctl,
                 pr_info("Device enter next stage from LK stage/n");
                 break;
         case LK_EVENT_CREATE_PD_PORT:
-		md_ctrl = ctl->md->md_ctrl[ID_CLDMA0];
-                //dump_status_before_mrdump(md->mtk_dev);
+	case LK_EVENT_CREATE_POST_DL_PORT:
+		md_ctrl = ctl->md->md_ctrl[CLDMA_ID_AP];
                 t7xx_cldma_hif_hw_init(md_ctrl);
                 t7xx_cldma_stop(md_ctrl);
 		t7xx_cldma_switch_cfg(md_ctrl, HIF_CFG2);
-                //switch_port_cfg(ctl->md_id, PORT_CFG1);
+		port_switch_cfg(ctl->md, PORT_CFG1);
 		pr_info("creating the ttyDUMP port.. \n");
                 pd_port = port_get_by_name("ttyDUMP");
-                if (pd_port != NULL) {
+		if (pd_port != NULL) {
+			if (lk_event == LK_EVENT_CREATE_PD_PORT)
+				pd_port->dl->mode = T7XX_FB_DUMP_MODE;
+			else
+				pd_port->dl->mode = T7XX_FB_DL_MODE;
 			pd_port_static = pd_port->port_static;
-                        pd_port_static->ops->enable_chl(pd_port);
-                	t7xx_cldma_start(md_ctrl);
+			pd_port_static->ops->enable_chl(pd_port);
+			t7xx_cldma_start(md_ctrl);
 		} else
-                        pr_err("can't find PD port/n");
+			dev_err(&ctl->md->t7xx_dev->pdev->dev,
+				"can't find PD port/n");
+		if (lk_event == LK_EVENT_CREATE_PD_PORT)
+			t7xx_uevent_send(&ctl->md->t7xx_dev->pdev->dev,
+					 T7XX_UEVENT_MODEM_FASTBOOT_DUMP_MODE);
+		else
+			t7xx_uevent_send(&ctl->md->t7xx_dev->pdev->dev,
+					 T7XX_UEVENT_MODEM_FASTBOOT_DL_MODE);
                 break;
         case LK_EVENT_RESET:
                 /*send r&r event to r&r thread*/
@@ -381,12 +403,13 @@ static inline void lk_stage_event_handling(struct t7xx_fsm_ctl *ctl,
         }
 }
 
-static void fsm_stopped_handler(struct t7xx_fsm_ctl *ctl)
+static int fsm_stopped_handler(struct t7xx_fsm_ctl *ctl)
 {
 	ctl->curr_state = FSM_STATE_STOPPED;
 
 	t7xx_fsm_broadcast_state(ctl, MD_STATE_STOPPED);
-	t7xx_md_reset(ctl->md->t7xx_dev);
+	pr_info("modem stopped");
+	return t7xx_md_reset(ctl->md->t7xx_dev);
 }
 
 static void fsm_routine_stopped(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_command *cmd)
@@ -399,8 +422,7 @@ static void fsm_routine_stopped(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_comman
 		return;
 	}
 
-	fsm_stopped_handler(ctl);
-	fsm_finish_command(ctl, cmd, 0);
+	fsm_finish_command(ctl, cmd, fsm_stopped_handler(ctl));
 }
 
 static void fsm_routine_stopping(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_command *cmd)
@@ -414,7 +436,7 @@ static void fsm_routine_stopping(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_comma
 		return;
 	}
 
-	md_ctrl = ctl->md->md_ctrl[ID_CLDMA1];
+	md_ctrl = ctl->md->md_ctrl[CLDMA_ID_MD];
 	t7xx_dev = ctl->md->t7xx_dev;
 
 	ctl->curr_state = FSM_STATE_STOPPING;
@@ -422,17 +444,42 @@ static void fsm_routine_stopping(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_comma
 	t7xx_cldma_stop(md_ctrl);
 
 	if (!ctl->md->rgu_irq_asserted) {
+
+		if (fastboot_dl_mode == 1) {
+			host_event_notify(ctl->md, FASTBOOT_DL_NOTY);
+		}
+
 		t7xx_mhccif_h2d_swint_trigger(t7xx_dev, H2D_CH_DRM_DISABLE_AP);
 		/* Wait for the DRM disable to take effect */
 		msleep(FSM_DRM_DISABLE_DELAY_MS);
 
-		err = t7xx_acpi_fldr_func(t7xx_dev);
-		if (err)
-			t7xx_mhccif_h2d_swint_trigger(t7xx_dev, H2D_CH_DEVICE_RESET);
+		if (fastboot_dl_mode == 1) {
+			/* not try fldr because device will always wait for
+			 * MHCCIF bit 13 in fastboot download flow
+			 */
+			t7xx_mhccif_h2d_swint_trigger(t7xx_dev,
+						      H2D_CH_DEVICE_RESET);
+			fastboot_dl_mode = 0;
+		} else {
+			err = t7xx_acpi_fldr_func(t7xx_dev);
+			if (err)
+				t7xx_mhccif_h2d_swint_trigger(t7xx_dev,
+							      H2D_CH_DEVICE_RESET);
+		}
 	}
 
-	fsm_stopped_handler(ctl);
-	fsm_finish_command(ctl, cmd, 0);
+	fsm_finish_command(ctl, cmd, fsm_stopped_handler(ctl));
+}
+
+static void t7xx_fsm_broadcast_ready_state(struct t7xx_fsm_ctl *ctl)
+{
+	if (ctl->md_state != MD_STATE_WAITING_FOR_HS2)
+		return;
+
+	ctl->md_state = MD_STATE_READY;
+
+	fsm_state_notify(ctl->md, MD_STATE_READY);
+	t7xx_port_proxy_md_status_notify(ctl->md->port_prox, MD_STATE_READY);
 }
 
 static void fsm_routine_ready(struct t7xx_fsm_ctl *ctl)
@@ -440,26 +487,28 @@ static void fsm_routine_ready(struct t7xx_fsm_ctl *ctl)
 	struct t7xx_modem *md = ctl->md;
 
 	ctl->curr_state = FSM_STATE_READY;
-	t7xx_fsm_broadcast_state(ctl, MD_STATE_READY);
+	t7xx_fsm_broadcast_ready_state(ctl);
+	t7xx_uevent_send(&ctl->md->t7xx_dev->pdev->dev,
+			 T7XX_UEVENT_MODEM_READY);
 	t7xx_md_event_notify(md, FSM_READY);
 }
 
-static void fsm_routine_starting(struct t7xx_fsm_ctl *ctl)
+static int fsm_routine_starting(struct t7xx_fsm_ctl *ctl)
 {
 	struct t7xx_modem *md = ctl->md;
 	struct device *dev;
-	int ret;
 
 	ctl->curr_state = FSM_STATE_STARTING;
 
 	port_switch_cfg(md, PORT_CFG0);
 	t7xx_fsm_broadcast_state(ctl, MD_STATE_WAITING_FOR_HS1);
+	t7xx_uevent_send(&ctl->md->t7xx_dev->pdev->dev,
+			 T7XX_UEVENT_MODEM_WAITING_HS1);
 	t7xx_md_event_notify(md, FSM_START);
 
-	wait_event_interruptible_timeout(ctl->async_hk_wq, 
-					(md->core_md.ready && md->core_sap.ready) ||
-					ctl->exp_flg, HZ * 60);
-
+	wait_event_interruptible_timeout(ctl->async_hk_wq,
+					 (md->core_md.ready && md->core_sap.ready) ||
+					 ctl->exp_flg, HZ * 60);
 	dev = &md->t7xx_dev->pdev->dev;
 
 	if (ctl->exp_flg)
@@ -471,22 +520,22 @@ static void fsm_routine_starting(struct t7xx_fsm_ctl *ctl)
 			t7xx_fsm_append_event(ctl, FSM_EVENT_MD_HS2_EXIT, NULL, 0);
 
 		fsm_routine_exception(ctl, NULL, EXCEPTION_HS_TIMEOUT);
-	} else {
-		t7xx_pci_pm_init_late(md->t7xx_dev);
-		ret = t7xx_ccmni_late_init(md->t7xx_dev);
-		if (ret)
-			dev_err(dev, "ccmni late init failed.. \n");
-		fsm_routine_ready(ctl);
+		return -ETIMEDOUT;
 	}
+
+	t7xx_pci_pm_init_late(md->t7xx_dev);
+	fsm_routine_ready(ctl);
+	return 0;
 }
 
 static void fsm_routine_start(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_command *cmd)
 {
 	struct t7xx_modem *md = ctl->md;
-	u32 dev_status;
 	unsigned char device_stage;
 	struct cldma_ctrl *md_ctrl;
- 	struct device *dev;
+	struct device *dev;
+	int cmd_ret = 0;
+	u32 dev_status;
 
 	if (!md)
 		return;
@@ -497,8 +546,8 @@ static void fsm_routine_start(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_command 
 		return;
 	}
 
- 	dev = &md->t7xx_dev->pdev->dev;
-	dev_status = ioread32(IREG_BASE(md->t7xx_dev) + PCIE_MISC_DEV_STATUS);
+	dev = &md->t7xx_dev->pdev->dev;
+	dev_status = ioread32(IREG_BASE(md->t7xx_dev) + T7XX_PCIE_MISC_DEV_STATUS);
 	dev_status &= MISC_DEV_STATUS_MASK;
 	dev_info(dev, "dev_status = %x modem state = %d\n", dev_status, ctl->md_state);
 	if (dev_status == MISC_DEV_STATUS_MASK) {
@@ -516,11 +565,11 @@ static void fsm_routine_start(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_command 
 		device_stage = dev_status & MISC_STAGE_MASK;
 		switch (device_stage) {
 		case INIT_STAGE:
-			t7xx_fsm_append_cmd(ctl, FSM_CMD_START, 0);
+			cmd_ret = t7xx_fsm_append_cmd(ctl, FSM_CMD_START, 0);
 			break;
 		case BROM_STAGE_PRE:
 		case BROM_STAGE_POST:
-			brom_stage_event_handling(ctl, dev_status);
+			cmd_ret = brom_stage_event_handling(ctl, dev_status);
 			break;
 		case LK_STAGE:
                         da_down_stage_flag = false;
@@ -530,11 +579,11 @@ static void fsm_routine_start(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_command 
 		case LINUX_STAGE:
 			da_down_stage_flag = false;
 			stop_brom_event_start_timer(ctl);
-			md_ctrl = ctl->md->md_ctrl[ID_CLDMA0];
+			md_ctrl = ctl->md->md_ctrl[CLDMA_ID_AP];
 			t7xx_cldma_hif_hw_init(md_ctrl);
-			md_ctrl = ctl->md->md_ctrl[ID_CLDMA1];
+			md_ctrl = ctl->md->md_ctrl[CLDMA_ID_MD];
 			t7xx_cldma_hif_hw_init(md_ctrl);
-			fsm_routine_starting(ctl);
+			cmd_ret = fsm_routine_starting(ctl);
 			break;
 		default:
 			break;
@@ -552,9 +601,9 @@ static void fsm_routine_start(struct t7xx_fsm_ctl *ctl, struct t7xx_fsm_command 
 		} else {
 			count = 0;
 		}
- 	}
+	}
 
-	fsm_finish_command(ctl, cmd, 0);
+	fsm_finish_command(ctl, cmd, cmd_ret);
 }
 
 static int fsm_main_thread(void *data)
@@ -668,6 +717,7 @@ int t7xx_fsm_append_event(struct t7xx_fsm_ctl *ctl, enum t7xx_fsm_event_state ev
 	spin_lock_irqsave(&ctl->event_lock, flags);
 	list_add_tail(&event->entry, &ctl->event_queue);
 	spin_unlock_irqrestore(&ctl->event_lock, flags);
+
 	wake_up_all(&ctl->event_wq);
 	return 0;
 }
@@ -682,7 +732,6 @@ void t7xx_fsm_clr_event(struct t7xx_fsm_ctl *ctl, enum t7xx_fsm_event_state even
 		if (event->event_id == event_id)
 			fsm_del_kf_event(event);
 	}
-
 	spin_unlock_irqrestore(&ctl->event_lock, flags);
 }
 
@@ -702,18 +751,20 @@ unsigned int t7xx_fsm_get_ctl_state(struct t7xx_fsm_ctl *ctl)
 	return FSM_STATE_STOPPED;
 }
 
-void t7xx_fsm_recv_md_intr(struct t7xx_fsm_ctl *ctl, enum t7xx_md_irq_type type)
+int t7xx_fsm_recv_md_intr(struct t7xx_fsm_ctl *ctl, enum t7xx_md_irq_type type)
 {
 	unsigned int cmd_flags = FSM_CMD_FLAG_IN_INTERRUPT;
 
 	if (type == MD_IRQ_PORT_ENUM) {
-		t7xx_fsm_append_cmd(ctl, FSM_CMD_START, cmd_flags);
+		return t7xx_fsm_append_cmd(ctl, FSM_CMD_START, cmd_flags);
 	} else if (type == MD_IRQ_CCIF_EX) {
 		ctl->exp_flg = true;
 		wake_up(&ctl->async_hk_wq);
 		cmd_flags |= FIELD_PREP(FSM_CMD_EX_REASON, EXCEPTION_EVENT);
-		t7xx_fsm_append_cmd(ctl, FSM_CMD_EXCEPTION, cmd_flags);
+		return t7xx_fsm_append_cmd(ctl, FSM_CMD_EXCEPTION, cmd_flags);
 	}
+
+	return -EINVAL;
 }
 
 void t7xx_fsm_reset(struct t7xx_modem *md)

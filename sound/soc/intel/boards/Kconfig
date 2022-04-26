@@ -32,6 +32,9 @@ config SND_SOC_INTEL_HDA_DSP_COMMON
 config SND_SOC_INTEL_SOF_MAXIM_COMMON
 	tristate
 
+config SND_SOC_INTEL_SOF_CIRRUS_COMMON
+	tristate
+
 if SND_SOC_INTEL_CATPT
 
 config SND_SOC_INTEL_HASWELL_MACH
@@ -496,6 +499,22 @@ config SND_SOC_INTEL_SOF_CS42L42_MACH
 	help
 	   This adds support for ASoC machine driver for SOF platforms
 	   with cs42l42 codec.
+	   Say Y if you have such a device.
+	   If unsure select "N".
+
+config SND_SOC_INTEL_SOF_AMP_ONLY_MACH
+	tristate "SOF with speaker amplifier only"
+	depends on I2C && ACPI
+	depends on ((SND_HDA_CODEC_HDMI && SND_SOC_SOF_HDA_AUDIO_CODEC) &&\
+		    (MFD_INTEL_LPSS || COMPILE_TEST))
+	select SND_SOC_CS35L41_I2C
+	select SND_SOC_DMIC
+	select SND_SOC_HDAC_HDMI
+	select SND_SOC_INTEL_HDA_DSP_COMMON
+	select SND_SOC_INTEL_SOF_CIRRUS_COMMON
+	help
+	   This adds support for ASoC machine driver for SOF platforms
+	   with speaker amplifier only.
 	   Say Y if you have such a device.
 	   If unsure select "N".
 

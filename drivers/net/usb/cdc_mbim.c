@@ -168,6 +168,7 @@ static int cdc_mbim_bind(struct usbnet *dev, struct usb_interface *intf)
 		subdriver = usb_cdc_wdm_register(ctx->control,
 						 &dev->status->desc,
 						 le16_to_cpu(ctx->mbim_desc->wMaxControlMessage),
+						 WWAN_PORT_MBIM,
 						 cdc_mbim_wdm_manage_power);
 	if (IS_ERR(subdriver)) {
 		ret = PTR_ERR(subdriver);
@@ -655,6 +656,11 @@ static const struct usb_device_id mbim_devs[] = {
 
 	/* Telit LN920 */
 	{ USB_DEVICE_AND_INTERFACE_INFO(0x1bc7, 0x1061, USB_CLASS_COMM, USB_CDC_SUBCLASS_MBIM, USB_CDC_PROTO_NONE),
+	  .driver_info = (unsigned long)&cdc_mbim_info_avoid_altsetting_toggle,
+	},
+
+	/* Telit FN990 */
+	{ USB_DEVICE_AND_INTERFACE_INFO(0x1bc7, 0x1071, USB_CLASS_COMM, USB_CDC_SUBCLASS_MBIM, USB_CDC_PROTO_NONE),
 	  .driver_info = (unsigned long)&cdc_mbim_info_avoid_altsetting_toggle,
 	},
 

@@ -105,19 +105,10 @@ static const u32 rkvdec_h264_vp9_decoded_fmts[] = {
 
 static const struct rkvdec_ctrl_desc rkvdec_vp9_ctrl_descs[] = {
 	{
-		.cfg.id = V4L2_CID_MPEG_VIDEO_VP9_FRAME_DECODE_PARAMS,
+		.cfg.id = V4L2_CID_STATELESS_VP9_FRAME,
 	},
 	{
-		.cfg.id = V4L2_CID_MPEG_VIDEO_VP9_FRAME_CONTEXT(0),
-	},
-	{
-		.cfg.id = V4L2_CID_MPEG_VIDEO_VP9_FRAME_CONTEXT(1),
-	},
-	{
-		.cfg.id = V4L2_CID_MPEG_VIDEO_VP9_FRAME_CONTEXT(2),
-	},
-	{
-		.cfg.id = V4L2_CID_MPEG_VIDEO_VP9_FRAME_CONTEXT(3),
+		.cfg.id = V4L2_CID_STATELESS_VP9_COMPRESSED_HDR,
 	},
 	{
 		.cfg.id = V4L2_CID_MPEG_VIDEO_VP9_PROFILE,

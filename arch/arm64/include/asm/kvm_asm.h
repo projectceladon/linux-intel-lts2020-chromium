@@ -34,6 +34,10 @@
  */
 #define KVM_VECTOR_PREAMBLE	(2 * AARCH64_INSN_SIZE)
 
+#define __SMCCC_WORKAROUND_3_SMC_SZ 36
+#define __SPECTRE_BHB_LOOP_SZ       44
+#define __SPECTRE_BHB_CLEARBHB_SZ   12
+
 #define KVM_HOST_SMCCC_ID(id)						\
 	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
 			   ARM_SMCCC_SMC_64,				\
@@ -207,6 +211,32 @@ extern void __vgic_v3_write_vmcr(u32 vmcr);
 extern void __vgic_v3_init_lrs(void);
 
 extern u32 __kvm_get_mdcr_el2(void);
+
+extern char __smccc_workaround_3_smc[__SMCCC_WORKAROUND_3_SMC_SZ];
+extern char __spectre_bhb_loop_k8[__SPECTRE_BHB_LOOP_SZ];
+extern char __spectre_bhb_loop_k24[__SPECTRE_BHB_LOOP_SZ];
+extern char __spectre_bhb_loop_k32[__SPECTRE_BHB_LOOP_SZ];
+extern char __spectre_bhb_clearbhb[__SPECTRE_BHB_LOOP_SZ];
+
+/*
+ * Obtain the PC-relative address of a kernel symbol
+ * s: symbol
+ *
+ * The goal of this macro is to return a symbol's address based on a
+ * PC-relative computation, as opposed to a loading the VA from a
+ * constant pool or something similar. This works well for HYP, as an
+ * absolute VA is guaranteed to be wrong. Only use this if trying to
+ * obtain the address of a symbol (i.e. not something you obtained by
+ * following a pointer).
+ */
+#define hyp_symbol_addr(s)						\
+	({								\
+		typeof(s) *addr;					\
+		asm("adrp	%0, %1\n"				\
+		    "add	%0, %0, :lo12:%1\n"			\
+		    : "=r" (addr) : "S" (&s));				\
+		addr;							\
+	})
 
 #define __KVM_EXTABLE(from, to)						\
 	"	.pushsection	__kvm_ex_table, \"a\"\n"		\

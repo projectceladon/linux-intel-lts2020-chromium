@@ -700,6 +700,7 @@
 				     "mediatek,mt6589-wdt";
 			mediatek,disable-extrst;
 			reg = <0 0x10007000 0 0x100>;
+			#reset-cells = <1>;
 		};
 
 		apmixedsys: syscon@1000c000 {
@@ -809,6 +810,8 @@
 			mediatek,topckgen = <&topckgen>;
 			power-domains = <&spm MT8195_POWER_DOMAIN_AUDIO>;
 			interrupts = <GIC_SPI 822 IRQ_TYPE_LEVEL_HIGH 0>;
+			resets = <&watchdog 14>;
+			reset-names = "audiosys";
 			clocks = <&clk26m>,
 				<&apmixedsys CLK_APMIXED_APLL1>,
 				<&apmixedsys CLK_APMIXED_APLL2>,
@@ -1339,6 +1342,34 @@
 			reg = <0 0x11c10000 0 0x1000>;
 			#address-cells = <1>;
 			#size-cells = <1>;
+			pciephy_rx_ln1: pciephy-rx-ln1@190 {
+			        reg = <0x190 0x1>;
+			        bits = <0 4>;
+			};
+			pciephy_tx_ln1_nmos: pciephy-tx-ln1-nmos@190 {
+			        reg = <0x190 0x1>;
+			        bits = <4 4>;
+			};
+			pciephy_tx_ln1_pmos: pciephy-tx-ln1-pmos@191 {
+			        reg = <0x191 0x1>;
+			        bits = <0 4>;
+			};
+			pciephy_rx_ln0: pciephy-rx-ln0@191 {
+			        reg = <0x191 0x1>;
+			        bits = <4 4>;
+			};
+			pciephy_tx_ln0_nmos: pciephy-tx-ln0-nmos@192 {
+			        reg = <0x192 0x1>;
+			        bits = <0 4>;
+			};
+			pciephy_tx_ln0_pmos: pciephy-tx-ln0-pmos@192 {
+			        reg = <0x192 0x1>;
+			        bits = <4 4>;
+			};
+			pciephy_glb_intr: pciephy-glb-intr@193 {
+			        reg = <0x193 0x1>;
+			        bits = <0 4>;
+			};
 			dp_calibration: dp_data {
 				reg = <0x1ac 0x10>;
 			};
@@ -1576,13 +1607,25 @@
 		};
 
 		pciephy: phy@11e80000 {
-			compatible = "mediatek,mt8195-pcie-phy";
+			compatible = "mediatek,mt8195-pcie-phy",
+				     "mediatek,pcie-phy";
 			#address-cells = <2>;
 			#size-cells = <2>;
 			#phy-cells = <0>;
-			reg = <0 0x11e80000 0 0x10000>,
-			      <0 0x11e90000 0 0x10000>;
-			reg-names = "phy-sif", "phy-ckm";
+			reg = <0 0x11e80000 0 0x10000>;
+			reg-names = "sif";
+
+			nvmem-cells = <&pciephy_glb_intr>,
+				      <&pciephy_tx_ln0_pmos>,
+				      <&pciephy_tx_ln0_nmos>,
+				      <&pciephy_rx_ln0>,
+				      <&pciephy_tx_ln1_pmos>,
+				      <&pciephy_tx_ln1_nmos>,
+				      <&pciephy_rx_ln1>;
+			nvmem-cell-names = "glb_intr", "tx_ln0_pmos",
+					   "tx_ln0_nmos", "rx_ln0",
+					   "tx_ln1_pmos", "tx_ln1_nmos",
+					   "rx_ln1";
 
 			power-domains = <&spm MT8195_POWER_DOMAIN_PCIE_PHY>;
 			status = "disabled";

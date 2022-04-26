@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -23,8 +23,6 @@
 #include "t7xx_hif_dpmaif.h"
 
 #define NETIF_MASK		GENMASK(4, 0)
-#define RX_CB_NETIF_IDX		0
-#define RX_CB_PKT_TYPE		1
 
 #define PKT_TYPE_IP4		0
 #define PKT_TYPE_IP6		1
@@ -99,8 +97,9 @@ int t7xx_dpmaif_rxq_init(struct dpmaif_rx_queue *queue);
 void t7xx_dpmaif_rx_clear(struct dpmaif_ctrl *dpmaif_ctrl);
 int t7xx_dpmaif_bat_rel_wq_alloc(struct dpmaif_ctrl *dpmaif_ctrl);
 int t7xx_dpmaif_rx_buf_alloc(struct dpmaif_ctrl *dpmaif_ctrl,
-			     const struct dpmaif_bat_request *bat_req, const unsigned char q_num,
-			     const unsigned int buf_cnt, const bool first_time);
+			     const struct dpmaif_bat_request *bat_req,
+			     const unsigned char q_num, const unsigned int buf_cnt,
+			     const bool initial);
 int t7xx_dpmaif_rx_frag_alloc(struct dpmaif_ctrl *dpmaif_ctrl, struct dpmaif_bat_request *bat_req,
 			      const unsigned int buf_cnt, const bool first_time);
 void t7xx_dpmaif_rx_stop(struct dpmaif_ctrl *dpmaif_ctrl);
@@ -111,5 +110,6 @@ int t7xx_dpmaif_bat_alloc(const struct dpmaif_ctrl *dpmaif_ctrl, struct dpmaif_b
 			  const enum bat_type buf_type);
 void t7xx_dpmaif_bat_free(const struct dpmaif_ctrl *dpmaif_ctrl,
 			  struct dpmaif_bat_request *bat_req);
+int t7xx_dpmaif_napi_rx_poll(struct napi_struct *napi, const int budget);
 
 #endif /* __T7XX_HIF_DPMA_RX_H__ */

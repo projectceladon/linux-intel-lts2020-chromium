@@ -115,6 +115,8 @@ EXPORT_SYMBOL_GPL(kvm_debugfs_dir);
 static int kvm_debugfs_num_entries;
 static const struct file_operations stat_fops_per_vm;
 
+static struct file_operations kvm_chardev_ops;
+
 static long kvm_vcpu_ioctl(struct file *file, unsigned int ioctl,
 			   unsigned long arg);
 #ifdef CONFIG_KVM_COMPAT
@@ -754,15 +756,13 @@ void kvm_write_suspend_time(struct kvm *kvm)
 	struct kvm_suspend_time st;
 
 	st.suspend_time_ns = kvm->suspend_time_ns;
-	kvm_write_guest_cached(kvm, &kvm->suspend_time_ghc, &st, sizeof(st));
+	kvm_write_guest(kvm, kvm->arch.msr_suspend_time & ~1ULL,
+			&st, sizeof(st));
 }
 
 int kvm_init_suspend_time_ghc(struct kvm *kvm, gpa_t gpa)
 {
-	if (kvm_gfn_to_hva_cache_init(kvm, &kvm->suspend_time_ghc, gpa,
-				      sizeof(struct kvm_suspend_time)))
-		return 1;
-
+	kvm->arch.msr_suspend_time = gpa;
 	kvm_write_suspend_time(kvm);
 	return 0;
 }
@@ -972,6 +972,16 @@ static struct kvm *kvm_create_vm(unsigned long type)
 	preempt_notifier_inc();
 	kvm_init_pm_notifier(kvm);
 
+	/*
+	 * When the fd passed to this ioctl() is opened it pins the module,
+	 * but try_module_get() also prevents getting a reference if the module
+	 * is in MODULE_STATE_GOING (e.g. if someone ran "rmmod --wait").
+	 */
+	if (!try_module_get(kvm_chardev_ops.owner)) {
+		r = -ENODEV;
+		goto out_err;
+	}
+
 	return kvm;
 
 out_err:
@@ -1051,6 +1061,7 @@ static void kvm_destroy_vm(struct kvm *kvm)
 	preempt_notifier_dec();
 	hardware_disable_all();
 	mmdrop(mm);
+	module_put(kvm_chardev_ops.owner);
 }
 
 void kvm_get_kvm(struct kvm *kvm)

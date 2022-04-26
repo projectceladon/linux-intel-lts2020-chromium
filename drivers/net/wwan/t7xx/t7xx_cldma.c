@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -141,6 +141,7 @@ unsigned int t7xx_cldma_hw_queue_status(struct t7xx_cldma_hw *hw_info, unsigned 
 	reg = tx_rx == MTK_RX ? hw_info->ap_ao_base + REG_CLDMA_DL_STATUS :
 				hw_info->ap_pdn_base + REG_CLDMA_UL_STATUS;
 	val = ioread32(reg);
+
 	return val & mask;
 }
 
@@ -260,15 +261,13 @@ void t7xx_cldma_hw_init(struct t7xx_cldma_hw *hw_info)
 	iowrite32(DL_MEM_CHECK_DIS, hw_info->ap_pdn_base + REG_CLDMA_DL_MEM);
 }
 
-void t7xx_cldma_hw_stop_queue(struct t7xx_cldma_hw *hw_info, u8 qno, enum mtk_txrx tx_rx)
+void t7xx_cldma_hw_stop_all_qs(struct t7xx_cldma_hw *hw_info, enum mtk_txrx tx_rx)
 {
 	void __iomem *reg;
-	u32 val;
 
 	reg = tx_rx == MTK_RX ? hw_info->ap_pdn_base + REG_CLDMA_DL_STOP_CMD :
 				hw_info->ap_pdn_base + REG_CLDMA_UL_STOP_CMD;
-	val = qno == CLDMA_ALL_Q ? CLDMA_ALL_Q : BIT(qno);
-	iowrite32(val, reg);
+	iowrite32(CLDMA_ALL_Q, reg);
 }
 
 void t7xx_cldma_hw_stop(struct t7xx_cldma_hw *hw_info, enum mtk_txrx tx_rx)

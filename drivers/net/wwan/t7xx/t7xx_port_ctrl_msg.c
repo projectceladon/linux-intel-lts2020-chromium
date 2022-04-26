@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -15,7 +15,6 @@
  *  Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
-#include <linux/dev_printk.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/kthread.h>
@@ -28,18 +27,19 @@
 #include "t7xx_port_proxy.h"
 #include "t7xx_state_monitor.h"
 
-static void fsm_ee_message_handler(struct t7xx_fsm_ctl *ctl, struct sk_buff *skb)
+static int fsm_ee_message_handler(struct t7xx_fsm_ctl *ctl, struct sk_buff *skb)
 {
 	struct ctrl_msg_header *ctrl_msg_h = (struct ctrl_msg_header *)skb->data;
 	struct device *dev = &ctl->md->t7xx_dev->pdev->dev;
 	struct port_proxy *port_prox = ctl->md->port_prox;
 	enum md_state md_state;
+	int ret = -EINVAL;
 
 	md_state = t7xx_fsm_get_md_state(ctl);
 	if (md_state != MD_STATE_EXCEPTION) {
 		dev_err(dev, "Receive invalid MD_EX %x when MD state is %d\n",
 			ctrl_msg_h->ex_msg, md_state);
-		return;
+		return -EINVAL;
 	}
 
 	switch (le32_to_cpu(ctrl_msg_h->ctrl_msg_id)) {
@@ -49,29 +49,39 @@ static void fsm_ee_message_handler(struct t7xx_fsm_ctl *ctl, struct sk_buff *skb
 		} else {
 			t7xx_port_proxy_send_msg_to_md(port_prox, PORT_CH_CONTROL_TX, CTL_ID_MD_EX,
 						       MD_EX_CHK_ID);
-			t7xx_fsm_append_event(ctl, FSM_EVENT_MD_EX, NULL, 0);
+			ret = t7xx_fsm_append_event(ctl, FSM_EVENT_MD_EX, NULL, 0);
+			if (ret)
+				dev_err(dev, "Failed to append Modem Exception event");
 		}
 
 		break;
 
 	case CTL_ID_MD_EX_ACK:
-		if (le32_to_cpu(ctrl_msg_h->ex_msg) != MD_EX_CHK_ACK_ID)
+		if (le32_to_cpu(ctrl_msg_h->ex_msg) != MD_EX_CHK_ACK_ID) {
 			dev_err(dev, "Receive invalid MD_EX_ACK %x\n", ctrl_msg_h->ex_msg);
-		else
-			t7xx_fsm_append_event(ctl, FSM_EVENT_MD_EX_REC_OK, NULL, 0);
+		} else {
+			ret = t7xx_fsm_append_event(ctl, FSM_EVENT_MD_EX_REC_OK, NULL, 0);
+			if (ret)
+				dev_err(dev, "Failed to append Modem Exception Received event");
+		}
 
 		break;
 
 	case CTL_ID_MD_EX_PASS:
-		t7xx_fsm_append_event(ctl, FSM_EVENT_MD_EX_PASS, NULL, 0);
+		ret = t7xx_fsm_append_event(ctl, FSM_EVENT_MD_EX_PASS, NULL, 0);
+		if (ret)
+			dev_err(dev, "Failed to append Modem Exception Passed event");
+
 		break;
 
 	case CTL_ID_DRV_VER_ERROR:
 		dev_err(dev, "AP/MD driver version mismatch\n");
 	}
+
+	return ret;
 }
 
-static void control_msg_handler(struct t7xx_port *port, struct sk_buff *skb)
+static int control_msg_handler(struct t7xx_port *port, struct sk_buff *skb)
 {
 	struct t7xx_port_static *port_static = port->port_static;
 	struct t7xx_fsm_ctl *ctl = port->t7xx_dev->md->fsm_ctl;
@@ -86,13 +96,16 @@ static void control_msg_handler(struct t7xx_port *port, struct sk_buff *skb)
 	case CTL_ID_HS2_MSG:
 		skb_pull(skb, sizeof(*ctrl_msg_h));
 
-		if (port_static->rx_ch == PORT_CH_CONTROL_RX)
-			t7xx_fsm_append_event(ctl, FSM_EVENT_MD_HS2,
-					      skb->data, le32_to_cpu(ctrl_msg_h->data_length));
+		if (port_static->rx_ch == PORT_CH_CONTROL_RX) {
+			ret = t7xx_fsm_append_event(ctl, FSM_EVENT_MD_HS2, skb->data,
+						    le32_to_cpu(ctrl_msg_h->data_length));
+			if (ret)
+				dev_err(port->dev, "Failed to append Handshake 2 event");
+		}
 
 		if (port_static->rx_ch == CCCI_SAP_CONTROL_RX)
 			t7xx_fsm_append_event(ctl, FSM_EVENT_AP_HS2,
-					 skb->data, le32_to_cpu(ctrl_msg_h->data_length));
+					      skb->data, le32_to_cpu(ctrl_msg_h->data_length));
 
 		dev_kfree_skb_any(skb);
 		break;
@@ -101,7 +114,7 @@ static void control_msg_handler(struct t7xx_port *port, struct sk_buff *skb)
 	case CTL_ID_MD_EX_ACK:
 	case CTL_ID_MD_EX_PASS:
 	case CTL_ID_DRV_VER_ERROR:
-		fsm_ee_message_handler(ctl, skb);
+		ret = fsm_ee_message_handler(ctl, skb);
 		dev_kfree_skb_any(skb);
 		break;
 
@@ -118,6 +131,7 @@ static void control_msg_handler(struct t7xx_port *port, struct sk_buff *skb)
 		break;
 
 	default:
+		ret = -EINVAL;
 		dev_err(port->dev, "Unknown control message ID to FSM %x\n",
 			le32_to_cpu(ctrl_msg_h->ctrl_msg_id));
 		break;
@@ -126,6 +140,8 @@ static void control_msg_handler(struct t7xx_port *port, struct sk_buff *skb)
 	if (ret)
 		dev_err(port->dev, "%s control message handle error: %d\n", port_static->name,
 			ret);
+
+	return ret;
 }
 
 static int port_ctl_rx_thread(void *arg)
@@ -143,14 +159,13 @@ static int port_ctl_rx_thread(void *arg)
 			spin_unlock_irqrestore(&port->rx_wq.lock, flags);
 			continue;
 		}
-
 		if (kthread_should_stop()) {
 			spin_unlock_irqrestore(&port->rx_wq.lock, flags);
 			break;
 		}
-
 		skb = __skb_dequeue(&port->rx_skb_list);
 		spin_unlock_irqrestore(&port->rx_wq.lock, flags);
+
 		port->skb_handler(port, skb);
 	}
 
@@ -181,14 +196,14 @@ static void port_ctl_uninit(struct t7xx_port *port)
 		kthread_stop(port->thread);
 
 	spin_lock_irqsave(&port->rx_wq.lock, flags);
+	port->rx_length_th = 0;
 	while ((skb = __skb_dequeue(&port->rx_skb_list)) != NULL)
 		dev_kfree_skb_any(skb);
-
 	spin_unlock_irqrestore(&port->rx_wq.lock, flags);
 }
 
 struct port_ops ctl_port_ops = {
-	.init = &port_ctl_init,
-	.recv_skb = &t7xx_port_recv_skb,
-	.uninit = &port_ctl_uninit,
+	.init = port_ctl_init,
+	.recv_skb = t7xx_port_recv_skb,
+	.uninit = port_ctl_uninit,
 };

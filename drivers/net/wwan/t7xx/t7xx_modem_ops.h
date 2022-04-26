@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -22,7 +22,7 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 
-#include "t7xx_common.h"
+#include "t7xx_hif_cldma.h"
 #include "t7xx_pci.h"
 
 #define FEATURE_COUNT		64
@@ -80,7 +80,7 @@ struct t7xx_modem {
 
 void t7xx_md_exception_handshake(struct t7xx_modem *md);
 void t7xx_md_event_notify(struct t7xx_modem *md, enum md_event_id evt_id);
-void t7xx_md_reset(struct t7xx_pci_dev *t7xx_dev);
+int t7xx_md_reset(struct t7xx_pci_dev *t7xx_dev);
 int t7xx_md_init(struct t7xx_pci_dev *t7xx_dev);
 void t7xx_md_exit(struct t7xx_pci_dev *t7xx_dev);
 void t7xx_clear_rgu_irq(struct t7xx_pci_dev *t7xx_dev);

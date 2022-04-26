@@ -5282,10 +5282,8 @@ static int kbase_device_resume(struct device *dev)
 
 #ifdef CONFIG_MALI_VALHALL_DEVFREQ
 	dev_dbg(dev, "Callback %s\n", __func__);
-	if (kbdev->devfreq) {
+	if (kbdev->devfreq)
 		kbase_devfreq_enqueue_work(kbdev, DEVFREQ_WORK_RESUME);
-		flush_workqueue(kbdev->devfreq_queue.workq);
-	}
 #endif
 	return 0;
 }

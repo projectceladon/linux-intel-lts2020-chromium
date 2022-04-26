@@ -64,8 +64,8 @@ static int ccci_tty_send_pkt(int tty_port_idx, const void *data, int len)
 	memcpy(skb_put(skb, actual_count), data, actual_count);
 
 	/* send data */
-	t7xx_port_proxy_set_seq_num(port, ccci_h);
-	ret = t7xx_port_send_skb_to_md(port, skb, true);
+	t7xx_port_proxy_set_tx_seq_num(port, ccci_h);
+	ret = t7xx_port_send_skb_to_md(port, skb);
 	if (ret) {
 		dev_err(port->dev, "failed to send skb to md, ret = %d\n", ret);
 		return ret;

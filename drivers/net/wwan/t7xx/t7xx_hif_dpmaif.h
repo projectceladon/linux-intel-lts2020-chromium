@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Amir Hanania <amir.hanania@intel.com>
@@ -19,61 +19,31 @@
 #define __T7XX_DPMA_TX_H__
 
 #include <linux/mm_types.h>
+#include <linux/netdevice.h>
 #include <linux/sched.h>
 #include <linux/skbuff.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/wait.h>
+#include <linux/bitmap.h>
 
 #include "t7xx_common.h"
 #include "t7xx_pci.h"
+#include "t7xx_dpmaif.h"
 
-#define DPMAIF_RXQ_NUM		2
-#define DPMAIF_TXQ_NUM		5
+/* SKB control buffer */
+struct t7xx_skb_cb {
+	u8	netif_idx;
+	u8	txq_number;
+	u8	rx_pkt_type;
+};
+
+#define T7XX_SKB_CB(__skb)	((struct t7xx_skb_cb *)(__skb)->cb)
 
 enum dpmaif_rdwr {
 	DPMAIF_READ,
 	DPMAIF_WRITE,
-};
-
-struct dpmaif_isr_en_mask {
-	unsigned int		ap_ul_l2intr_en_msk;
-	unsigned int		ap_dl_l2intr_en_msk;
-	unsigned int		ap_udl_ip_busy_en_msk;
-	unsigned int		ap_dl_l2intr_err_en_msk;
-};
-
-struct dpmaif_ul {
-	bool			que_started;
-	unsigned char		reserve[3];
-	dma_addr_t		drb_base;
-	unsigned int		drb_size_cnt;
-};
-
-struct dpmaif_dl {
-	bool			que_started;
-	unsigned char		reserve[3];
-	dma_addr_t		pit_base;
-	unsigned int		pit_size_cnt;
-	dma_addr_t		bat_base;
-	unsigned int		bat_size_cnt;
-	dma_addr_t		frg_base;
-	unsigned int		frg_size_cnt;
-	unsigned int		pit_seq;
-};
-
-struct dpmaif_dl_hwq {
-	unsigned int		bat_remain_size;
-	unsigned int		bat_pkt_bufsz;
-	unsigned int		frg_pkt_bufsz;
-	unsigned int		bat_rsv_length;
-	unsigned int		pkt_bid_max_cnt;
-	unsigned int		pkt_alignment;
-	unsigned int		mtu_size;
-	unsigned int		chk_pit_num;
-	unsigned int		chk_bat_num;
-	unsigned int		chk_frg_num;
 };
 
 /* Structure of DL BAT */
@@ -106,8 +76,8 @@ struct dpmaif_bat_page {
 };
 
 enum bat_type {
-	BAT_TYPE_NORMAL = 0,
-	BAT_TYPE_FRAG = 1,
+	BAT_TYPE_NORMAL,
+	BAT_TYPE_FRAG,
 };
 
 struct dpmaif_bat_request {
@@ -119,7 +89,7 @@ struct dpmaif_bat_request {
 	void			*bat_skb;
 	unsigned int		skb_pkt_cnt;
 	unsigned int		pkt_buf_sz;
-	unsigned char		*bat_mask;
+	unsigned long		*bat_bitmap;
 	atomic_t		refcnt;
 	spinlock_t		mask_lock; /* Protects BAT mask */
 	enum bat_type		type;
@@ -128,7 +98,7 @@ struct dpmaif_bat_request {
 struct dpmaif_rx_queue {
 	unsigned char		index;
 	bool			que_started;
-	unsigned short		budget;
+	unsigned int		budget;
 
 	void			*pit_base;
 	dma_addr_t		pit_bus_addr;
@@ -155,6 +125,7 @@ struct dpmaif_rx_queue {
 	unsigned int		expect_pit_seq;
 	unsigned int		pit_remain_release_cnt;
 	struct dpmaif_cur_rx_skb_info rx_data_info;
+	struct napi_struct	napi;
 };
 
 struct dpmaif_tx_queue {
@@ -167,7 +138,6 @@ struct dpmaif_tx_queue {
 	unsigned short		drb_wr_idx;
 	unsigned short		drb_rd_idx;
 	unsigned short		drb_release_rd_idx;
-	unsigned short		last_ch_id;
 	void			*drb_skb_base;
 	wait_queue_head_t	req_wq;
 	struct workqueue_struct	*worker;
@@ -181,7 +151,6 @@ struct dpmaif_tx_queue {
 	unsigned int		tx_submit_skb_cnt;
 	unsigned int		tx_list_max_len;
 	unsigned int		tx_skb_stat;
-	bool			drb_lack;
 };
 
 struct dpmaif_isr_para {
@@ -198,14 +167,6 @@ enum dpmaif_state {
 	DPMAIF_STATE_MAX
 };
 
-struct dpmaif_hw_info {
-	void __iomem			*pcie_base;
-	struct dpmaif_dl		dl_que[DPMAIF_RXQ_NUM];
-	struct dpmaif_ul		ul_que[DPMAIF_TXQ_NUM];
-	struct dpmaif_dl_hwq		dl_que_hw[DPMAIF_RXQ_NUM];
-	struct dpmaif_isr_en_mask	isr_en_mask;
-};
-
 enum dpmaif_txq_state {
 	DMPAIF_TXQ_STATE_IRQ,
 	DMPAIF_TXQ_STATE_FULL,
@@ -213,8 +174,9 @@ enum dpmaif_txq_state {
 
 struct dpmaif_callbacks {
 	void (*state_notify)(struct t7xx_pci_dev *t7xx_dev,
-			     enum dpmaif_txq_state state, int txqt);
-	void (*recv_skb)(struct t7xx_pci_dev *t7xx_dev, struct sk_buff *skb);
+			     enum dpmaif_txq_state state, int txq_number);
+	void (*recv_skb)(struct t7xx_pci_dev *t7xx_dev, struct sk_buff *skb,
+			 struct napi_struct *napi);
 };
 
 struct dpmaif_ctrl {
@@ -223,7 +185,7 @@ struct dpmaif_ctrl {
 	struct md_pm_entity		dpmaif_pm_entity;
 	enum dpmaif_state		state;
 	bool				dpmaif_sw_init_done;
-	struct dpmaif_hw_info		hif_hw_info;
+	struct dpmaif_hw_info		hw_info;
 	struct dpmaif_tx_queue		txq[DPMAIF_TXQ_NUM];
 	struct dpmaif_rx_queue		rxq[DPMAIF_RXQ_NUM];
 
@@ -239,6 +201,7 @@ struct dpmaif_ctrl {
 	struct task_struct		*tx_thread;
 
 	struct dpmaif_callbacks		*callbacks;
+	bool				napi_enable;
 };
 
 struct dpmaif_ctrl *t7xx_dpmaif_hif_init(struct t7xx_pci_dev *t7xx_dev,

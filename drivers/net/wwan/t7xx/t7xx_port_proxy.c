@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Amir Hanania <amir.hanania@intel.com>
@@ -19,7 +19,6 @@
 
 #include <linux/bits.h>
 #include <linux/bitfield.h>
-#include <linux/dev_printk.h>
 #include <linux/device.h>
 #include <linux/gfp.h>
 #include <linux/kernel.h>
@@ -40,15 +39,15 @@
 #include "t7xx_port_proxy.h"
 #include "t7xx_state_monitor.h"
 
-#define CHECK_RX_SEQ_MASK		GENMASK(14, 0)
 #define Q_IDX_CTRL			0
 #define Q_IDX_MBIM			2
 #define Q_IDX_AT_CMD			5
 
-#define TTY_IPC_MINOR_BASE			100
-#define PORT_NOTIFY_PROTOCOL			NETLINK_USERSOCK
+#define INVALID_SEQ_NUM			GENMASK(15, 0)
+#define TTY_IPC_MINOR_BASE		100
+#define PORT_NOTIFY_PROTOCOL		NETLINK_USERSOCK
 
-#define DEVICE_NAME				"MTK_WWAN_M80"
+#define DEVICE_NAME			"MTK_WWAN_M80"
 
 static struct port_proxy *port_prox;
 static struct class *dev_class;
@@ -66,7 +65,7 @@ static struct t7xx_port_static t7xx_md_ports[] = {
 		.rxq_index = 0,
 		.txq_exp_index = 0,
 		.rxq_exp_index = 0,
-		.path_id = ID_CLDMA0,
+		.path_id = CLDMA_ID_AP,
 		.flags = PORT_F_RX_CHAR_NODE,
 		.ops = &wwan_sub_port_ops,
 		.minor = 0,
@@ -79,8 +78,8 @@ static struct t7xx_port_static t7xx_md_ports[] = {
 		.rxq_index = Q_IDX_AT_CMD,
 		.txq_exp_index = 0xff,
 		.rxq_exp_index = 0xff,
-		.path_id = ID_CLDMA1,
-		.flags = PORT_F_RX_CHAR_NODE,
+		.path_id = CLDMA_ID_MD,
+		.flags = 0,
 		.ops = &wwan_sub_port_ops,
 		.name = "AT",
 		.port_type = WWAN_PORT_AT,
@@ -91,56 +90,79 @@ static struct t7xx_port_static t7xx_md_ports[] = {
 		.rxq_index = Q_IDX_MBIM,
 		.txq_exp_index = 0,
 		.rxq_exp_index = 0,
-		.path_id = ID_CLDMA1,
-		.flags = PORT_F_RX_CHAR_NODE,
+		.path_id = CLDMA_ID_MD,
+		.flags = 0,
 		.ops = &wwan_sub_port_ops,
 		.name = "MBIM",
 		.port_type = WWAN_PORT_MBIM,
 	}, {
+#ifdef CONFIG_WWAN_DEBUGFS
 		.tx_ch = PORT_CH_MD_LOG_TX,
 		.rx_ch = PORT_CH_MD_LOG_RX,
 		.txq_index = 7,
 		.rxq_index = 7,
 		.txq_exp_index = 7,
 		.rxq_exp_index = 7,
-		.path_id = ID_CLDMA1,
-		.flags = PORT_F_RX_CHAR_NODE,
-		.ops = &char_port_ops,
-		.minor = 2,
-		.name = "ttyCMdLog",
-		.port_type = WWAN_PORT_AT,
+		.path_id = CLDMA_ID_MD,
+		.ops = &t7xx_trace_port_ops,
+		.name = "mdlog",
 	}, {
+#endif
 		.tx_ch = CCCI_SAP_ADB_TX,
 		.rx_ch = CCCI_SAP_ADB_RX,
 		.txq_index = 3,
 		.rxq_index = 3,
 		.txq_exp_index = 0,
 		.rxq_exp_index = 0,
-		.path_id = ID_CLDMA0,
+		.path_id = CLDMA_ID_AP,
 		.flags = PORT_F_RX_CHAR_NODE,
 		.ops = &char_port_ops,
 		.minor = 9,
 		.name = "ccci_sap_adb",
 	}, {
+		.tx_ch = CCCI_SAP_LOG_TX,
+		.rx_ch = CCCI_SAP_LOG_RX,
+		.txq_index = 2,
+		.rxq_index = 2,
+		.txq_exp_index = 0,
+		.rxq_exp_index = 0,
+		.path_id = CLDMA_ID_AP,
+		.flags = PORT_F_RX_CHAR_NODE,
+		.ops = &char_port_ops,
+		.minor = 8,
+		.name = "ccci_sap_log",
+        }, {
+		.tx_ch = PORT_CH_LB_IT_TX,
+		.rx_ch = PORT_CH_LB_IT_RX,
+		.txq_index = 0,
+		.rxq_index = 0,
+		.txq_exp_index = 0xFF,
+		.rxq_exp_index = 0xFF,
+		.path_id = CLDMA_ID_MD,
+		.flags = PORT_F_RX_CHAR_NODE,
+		.ops = &char_port_ops,
+		.minor = 3,
+		.name = "ccci_lb_it",
+        }, {
 		.tx_ch = PORT_CH_MIPC_TX,
 		.rx_ch = PORT_CH_MIPC_RX,
 		.txq_index = 2,
 		.rxq_index = 2,
 		.txq_exp_index = 0,
 		.rxq_exp_index = 0,
-		.path_id = ID_CLDMA1,
+		.path_id = CLDMA_ID_MD,
 		.flags = PORT_F_RX_CHAR_NODE,
 		.ops = &tty_port_ops,
 		.minor = 1,
 		.name = "ttyCMIPC0",
- 	}, {
+	}, {
 		.tx_ch = PORT_CH_CONTROL_TX,
 		.rx_ch = PORT_CH_CONTROL_RX,
 		.txq_index = Q_IDX_CTRL,
 		.rxq_index = Q_IDX_CTRL,
 		.txq_exp_index = 0,
 		.rxq_exp_index = 0,
-		.path_id = ID_CLDMA1,
+		.path_id = CLDMA_ID_MD,
 		.flags = 0,
 		.ops = &ctl_port_ops,
 		.name = "t7xx_ctrl",
@@ -151,7 +173,7 @@ static struct t7xx_port_static t7xx_md_ports[] = {
 		.rxq_index = 0,
 		.txq_exp_index = 0,
 		.rxq_exp_index = 0,
-		.path_id = ID_CLDMA0,
+		.path_id = CLDMA_ID_AP,
 		.flags = 0,
 		.ops = &ctl_port_ops,
 		.minor = 0xff,
@@ -167,7 +189,7 @@ static struct t7xx_port_static md_ccci_early_ports[] = {
 		.rxq_index = 0,
 		.txq_exp_index = 0,
 		.rxq_exp_index = 0,
-		.path_id = ID_CLDMA0,
+		.path_id = CLDMA_ID_AP,
 		.flags = PORT_F_RX_CHAR_NODE | PORT_F_RAW_DATA,
 		.ops = &char_port_ops,
 		.minor = 1,
@@ -179,12 +201,12 @@ static struct t7xx_port_static md_ccci_early_ports[] = {
 		.rxq_index = 1,
 		.txq_exp_index = 1,
 		.rxq_exp_index = 1,
-		.path_id = ID_CLDMA0,
-		.flags = PORT_F_RX_CHAR_NODE | PORT_F_RAW_DATA,
-		.ops = &char_port_ops,
+		.path_id = CLDMA_ID_AP,
+		.flags = PORT_F_RAW_DATA,
+		.ops = &devlink_port_ops,
 		.minor = 21,
 		.name = "ttyDUMP",
-	}, 
+	},
 };
 
 static struct t7xx_port *t7xx_proxy_get_port_by_ch(struct port_proxy *port_prox, enum port_ch ch)
@@ -230,33 +252,32 @@ static int port_proxy_recv_skb_from_q(struct cldma_queue *queue, struct sk_buff 
 	return ret;
 }
 
-/* Sequence numbering to track for lost packets */
-void t7xx_port_proxy_set_seq_num(struct t7xx_port *port, struct ccci_header *ccci_h)
+void t7xx_port_proxy_set_tx_seq_num(struct t7xx_port *port, struct ccci_header *ccci_h)
 {
-	if (ccci_h && port) {
-		ccci_h->status &= cpu_to_le32(~HDR_FLD_SEQ);
-		ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_SEQ, port->seq_nums[MTK_TX]));
-		ccci_h->status &= cpu_to_le32(~HDR_FLD_AST);
-		ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_AST, 1));
-	}
+	ccci_h->status &= cpu_to_le32(~CCCI_H_SEQ_FLD);
+	ccci_h->status |= cpu_to_le32(FIELD_PREP(CCCI_H_SEQ_FLD, port->seq_nums[MTK_TX]));
+	ccci_h->status |= cpu_to_le32(CCCI_H_AST_BIT);
 }
 
-static u16 t7xx_port_check_rx_seq_num(struct t7xx_port *port, struct ccci_header *ccci_h)
+static u16 t7xx_port_next_rx_seq_num(struct t7xx_port *port, struct ccci_header *ccci_h)
 {
-	u16 seq_num, assert_bit;
+	u16 seq_num, next_seq_num, assert_bit;
 
-	seq_num = FIELD_GET(HDR_FLD_SEQ, le32_to_cpu(ccci_h->status));
-	assert_bit = FIELD_GET(HDR_FLD_AST, le32_to_cpu(ccci_h->status));
-	if (assert_bit && port->seq_nums[MTK_RX] &&
-	    ((seq_num - port->seq_nums[MTK_RX]) & CHECK_RX_SEQ_MASK) != 1) {
+	seq_num = FIELD_GET(CCCI_H_SEQ_FLD, le32_to_cpu(ccci_h->status));
+	next_seq_num = (seq_num + 1) & FIELD_MAX(CCCI_H_SEQ_FLD);
+	assert_bit = !!(le32_to_cpu(ccci_h->status) & CCCI_H_AST_BIT);
+	if (!assert_bit || port->seq_nums[MTK_RX] > FIELD_MAX(CCCI_H_SEQ_FLD))
+		return next_seq_num;
+
+	if (seq_num != port->seq_nums[MTK_RX]) {
 		dev_warn_ratelimited(port->dev,
-				     "seq num out-of-order %d->%d (header %X, len %X)\n",
+				     "seq num out-of-order %u != %u (header %X, len %X)\n",
 				     seq_num, port->seq_nums[MTK_RX],
 				     le32_to_cpu(ccci_h->packet_header),
 				     le32_to_cpu(ccci_h->packet_len));
 	}
 
-	return seq_num;
+	return next_seq_num;
 }
 
 void t7xx_port_proxy_reset(struct port_proxy *port_prox)
@@ -265,7 +286,7 @@ void t7xx_port_proxy_reset(struct port_proxy *port_prox)
 	int i;
 
 	for_each_proxy_port(i, port, port_prox) {
-		port->seq_nums[MTK_RX] = -1;
+		port->seq_nums[MTK_RX] = INVALID_SEQ_NUM;
 		port->seq_nums[MTK_TX] = 0;
 	}
 }
@@ -285,7 +306,7 @@ static void t7xx_port_struct_init(struct t7xx_port *port)
 	INIT_LIST_HEAD(&port->queue_entry);
 	skb_queue_head_init(&port->rx_skb_list);
 	init_waitqueue_head(&port->rx_wq);
-	port->seq_nums[MTK_RX] = -1;
+	port->seq_nums[MTK_RX] = INVALID_SEQ_NUM;
 	port->seq_nums[MTK_TX] = 0;
 	atomic_set(&port->usage_cnt, 0);
 	port->port_proxy = port_prox;
@@ -319,39 +340,39 @@ static void t7xx_port_adjust_skb(struct t7xx_port *port, struct sk_buff *skb)
  *
  * Return:
  * * 0		- Success.
- * * -ENOBUFS	- Not enough queue length.
+ * * ERROR	- Error code.
  */
 int t7xx_port_recv_skb(struct t7xx_port *port, struct sk_buff *skb)
 {
+	struct ccci_header *ccci_h;
 	unsigned long flags;
+	u32 channel;
+	int ret = 0;
 
 	spin_lock_irqsave(&port->rx_wq.lock, flags);
-	if (port->rx_skb_list.qlen < port->rx_length_th) {
-		struct ccci_header *ccci_h = (struct ccci_header *)skb->data;
-		u32 channel;
-
-		port->flags &= ~PORT_F_RX_FULLED;
-		if (port->flags & PORT_F_RX_ADJUST_HEADER)
-			t7xx_port_adjust_skb(port, skb);
-
-		channel = FIELD_GET(HDR_FLD_CHN, le32_to_cpu(ccci_h->status));
-		if (!(port->flags & PORT_F_RAW_DATA) && (channel == PORT_CH_STATUS_RX)) {
-			port->skb_handler(port, skb);
-		} else {
-			if (port->wwan_port)
-				wwan_port_rx(port->wwan_port, skb);
-			else
-				__skb_queue_tail(&port->rx_skb_list, skb);
-		}
-
+	if (port->rx_skb_list.qlen >= port->rx_length_th) {
+		port->flags |= PORT_F_RX_FULLED;
 		spin_unlock_irqrestore(&port->rx_wq.lock, flags);
-		wake_up_all(&port->rx_wq);
-		return 0;
-	}
 
-	port->flags |= PORT_F_RX_FULLED;
+		return -ENOBUFS;
+	}
+	ccci_h = (struct ccci_header *)skb->data;
+	port->flags &= ~PORT_F_RX_FULLED;
+	if (port->flags & PORT_F_RX_ADJUST_HEADER)
+		t7xx_port_adjust_skb(port, skb);
+	channel = FIELD_GET(CCCI_H_CHN_FLD, le32_to_cpu(ccci_h->status));
+	if (!(port->flags & PORT_F_RAW_DATA) && (channel == PORT_CH_STATUS_RX)) {
+		ret = port->skb_handler(port, skb);
+	} else {
+		if (port->wwan_port)
+			wwan_port_rx(port->wwan_port, skb);
+		else
+			__skb_queue_tail(&port->rx_skb_list, skb);
+	}
 	spin_unlock_irqrestore(&port->rx_wq.lock, flags);
-	return -ENOBUFS;
+
+	wake_up_all(&port->rx_wq);
+	return ret;
 }
 
 static struct cldma_ctrl *get_md_ctrl(struct t7xx_port *port)
@@ -376,24 +397,21 @@ int t7xx_port_proxy_send_skb(struct t7xx_port *port, struct sk_buff *skb)
 	int ret;
 
 	tx_qno = t7xx_port_get_queue_no(port);
-	t7xx_port_proxy_set_seq_num(port, ccci_h);
+	t7xx_port_proxy_set_tx_seq_num(port, ccci_h);
 
 	md_ctrl = get_md_ctrl(port);
-	ret = t7xx_cldma_send_skb(md_ctrl, tx_qno, skb, true);
+	ret = t7xx_cldma_send_skb(md_ctrl, tx_qno, skb);
 	if (ret) {
 		dev_err(port->dev, "Failed to send skb: %d\n", ret);
 		return ret;
 	}
 
-	/* Record the port seq_num after the data is sent to HIF.
-	 * Only bits 0-14 are used, thus negating overflow.
-	 */
 	port->seq_nums[MTK_TX]++;
 
 	return 0;
 }
 
-int t7xx_port_send_skb_to_md(struct t7xx_port *port, struct sk_buff *skb, bool blocking)
+int t7xx_port_send_skb_to_md(struct t7xx_port *port, struct sk_buff *skb)
 {
 	struct t7xx_port_static *port_static = port->port_static;
 	struct t7xx_fsm_ctl *ctl = port->t7xx_dev->md->fsm_ctl;
@@ -418,7 +436,7 @@ int t7xx_port_send_skb_to_md(struct t7xx_port *port, struct sk_buff *skb, bool b
 	}
 
 	md_ctrl = get_md_ctrl(port);
-	return t7xx_cldma_send_skb(md_ctrl, t7xx_port_get_queue_no(port), skb, blocking);
+	return t7xx_cldma_send_skb(md_ctrl, t7xx_port_get_queue_no(port), skb);
 }
 
 static void t7xx_proxy_setup_ch_mapping(struct port_proxy *port_prox)
@@ -452,8 +470,8 @@ void t7xx_ccci_header_init(struct ccci_header *ccci_h, unsigned int pkt_header,
 {
 	ccci_h->packet_header = cpu_to_le32(pkt_header);
 	ccci_h->packet_len = cpu_to_le32(pkt_len);
-	ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
-	ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, ch));
+	ccci_h->status &= cpu_to_le32(~CCCI_H_CHN_FLD);
+	ccci_h->status |= cpu_to_le32(FIELD_PREP(CCCI_H_CHN_FLD, ch));
 	ccci_h->ex_msg = cpu_to_le32(ex_msg);
 }
 
@@ -485,10 +503,10 @@ void t7xx_port_proxy_send_msg_to_md(struct port_proxy *port_prox, enum port_ch c
 	if (ch == PORT_CH_CONTROL_TX) {
 		ccci_h = (struct ccci_header *)(skb->data);
 		t7xx_ccci_header_init(ccci_h, CCCI_HEADER_NO_DATA,
-				      sizeof(*ctrl_msg_h) + CCCI_H_LEN, ch, 0);
-		ctrl_msg_h = (struct ctrl_msg_header *)(skb->data + CCCI_H_LEN);
+				      sizeof(*ctrl_msg_h) + sizeof(*ccci_h), ch, 0);
+		ctrl_msg_h = (struct ctrl_msg_header *)(skb->data + sizeof(*ccci_h));
 		t7xx_ctrl_msg_header_init(ctrl_msg_h, msg, ex_msg, 0);
-		skb_put(skb, CCCI_H_LEN + sizeof(*ctrl_msg_h));
+		skb_put(skb, sizeof(*ccci_h) + sizeof(*ctrl_msg_h));
 	} else {
 		ccci_h = skb_put(skb, sizeof(*ccci_h));
 		t7xx_ccci_header_init(ccci_h, CCCI_HEADER_NO_DATA, msg, ch, ex_msg);
@@ -498,100 +516,90 @@ void t7xx_port_proxy_send_msg_to_md(struct port_proxy *port_prox, enum port_ch c
 	if (ret) {
 		struct t7xx_port_static *port_static = port->port_static;
 
-		dev_err(port->dev, "port%s send to MD fail\n", port_static->name);
 		dev_kfree_skb_any(skb);
+		dev_err(port->dev, "port%s send to MD fail\n", port_static->name);
 	}
 }
 
-/**
- * t7xx_port_proxy_dispatch_recv_skb() - Dispatch received skb.
- * @queue: CLDMA queue.
- * @skb: Socket buffer.
- * @drop_skb_on_err: Return value that indicates in case of an error that the skb should be dropped.
- *
- * If recv_skb return with 0 or drop_skb_on_err is true, then it's the port's duty
- * to free the request and the caller should no longer reference the request.
- * If recv_skb returns any other error, caller should free the request.
- *
- * Return:
- ** 0		- Success.
- ** -EINVAL	- Failed to get skb, channel out-of-range, or invalid MD state.
- ** -ENETDOWN	- Network time out.
- */
-static int t7xx_port_proxy_dispatch_recv_skb(struct cldma_queue *queue, struct sk_buff *skb,
-					     bool *drop_skb_on_err)
+static struct t7xx_port *t7xx_port_proxy_find_port(struct t7xx_pci_dev *t7xx_dev,
+						   struct cldma_queue *queue, u16 channel)
 {
-	struct ccci_header *ccci_h = (struct ccci_header *)skb->data;
-	struct port_proxy *port_prox = queue->md->port_prox;
-	struct t7xx_fsm_ctl *ctl = queue->md->fsm_ctl;
+	struct port_proxy *port_prox = t7xx_dev->md->port_prox;
 	struct list_head *port_list;
 	struct t7xx_port *port;
-	u16 seq_num, channel;
-	int ret = 0;
 	u8 ch_id;
 
-	channel = FIELD_GET(HDR_FLD_CHN, le32_to_cpu(ccci_h->status));
 	ch_id = FIELD_GET(PORT_CH_ID_MASK, channel);
-
-	if (t7xx_fsm_get_md_state(ctl) == MD_STATE_INVALID) {
-		*drop_skb_on_err = true;
-		return -EINVAL;
-	}
-
 	port_list = &port_prox->rx_ch_ports[ch_id];
 	list_for_each_entry(port, port_list, entry) {
 		struct t7xx_port_static *port_static = port->port_static;
 
-		if (queue->md_ctrl->hif_id != port_static->path_id || channel !=
-		    port_static->rx_ch)
-			continue;
-
-		/* Multi-cast is not supported, because one port may be freed and can modify
-		 * this request before another port can process it.
-		 * However we still can use req->state to do some kind of multi-cast if needed.
-		 */
-		if (port_static->ops->recv_skb) {
-			seq_num = t7xx_port_check_rx_seq_num(port, ccci_h);
-			ret = port_static->ops->recv_skb(port, skb);
-			/* If the packet is stored to RX buffer successfully or dropped,
-			 * the sequence number will be updated.
-			 */
-			if (ret == -ENETDOWN || (ret < 0 && port->flags & PORT_F_RX_ALLOW_DROP)) {
-				*drop_skb_on_err = true;
-				dev_err_ratelimited(port->dev,
-						    "port %s RX full, drop packet\n",
-						    port_static->name);
-			}
-
-			if (!ret || drop_skb_on_err)
-				port->seq_nums[MTK_RX] = seq_num;
-		}
-
-		break;
+		if (queue->md_ctrl->hif_id == port_static->path_id &&
+		    channel == port_static->rx_ch)
+			return port;
 	}
 
-	return ret;
+	return NULL;
 }
 
+/**
+ * t7xx_port_proxy_recv_skb() - Dispatch received skb.
+ * @queue: CLDMA queue.
+ * @skb: Socket buffer.
+ *
+ * Return:
+ ** 0		- Packet consumed.
+ ** -ERROR	- Failed to process skb.
+ */
 static int t7xx_port_proxy_recv_skb(struct cldma_queue *queue, struct sk_buff *skb)
 {
-	bool drop_skb_on_err = false;
+	struct ccci_header *ccci_h = (struct ccci_header *)skb->data;
+	struct t7xx_pci_dev *t7xx_dev = queue->md_ctrl->t7xx_dev;
+	struct t7xx_fsm_ctl *ctl = t7xx_dev->md->fsm_ctl;
+	struct device *dev = queue->md_ctrl->dev;
+	struct t7xx_port_static *port_static;
+	struct t7xx_port *port;
+	u16 seq_num, channel;
 	int ret;
 
 	if (!skb)
 		return -EINVAL;
 
-	if (queue->q_type == CLDMA_SHARED_Q) {
-		ret = t7xx_port_proxy_dispatch_recv_skb(queue, skb, &drop_skb_on_err);
-		if (ret < 0 && drop_skb_on_err) {
-			dev_kfree_skb_any(skb);
-			return 0;
-		}
-	} else {
-		ret = port_proxy_recv_skb_from_q(queue, skb);
+	if (queue->q_type == CLDMA_DEDICATED_Q)
+		return port_proxy_recv_skb_from_q(queue, skb);
+
+	channel = FIELD_GET(CCCI_H_CHN_FLD, le32_to_cpu(ccci_h->status));
+
+	if (t7xx_fsm_get_md_state(ctl) == MD_STATE_INVALID) {
+		dev_err_ratelimited(dev, "Packet drop on channel 0x%x, modem not ready\n", channel);
+		goto drop_skb;
 	}
 
-	return ret;
+	port = t7xx_port_proxy_find_port(t7xx_dev, queue, channel);
+	if (!port) {
+		dev_err_ratelimited(dev, "Packet drop on channel 0x%x, port not found\n", channel);
+		goto drop_skb;
+	}
+
+	seq_num = t7xx_port_next_rx_seq_num(port, ccci_h);
+	port_static = port->port_static;
+	ret = port_static->ops->recv_skb(port, skb);
+	if (ret && port->flags & PORT_F_RX_ALLOW_DROP) {
+		port->seq_nums[MTK_RX] = seq_num;
+		dev_err_ratelimited(dev, "Packed drop on port %s, error %d\n",
+				    port_static->name, ret);
+		goto drop_skb;
+	}
+
+	if (ret)
+		return ret;
+
+	port->seq_nums[MTK_RX] = seq_num;
+	return 0;
+
+drop_skb:
+	dev_kfree_skb_any(skb);
+	return 0;
 }
 
 /**
@@ -638,8 +646,6 @@ static void t7xx_proxy_init_all_ports(struct t7xx_modem *md)
 		port->t7xx_dev = md->t7xx_dev;
 		port->dev = &md->t7xx_dev->pdev->dev;
 		spin_lock_init(&port->port_update_lock);
-		spin_lock(&port->port_update_lock);
-		mutex_init(&port->tx_mutex_lock);
 
 		if (port->flags & PORT_F_CHAR_NODE_SHOW)
 			port->chan_enable = true;
@@ -647,13 +653,13 @@ static void t7xx_proxy_init_all_ports(struct t7xx_modem *md)
 			port->chan_enable = false;
 
 		port->chn_crt_stat = false;
-		spin_unlock(&port->port_update_lock);
 
 		if (port_static->ops->init)
 			port_static->ops->init(port);
 
 		if (port->flags & PORT_F_RAW_DATA)
-			port_proxy->dedicated_ports[port_static->path_id][port_static->rxq_index] = port;
+			port_proxy->dedicated_ports[port_static->path_id]
+			[port_static->rxq_index] = port;
 	}
 
 	t7xx_proxy_setup_ch_mapping(port_proxy);
@@ -697,8 +703,6 @@ void port_switch_cfg(struct t7xx_modem *md, enum port_cfg_id cfg_id)
 		}
 
 		port_proxy->port_number = port_get_cfg(&port_proxy->ports_shared, cfg_id);
-
-
 		devm_kfree(dev, port_proxy->ports_private);
 
 		ports_private = devm_kzalloc(dev, sizeof(*ports_private) * port_proxy->port_number, GFP_KERNEL);
@@ -931,8 +935,8 @@ int t7xx_port_proxy_init(struct t7xx_modem *md)
 	if (ret)
 		goto err_netlink;
 
-	t7xx_cldma_set_recv_skb(md->md_ctrl[ID_CLDMA0], t7xx_port_proxy_recv_skb);
-	t7xx_cldma_set_recv_skb(md->md_ctrl[ID_CLDMA1], t7xx_port_proxy_recv_skb);
+	t7xx_cldma_set_recv_skb(md->md_ctrl[CLDMA_ID_MD], t7xx_port_proxy_recv_skb);
+	t7xx_cldma_set_recv_skb(md->md_ctrl[CLDMA_ID_AP], t7xx_port_proxy_recv_skb);
 	return 0;
 
 err_netlink:
@@ -975,21 +979,19 @@ int t7xx_port_proxy_node_control(struct t7xx_modem *md, struct port_msg *port_ms
 {
 	u32 *port_info_base = (void *)port_msg + sizeof(*port_msg);
 	struct device *dev = &md->t7xx_dev->pdev->dev;
-	unsigned int ports, i;
-	unsigned int version;
+	unsigned int version, ports, i;
 
 	version = FIELD_GET(PORT_MSG_VERSION, le32_to_cpu(port_msg->info));
 	if (version != PORT_ENUM_VER ||
 	    le32_to_cpu(port_msg->head_pattern) != PORT_ENUM_HEAD_PATTERN ||
 	    le32_to_cpu(port_msg->tail_pattern) != PORT_ENUM_TAIL_PATTERN) {
-		dev_err(dev, "Port message enumeration invalid %x:%x:%x\n",
+		dev_err(dev, "Invalid port control message %x:%x:%x\n",
 			version, le32_to_cpu(port_msg->head_pattern),
 			le32_to_cpu(port_msg->tail_pattern));
 		return -EFAULT;
 	}
 
 	ports = FIELD_GET(PORT_MSG_PRT_CNT, le32_to_cpu(port_msg->info));
-
 	for (i = 0; i < ports; i++) {
 		struct t7xx_port_static *port_static;
 		u32 *port_info = port_info_base + i;
@@ -1000,11 +1002,11 @@ int t7xx_port_proxy_node_control(struct t7xx_modem *md, struct port_msg *port_ms
 		ch_id = FIELD_GET(PORT_INFO_CH_ID, *port_info);
 		port = t7xx_proxy_get_port_by_ch(md->port_prox, ch_id);
 		if (!port) {
-			dev_warn(dev, "Port:%x not found\n", ch_id);
+			dev_dbg(dev, "Port:%x not found\n", ch_id);
 			continue;
 		}
 
-		en_flag = !!FIELD_GET(PORT_INFO_ENFLG, *port_info);
+		en_flag = !!(PORT_INFO_ENFLG & *port_info);
 
 		if (t7xx_fsm_get_md_state(md->fsm_ctl) == MD_STATE_READY) {
 			port_static = port->port_static;

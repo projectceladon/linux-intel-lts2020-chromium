@@ -17,6 +17,7 @@
 
 #define ACP_DSP_BAR	0
 
+#define ACP_HW_SEM_RETRY_COUNT			10000
 #define ACP_REG_POLL_INTERVAL                   500
 #define ACP_REG_POLL_TIMEOUT_US                 2000
 #define ACP_DMA_COMPLETE_TIMEOUT_US		5000
@@ -56,8 +57,10 @@
 #define ACP_SHA_STAT				0x8000
 #define ACP_PSP_TIMEOUT_COUNTER			5
 #define ACP_EXT_INTR_ERROR_STAT			0x20000000
-#define MP0_C2PMSG_26_REG			0x03810570
-#define MBOX_ACP_SHA_DMA_COMMAND		0x330000
+#define MP0_C2PMSG_114_REG			0x3810AC8
+#define MP0_C2PMSG_73_REG			0x3810A24
+#define MBOX_ACP_SHA_DMA_COMMAND		0x70000
+#define MBOX_DELAY				1000
 #define MBOX_READY_MASK				0x80000000
 #define MBOX_STATUS_MASK			0xFFFF
 
@@ -152,6 +155,18 @@ struct acp_dev_data {
 	struct pci_dev *smn_dev;
 };
 
+enum acp_pcm_types {
+	I2S_BT = 0,
+	I2S_SP,
+	PDM_DMIC,
+	PCM_NONE,
+};
+
+struct acp_pcm_table {
+	u8 pcm_index;
+	char *pcm_name;
+};
+
 void memcpy_to_scratch(struct snd_sof_dev *sdev, u32 offset, unsigned int *src, size_t bytes);
 void memcpy_from_scratch(struct snd_sof_dev *sdev, u32 offset, unsigned int *dst, size_t bytes);
 
@@ -203,6 +218,7 @@ int acp_pcm_open(struct snd_sof_dev *sdev, struct snd_pcm_substream *substream);
 int acp_pcm_close(struct snd_sof_dev *sdev, struct snd_pcm_substream *substream);
 int acp_pcm_hw_params(struct snd_sof_dev *sdev, struct snd_pcm_substream *substream,
 		      struct snd_pcm_hw_params *params, struct sof_ipc_stream_params *ipc_params);
+snd_pcm_uframes_t acp_pcm_pointer(struct snd_sof_dev *sdev, struct snd_pcm_substream *substream);
 
 extern const struct snd_sof_dsp_ops sof_renoir_ops;
 

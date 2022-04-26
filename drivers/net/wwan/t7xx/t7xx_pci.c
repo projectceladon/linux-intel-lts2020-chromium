@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -19,7 +19,6 @@
 #include <linux/atomic.h>
 #include <linux/bits.h>
 #include <linux/completion.h>
-#include <linux/dev_printk.h>
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/gfp.h>
@@ -43,11 +42,12 @@
 #include "t7xx_reg.h"
 #include "t7xx_state_monitor.h"
 #include "t7xx_pci_rescan.h"
+#include "t7xx_port_devlink.h"
 
-#define PCI_IREG_BASE			0
-#define PCI_EREG_BASE			2
+#define T7XX_PCI_IREG_BASE		0
+#define T7XX_PCI_EREG_BASE		2
 
-#define MTK_WAIT_TIMEOUT_MS		10
+#define PM_SLEEP_DIS_TIMEOUT_MS		20
 #define PM_ACK_TIMEOUT_MS		1500
 #define PM_AUTOSUSPEND_MS		20000
 #define PM_RESOURCE_POLL_TIMEOUT_US	10000
@@ -64,15 +64,15 @@ enum t7xx_pm_state {
 
 static void t7xx_dev_set_sleep_capability(struct t7xx_pci_dev *t7xx_dev, bool enable)
 {
-	void __iomem *ctrl_reg = IREG_BASE(t7xx_dev) + PCIE_MISC_CTRL;
+	void __iomem *ctrl_reg = IREG_BASE(t7xx_dev) + T7XX_PCIE_MISC_CTRL;
 	u32 value;
 
 	value = ioread32(ctrl_reg);
 
 	if (enable)
-		value &= ~PCIE_MISC_MAC_SLEEP_DIS;
+		value &= ~T7XX_PCIE_MISC_MAC_SLEEP_DIS;
 	else
-		value |= PCIE_MISC_MAC_SLEEP_DIS;
+		value |= T7XX_PCIE_MISC_MAC_SLEEP_DIS;
 
 	iowrite32(value, ctrl_reg);
 }
@@ -82,9 +82,9 @@ static int t7xx_wait_pm_config(struct t7xx_pci_dev *t7xx_dev)
 	int ret, val;
 
 	ret = read_poll_timeout(ioread32, val,
-				(val & PCIE_RESOURCE_STATUS_MSK) == PCIE_RESOURCE_STATUS_MSK,
+				(val & T7XX_PCIE_RESOURCE_STS_MSK) == T7XX_PCIE_RESOURCE_STS_MSK,
 				PM_RESOURCE_POLL_STEP_US, PM_RESOURCE_POLL_TIMEOUT_US, true,
-				IREG_BASE(t7xx_dev) + PCIE_RESOURCE_STATUS);
+				IREG_BASE(t7xx_dev) + T7XX_PCIE_RESOURCE_STATUS);
 	if (ret == -ETIMEDOUT)
 		dev_err(&t7xx_dev->pdev->dev, "PM configuration timed out\n");
 
@@ -197,7 +197,7 @@ int t7xx_pci_sleep_disable_complete(struct t7xx_pci_dev *t7xx_dev)
 	int ret;
 
 	ret = wait_for_completion_timeout(&t7xx_dev->sleep_lock_acquire,
-					  msecs_to_jiffies(MTK_WAIT_TIMEOUT_MS));
+					  msecs_to_jiffies(PM_SLEEP_DIS_TIMEOUT_MS));
 	if (!ret)
 		dev_err_ratelimited(dev, "Resource wait complete timed out\n");
 
@@ -230,8 +230,8 @@ void t7xx_pci_disable_sleep(struct t7xx_pci_dev *t7xx_dev)
 		reinit_completion(&t7xx_dev->sleep_lock_acquire);
 		t7xx_dev_set_sleep_capability(t7xx_dev, false);
 
-		deep_sleep_enabled = ioread32(IREG_BASE(t7xx_dev) + PCIE_RESOURCE_STATUS);
-		deep_sleep_enabled &= PCIE_RESOURCE_STATUS_MSK;
+		deep_sleep_enabled = ioread32(IREG_BASE(t7xx_dev) + T7XX_PCIE_RESOURCE_STATUS);
+		deep_sleep_enabled &= T7XX_PCIE_RESOURCE_STS_MSK;
 		if (deep_sleep_enabled) {
 			spin_unlock_irqrestore(&t7xx_dev->md_pm_lock, flags);
 			complete_all(&t7xx_dev->sleep_lock_acquire);
@@ -240,7 +240,6 @@ void t7xx_pci_disable_sleep(struct t7xx_pci_dev *t7xx_dev)
 
 		t7xx_mhccif_h2d_swint_trigger(t7xx_dev, H2D_CH_DS_LOCK);
 	}
-
 	spin_unlock_irqrestore(&t7xx_dev->md_pm_lock, flags);
 }
 
@@ -266,82 +265,89 @@ void t7xx_pci_enable_sleep(struct t7xx_pci_dev *t7xx_dev)
 	}
 }
 
+static int t7xx_send_pm_request(struct t7xx_pci_dev *t7xx_dev, u32 request)
+{
+	unsigned long wait_ret;
+
+	reinit_completion(&t7xx_dev->pm_sr_ack);
+	t7xx_mhccif_h2d_swint_trigger(t7xx_dev, request);
+	wait_ret = wait_for_completion_timeout(&t7xx_dev->pm_sr_ack,
+					       msecs_to_jiffies(PM_ACK_TIMEOUT_MS));
+	if (!wait_ret)
+		return -ETIMEDOUT;
+
+	return 0;
+}
+
 static int __t7xx_pci_pm_suspend(struct pci_dev *pdev)
 {
+	enum t7xx_pm_id entity_id = PM_ENTITY_ID_INVALID;
 	struct t7xx_pci_dev *t7xx_dev;
 	struct md_pm_entity *entity;
-	unsigned long wait_ret;
-	enum t7xx_pm_id id;
-	int ret = 0;
+	int ret;
 
 	t7xx_dev = pci_get_drvdata(pdev);
 	if (atomic_read(&t7xx_dev->md_pm_state) <= MTK_PM_INIT) {
-		dev_err(&pdev->dev,
-			"[PM] Exiting suspend, because handshake failure or in an exception\n");
+		dev_err(&pdev->dev, "[PM] Exiting suspend, modem in invalid state\n");
 		return -EFAULT;
 	}
 
 	iowrite32(L1_DISABLE_BIT(0), IREG_BASE(t7xx_dev) + DIS_ASPM_LOWPWR_SET_0);
-
 	ret = t7xx_wait_pm_config(t7xx_dev);
-	if (ret)
+	if (ret) {
+		iowrite32(L1_DISABLE_BIT(0), IREG_BASE(t7xx_dev) + DIS_ASPM_LOWPWR_CLR_0);
 		return ret;
+	}
 
 	atomic_set(&t7xx_dev->md_pm_state, MTK_PM_SUSPENDED);
 	t7xx_pcie_mac_clear_int(t7xx_dev, SAP_RGU_INT);
 	t7xx_dev->rgu_pci_irq_en = false;
 
 	list_for_each_entry(entity, &t7xx_dev->md_pm_entities, entity) {
-		if (entity->suspend) {
-			ret = entity->suspend(t7xx_dev, entity->entity_param);
-			if (ret) {
-				id = entity->id;
-				break;
-			}
+		if (!entity->suspend)
+			continue;
+
+		ret = entity->suspend(t7xx_dev, entity->entity_param);
+		if (ret) {
+			entity_id = entity->id;
+			dev_err(&pdev->dev, "[PM] Suspend error: %d, id: %d\n", ret, entity_id);
+			goto abort_suspend;
 		}
 	}
 
+	ret = t7xx_send_pm_request(t7xx_dev, H2D_CH_SUSPEND_REQ);
 	if (ret) {
-		dev_err(&pdev->dev, "[PM] Suspend error: %d, id: %d\n", ret, id);
-
-		list_for_each_entry(entity, &t7xx_dev->md_pm_entities, entity) {
-			if (id == entity->id)
-				break;
-
-			if (entity->resume)
-				entity->resume(t7xx_dev, entity->entity_param);
-		}
-
-		goto suspend_complete;
+		dev_err(&pdev->dev, "[PM] MD suspend error: %d\n", ret);
+		goto abort_suspend;
 	}
 
-	reinit_completion(&t7xx_dev->pm_sr_ack);
-	t7xx_mhccif_h2d_swint_trigger(t7xx_dev, H2D_CH_SUSPEND_REQ);
-	wait_ret = wait_for_completion_timeout(&t7xx_dev->pm_sr_ack,
-					       msecs_to_jiffies(PM_ACK_TIMEOUT_MS));
-	if (!wait_ret)
-		dev_err(&pdev->dev, "[PM] Wait for device suspend ACK timeout-MD\n");
-
-	reinit_completion(&t7xx_dev->pm_sr_ack);
-	t7xx_mhccif_h2d_swint_trigger(t7xx_dev, H2D_CH_SUSPEND_REQ_AP);
-	wait_ret = wait_for_completion_timeout(&t7xx_dev->pm_sr_ack,
-					       msecs_to_jiffies(PM_ACK_TIMEOUT_MS));
-	if (!wait_ret)
-		dev_err(&pdev->dev, "[PM] Wait for device suspend ACK timeout-SAP\n");
+	ret = t7xx_send_pm_request(t7xx_dev, H2D_CH_SUSPEND_REQ_AP);
+	if (ret) {
+		t7xx_send_pm_request(t7xx_dev, H2D_CH_RESUME_REQ);
+		dev_err(&pdev->dev, "[PM] SAP suspend error: %d\n", ret);
+		goto abort_suspend;
+	}
 
 	list_for_each_entry(entity, &t7xx_dev->md_pm_entities, entity) {
 		if (entity->suspend_late)
 			entity->suspend_late(t7xx_dev, entity->entity_param);
 	}
 
-suspend_complete:
 	iowrite32(L1_DISABLE_BIT(0), IREG_BASE(t7xx_dev) + DIS_ASPM_LOWPWR_CLR_0);
+	return 0;
 
-	if (ret) {
-		atomic_set(&t7xx_dev->md_pm_state, MTK_PM_RESUMED);
-		t7xx_pcie_mac_set_int(t7xx_dev, SAP_RGU_INT);
+abort_suspend:
+	list_for_each_entry(entity, &t7xx_dev->md_pm_entities, entity) {
+		if (entity_id == entity->id)
+			break;
+
+		if (entity->resume)
+			entity->resume(t7xx_dev, entity->entity_param);
 	}
 
+	iowrite32(L1_DISABLE_BIT(0), IREG_BASE(t7xx_dev) + DIS_ASPM_LOWPWR_CLR_0);
+	atomic_set(&t7xx_dev->md_pm_state, MTK_PM_RESUMED);
+	t7xx_pcie_mac_set_int(t7xx_dev, SAP_RGU_INT);
 	return ret;
 }
 
@@ -411,7 +417,6 @@ static int __t7xx_pci_pm_resume(struct pci_dev *pdev, bool state_check)
 {
 	struct t7xx_pci_dev *t7xx_dev;
 	struct md_pm_entity *entity;
-	unsigned long wait_ret;
 	u32 prev_state;
 	int ret = 0;
 
@@ -422,7 +427,7 @@ static int __t7xx_pci_pm_resume(struct pci_dev *pdev, bool state_check)
 	}
 
 	t7xx_pcie_mac_interrupts_en(t7xx_dev);
-	prev_state = ioread32(IREG_BASE(t7xx_dev) + PCIE_PM_RESUME_STATE);
+	prev_state = ioread32(IREG_BASE(t7xx_dev) + T7XX_PCIE_PM_RESUME_STATE);
 
 	if (state_check) {
 		/* For D3/L3 resume, the device could boot so quickly that the
@@ -493,25 +498,19 @@ static int __t7xx_pci_pm_resume(struct pci_dev *pdev, bool state_check)
 			entity->resume_early(t7xx_dev, entity->entity_param);
 	}
 
-	reinit_completion(&t7xx_dev->pm_sr_ack);
-	t7xx_mhccif_h2d_swint_trigger(t7xx_dev, H2D_CH_RESUME_REQ);
-	wait_ret = wait_for_completion_timeout(&t7xx_dev->pm_sr_ack,
-					       msecs_to_jiffies(PM_ACK_TIMEOUT_MS));
-	if (!wait_ret)
-		dev_err(&pdev->dev, "[PM] Timed out waiting for device MD resume ACK\n");
+	ret = t7xx_send_pm_request(t7xx_dev, H2D_CH_RESUME_REQ);
+	if (ret)
+		dev_err(&pdev->dev, "[PM] MD resume error: %d\n", ret);
 
-	reinit_completion(&t7xx_dev->pm_sr_ack);
-	t7xx_mhccif_h2d_swint_trigger(t7xx_dev, H2D_CH_RESUME_REQ_AP);
-	wait_ret = wait_for_completion_timeout(&t7xx_dev->pm_sr_ack,
-					       msecs_to_jiffies(PM_ACK_TIMEOUT_MS));
-	if (!wait_ret)
-		dev_err(&pdev->dev, "[PM] Timed out waiting for device SAP resume ACK\n");
+	ret = t7xx_send_pm_request(t7xx_dev, H2D_CH_RESUME_REQ_AP);
+	if (ret)
+		dev_err(&pdev->dev, "[PM] SAP resume error: %d\n", ret);
 
 	list_for_each_entry(entity, &t7xx_dev->md_pm_entities, entity) {
 		if (entity->resume) {
 			ret = entity->resume(t7xx_dev, entity->entity_param);
 			if (ret)
-				dev_err(&pdev->dev, "[PM] Resume entry ID: %d err: %d\n",
+				dev_err(&pdev->dev, "[PM] Resume entry ID: %d error: %d\n",
 					entity->id, ret);
 		}
 	}
@@ -656,8 +655,8 @@ static int t7xx_interrupt_init(struct t7xx_pci_dev *t7xx_dev)
 		return ret;
 
 	/* IPs enable interrupts when ready */
-	for (i = EXT_INT_START; i < EXT_INT_START + EXT_INT_NUM; i++)
-		PCIE_MAC_MSIX_MSK_SET(t7xx_dev, i);
+	for (i = 0; i < EXT_INT_NUM; i++)
+		t7xx_pcie_mac_set_int(t7xx_dev, i);
 
 	return 0;
 }
@@ -735,7 +734,8 @@ static int t7xx_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	pci_set_master(pdev);
 
-	ret = pcim_iomap_regions(pdev, BIT(PCI_IREG_BASE) | BIT(PCI_EREG_BASE), pci_name(pdev));
+	ret = pcim_iomap_regions(pdev, BIT(T7XX_PCI_IREG_BASE) | BIT(T7XX_PCI_EREG_BASE),
+				 pci_name(pdev));
 	if (ret) {
 		dev_err(&pdev->dev, "Could not request BARs: %d\n", ret);
 		return -ENOMEM;
@@ -755,8 +755,8 @@ static int t7xx_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	pdev->current_state = PCI_D0;
 
-	IREG_BASE(t7xx_dev) = pcim_iomap_table(pdev)[PCI_IREG_BASE];
-	t7xx_dev->base_addr.pcie_ext_reg_base = pcim_iomap_table(pdev)[PCI_EREG_BASE];
+	IREG_BASE(t7xx_dev) = pcim_iomap_table(pdev)[T7XX_PCI_IREG_BASE];
+	t7xx_dev->base_addr.pcie_ext_reg_base = pcim_iomap_table(pdev)[T7XX_PCI_EREG_BASE];
 
 	ret = t7xx_pci_pm_init(t7xx_dev);
 	if (ret)
@@ -773,8 +773,10 @@ static int t7xx_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	t7xx_pcie_mac_interrupts_dis(t7xx_dev);
 
 	ret = t7xx_interrupt_init(t7xx_dev);
-	if (ret)
+	if (ret) {
+		t7xx_md_exit(t7xx_dev);
 		return ret;
+	}
 
 	mtk_rescan_done();
 
@@ -789,6 +791,8 @@ static int t7xx_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	pci_set_master(pdev);
 	if (!t7xx_dev->hp_enable)
 		pci_ignore_hotplug(pdev);
+
+	t7xx_devlink_flash_debugfs_create();
 
 	return 0;
 }
@@ -810,6 +814,7 @@ static void t7xx_pci_remove(struct pci_dev *pdev)
 
 	kobject_put(pcie_drv_info_kobj);
 	pci_free_irq_vectors(t7xx_dev->pdev);
+	t7xx_devlink_flash_debugfs_remove();
 }
 
 static const struct pci_device_id t7xx_pci_table[] = {

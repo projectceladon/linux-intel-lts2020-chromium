@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -16,7 +16,6 @@
 
 #include <linux/bits.h>
 #include <linux/bitops.h>
-#include <linux/dev_printk.h>
 #include <linux/device.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include <linux/pci.h>
@@ -27,18 +26,18 @@
 #include "t7xx_pcie_mac.h"
 #include "t7xx_reg.h"
 
-#define PCIE_REG_BAR			2
-#define PCIE_REG_PORT			ATR_SRC_PCI_WIN0
-#define PCIE_REG_TABLE_NUM		0
-#define PCIE_REG_TRSL_PORT		ATR_DST_AXIM_0
+#define T7XX_PCIE_REG_BAR		2
+#define T7XX_PCIE_REG_PORT		ATR_SRC_PCI_WIN0
+#define T7XX_PCIE_REG_TABLE_NUM		0
+#define T7XX_PCIE_REG_TRSL_PORT		ATR_DST_AXIM_0
 
-#define PCIE_DEV_DMA_PORT_START		ATR_SRC_AXIS_0
-#define PCIE_DEV_DMA_PORT_END		ATR_SRC_AXIS_2
-#define PCIE_DEV_DMA_TABLE_NUM		0
-#define PCIE_DEV_DMA_TRSL_ADDR		0
-#define PCIE_DEV_DMA_SRC_ADDR		0
-#define PCIE_DEV_DMA_TRANSPARENT	1
-#define PCIE_DEV_DMA_SIZE		0
+#define T7XX_PCIE_DEV_DMA_PORT_START	ATR_SRC_AXIS_0
+#define T7XX_PCIE_DEV_DMA_PORT_END	ATR_SRC_AXIS_2
+#define T7XX_PCIE_DEV_DMA_TABLE_NUM	0
+#define T7XX_PCIE_DEV_DMA_TRSL_ADDR	0
+#define T7XX_PCIE_DEV_DMA_SRC_ADDR	0
+#define T7XX_PCIE_DEV_DMA_TRANSPARENT	1
+#define T7XX_PCIE_DEV_DMA_SIZE		0
 
 enum t7xx_atr_src_port {
 	ATR_SRC_PCI_WIN0,
@@ -144,26 +143,26 @@ void t7xx_pcie_mac_atr_init(struct t7xx_pci_dev *t7xx_dev)
 
 	memset(&cfg, 0, sizeof(cfg));
 	/* Config ATR for RC to access device's register */
-	cfg.src_addr = pci_resource_start(t7xx_dev->pdev, PCIE_REG_BAR);
-	cfg.size = PCIE_REG_SIZE_CHIP;
-	cfg.trsl_addr = PCIE_REG_TRSL_ADDR_CHIP;
-	cfg.port = PCIE_REG_PORT;
-	cfg.table = PCIE_REG_TABLE_NUM;
-	cfg.trsl_id = PCIE_REG_TRSL_PORT;
+	cfg.src_addr = pci_resource_start(t7xx_dev->pdev, T7XX_PCIE_REG_BAR);
+	cfg.size = T7XX_PCIE_REG_SIZE_CHIP;
+	cfg.trsl_addr = T7XX_PCIE_REG_TRSL_ADDR_CHIP;
+	cfg.port = T7XX_PCIE_REG_PORT;
+	cfg.table = T7XX_PCIE_REG_TABLE_NUM;
+	cfg.trsl_id = T7XX_PCIE_REG_TRSL_PORT;
 	t7xx_pcie_mac_atr_tables_dis(IREG_BASE(t7xx_dev), cfg.port);
 	t7xx_pcie_mac_atr_cfg(t7xx_dev, &cfg);
 
-	t7xx_dev->base_addr.pcie_dev_reg_trsl_addr = PCIE_REG_TRSL_ADDR_CHIP;
+	t7xx_dev->base_addr.pcie_dev_reg_trsl_addr = T7XX_PCIE_REG_TRSL_ADDR_CHIP;
 
 	/* Config ATR for EP to access RC's memory */
-	for (i = PCIE_DEV_DMA_PORT_START; i <= PCIE_DEV_DMA_PORT_END; i++) {
-		cfg.src_addr = PCIE_DEV_DMA_SRC_ADDR;
-		cfg.size = PCIE_DEV_DMA_SIZE;
-		cfg.trsl_addr = PCIE_DEV_DMA_TRSL_ADDR;
+	for (i = T7XX_PCIE_DEV_DMA_PORT_START; i <= T7XX_PCIE_DEV_DMA_PORT_END; i++) {
+		cfg.src_addr = T7XX_PCIE_DEV_DMA_SRC_ADDR;
+		cfg.size = T7XX_PCIE_DEV_DMA_SIZE;
+		cfg.trsl_addr = T7XX_PCIE_DEV_DMA_TRSL_ADDR;
 		cfg.port = i;
-		cfg.table = PCIE_DEV_DMA_TABLE_NUM;
+		cfg.table = T7XX_PCIE_DEV_DMA_TABLE_NUM;
 		cfg.trsl_id = ATR_DST_PCI_TRX;
-		cfg.transparent = PCIE_DEV_DMA_TRANSPARENT;
+		cfg.transparent = T7XX_PCIE_DEV_DMA_TRANSPARENT;
 		t7xx_pcie_mac_atr_tables_dis(IREG_BASE(t7xx_dev), cfg.port);
 		t7xx_pcie_mac_atr_cfg(t7xx_dev, &cfg);
 	}
@@ -209,33 +208,26 @@ void t7xx_pcie_mac_interrupts_dis(struct t7xx_pci_dev *t7xx_dev)
  * Clear or set device interrupt by type.
  */
 static void t7xx_pcie_mac_clear_set_int(struct t7xx_pci_dev *t7xx_dev,
-					enum pcie_int int_type, bool clear)
+					enum t7xx_int int_type, bool clear)
 {
 	void __iomem *reg;
 	u32 val;
 
-	if (t7xx_dev->pdev->msix_enabled) {
-		if (clear)
-			reg = IREG_BASE(t7xx_dev) + IMASK_HOST_MSIX_CLR_GRP0_0;
-		else
-			reg = IREG_BASE(t7xx_dev) + IMASK_HOST_MSIX_SET_GRP0_0;
-	} else {
-		if (clear)
-			reg = IREG_BASE(t7xx_dev) + INT_EN_HST_CLR;
-		else
-			reg = IREG_BASE(t7xx_dev) + INT_EN_HST_SET;
-	}
+	if (clear)
+		reg = IREG_BASE(t7xx_dev) + IMASK_HOST_MSIX_CLR_GRP0_0;
+	else
+		reg = IREG_BASE(t7xx_dev) + IMASK_HOST_MSIX_SET_GRP0_0;
 
 	val = BIT(EXT_INT_START + int_type);
 	iowrite32(val, reg);
 }
 
-void t7xx_pcie_mac_clear_int(struct t7xx_pci_dev *t7xx_dev, enum pcie_int int_type)
+void t7xx_pcie_mac_clear_int(struct t7xx_pci_dev *t7xx_dev, enum t7xx_int int_type)
 {
 	t7xx_pcie_mac_clear_set_int(t7xx_dev, int_type, true);
 }
 
-void t7xx_pcie_mac_set_int(struct t7xx_pci_dev *t7xx_dev, enum pcie_int int_type)
+void t7xx_pcie_mac_set_int(struct t7xx_pci_dev *t7xx_dev, enum t7xx_int int_type)
 {
 	t7xx_pcie_mac_clear_set_int(t7xx_dev, int_type, false);
 }
@@ -247,17 +239,11 @@ void t7xx_pcie_mac_set_int(struct t7xx_pci_dev *t7xx_dev, enum pcie_int int_type
  *
  * Enable or disable device interrupts' status by type.
  */
-void t7xx_pcie_mac_clear_int_status(struct t7xx_pci_dev *t7xx_dev, enum pcie_int int_type)
+void t7xx_pcie_mac_clear_int_status(struct t7xx_pci_dev *t7xx_dev, enum t7xx_int int_type)
 {
-	void __iomem *reg;
-	u32 val;
+	void __iomem *reg = IREG_BASE(t7xx_dev) + MSIX_ISTAT_HST_GRP0_0;
+	u32 val = BIT(EXT_INT_START + int_type);
 
-	if (t7xx_dev->pdev->msix_enabled)
-		reg = IREG_BASE(t7xx_dev) + MSIX_ISTAT_HST_GRP0_0;
-	else
-		reg = IREG_BASE(t7xx_dev) + ISTAT_HST;
-
-	val = BIT(EXT_INT_START + int_type);
 	iowrite32(val, reg);
 }
 
@@ -273,5 +259,5 @@ void t7xx_pcie_set_mac_msix_cfg(struct t7xx_pci_dev *t7xx_dev, unsigned int irq_
 	u32 val;
 
 	val = ffs(irq_count) * 2 - 1;
-	iowrite32(val, IREG_BASE(t7xx_dev) + PCIE_CFG_MSIX);
+	iowrite32(val, IREG_BASE(t7xx_dev) + T7XX_PCIE_CFG_MSIX);
 }

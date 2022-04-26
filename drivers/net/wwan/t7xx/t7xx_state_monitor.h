@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Amir Hanania <amir.hanania@intel.com>
@@ -125,7 +125,7 @@ void t7xx_fsm_broadcast_state(struct t7xx_fsm_ctl *ctl, enum md_state state);
 void t7xx_fsm_reset(struct t7xx_modem *md);
 int t7xx_fsm_init(struct t7xx_modem *md);
 void t7xx_fsm_uninit(struct t7xx_modem *md);
-void t7xx_fsm_recv_md_intr(struct t7xx_fsm_ctl *ctl, enum t7xx_md_irq_type type);
+int t7xx_fsm_recv_md_intr(struct t7xx_fsm_ctl *ctl, enum t7xx_md_irq_type type);
 enum md_state t7xx_fsm_get_md_state(struct t7xx_fsm_ctl *ctl);
 unsigned int t7xx_fsm_get_ctl_state(struct t7xx_fsm_ctl *ctl);
 void t7xx_fsm_notifier_register(struct t7xx_modem *md, struct t7xx_fsm_notifier *notifier);

@@ -42,9 +42,9 @@ struct rkvdec_run {
 
 struct rkvdec_vp9_decoded_buffer_info {
 	/* Info needed when the decoded frame serves as a reference frame. */
-	u16 width;
-	u16 height;
-	u32 bit_depth : 4;
+	unsigned short width;
+	unsigned short height;
+	unsigned int bit_depth : 4;
 };
 
 struct rkvdec_decoded_buffer {

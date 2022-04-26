@@ -2068,7 +2068,6 @@ static atomic_t kvm_guest_has_master_clock = ATOMIC_INIT(0);
 #endif
 
 static DEFINE_PER_CPU(unsigned long, cpu_tsc_khz);
-static DEFINE_PER_CPU(unsigned long, cpu_tsc_khz_changed);
 static unsigned long max_tsc_khz;
 
 static u32 adjust_tsc_khz(u32 khz, s32 ppm)
@@ -2707,14 +2706,6 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 		kvm_make_request(KVM_REQ_CLOCK_UPDATE, v);
 		return 1;
 	}
-	/*
-	 * Use the refined tsc_khz instead of the tsc_khz at boot (which was
-	 * not refined yet when we got it), if the tsc frequency hasn't changed.
-	 * If the frequency does change, it does not get refined any further,
-	 * so it is safe ot use the one gotten from the notifiers.
-	 */
-	if (!__this_cpu_read(cpu_tsc_khz_changed))
-		tgt_tsc_khz = tsc_khz;
 	if (!use_master_clock) {
 		host_tsc = rdtsc();
 		kernel_ns = get_kvmclock_base_ns();
@@ -3274,11 +3265,7 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_KVM_HOST_SUSPEND_TIME:
 		if (!(data & KVM_MSR_ENABLED))
 			break;
-
-		if (kvm_init_suspend_time_ghc(vcpu->kvm, data & ~1ULL))
-			return 1;
-
-		vcpu->kvm->arch.msr_suspend_time = data;
+		kvm_init_suspend_time_ghc(vcpu->kvm, data);
 		break;
 	case MSR_IA32_MCG_CTL:
 	case MSR_IA32_MCG_STATUS:
@@ -7732,8 +7719,6 @@ static void tsc_khz_changed(void *data)
 		khz = freq->new;
 	else if (!boot_cpu_has(X86_FEATURE_CONSTANT_TSC))
 		khz = cpufreq_quick_get(raw_smp_processor_id());
-	if (khz)
-		__this_cpu_write(cpu_tsc_khz_changed, true);
 	if (!khz)
 		khz = tsc_khz;
 	__this_cpu_write(cpu_tsc_khz, khz);
@@ -7881,13 +7866,15 @@ static int kvmclock_cpu_online(unsigned int cpu)
 
 static void kvm_timer_init(void)
 {
-	max_tsc_khz = tsc_khz;
-
 	if (!boot_cpu_has(X86_FEATURE_CONSTANT_TSC)) {
 #ifdef CONFIG_CPU_FREQ
 		struct cpufreq_policy *policy;
 		int cpu;
+#endif
 
+		max_tsc_khz = tsc_khz;
+
+#ifdef CONFIG_CPU_FREQ
 		cpu = get_cpu();
 		policy = cpufreq_cpu_get(cpu);
 		if (policy) {
@@ -8160,6 +8147,13 @@ static int kvm_pv_clock_pairing(struct kvm_vcpu *vcpu, gpa_t paddr,
 	int ret;
 
 	if (clock_type != KVM_CLOCK_PAIRING_WALLCLOCK)
+		return -KVM_EOPNOTSUPP;
+
+	/*
+	 * When tsc is in permanent catchup mode guests won't be able to use
+	 * pvclock_read_retry loop to get consistent view of pvclock
+	 */
+	if (vcpu->arch.tsc_always_catchup)
 		return -KVM_EOPNOTSUPP;
 
 	if (kvm_get_walltime_and_clockread(&ts, &cycle) == false)
@@ -10134,7 +10128,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 	else
 		vcpu->arch.mp_state = KVM_MP_STATE_UNINITIALIZED;
 
-	kvm_set_tsc_khz(vcpu, max_tsc_khz);
+	kvm_set_tsc_khz(vcpu, max_tsc_khz ? : tsc_khz);
 
 	r = kvm_mmu_create(vcpu);
 	if (r < 0)

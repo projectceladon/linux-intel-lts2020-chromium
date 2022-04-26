@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -37,9 +37,11 @@
 #define PORT_F_RX_EXCLUSIVE	BIT(3)	/* RX queue only has this one port */
 #define PORT_F_RX_ADJUST_HEADER	BIT(4)	/* Check whether need remove CCCI header while recv skb */
 #define PORT_F_RX_CH_TRAFFIC	BIT(5)	/* Enable port channel traffic */
+#define PORT_F_DUMP_RAW_DATA    BIT(6)  /* Dump raw data if CH_TRAFFIC set : Added for the devlink changes */
 #define PORT_F_RX_CHAR_NODE	BIT(7)	/* Requires exporting char dev node to userspace */
 #define PORT_F_RAW_DATA		BIT(9)
 #define PORT_F_CHAR_NODE_SHOW	BIT(10)	/* The char dev node is shown to userspace by default */
+#define PORT_F_MAX		BIT(11)
 
 /* Reused for net TX, Data queue, same bit as RX_FULLED */
 #define PORT_F_TX_DATA_FULLED	BIT(1)
@@ -54,6 +56,8 @@
  * 0:reserved, 1: to sAP, 2: to MD
  */
 enum port_ch {
+	/* Added for the devlink coredump changes */
+	CCCI_FS_RX = 0xe,
 
 	/* to sAP */
 	CCCI_SAP_CONTROL_RX = 0X1000,
@@ -111,7 +115,7 @@ struct port_ops {
 	int (*disable_chl)(struct t7xx_port *port);
 };
 
-typedef void (*port_skb_handler)(struct t7xx_port *port, struct sk_buff *skb);
+typedef int (*port_skb_handler)(struct t7xx_port *port, struct sk_buff *skb);
 
 struct t7xx_port_static {
 	enum port_ch		tx_ch;
@@ -136,7 +140,7 @@ struct t7xx_port {
 	struct wwan_port	*wwan_port;
 	struct t7xx_pci_dev	*t7xx_dev;
 	struct device		*dev;
-	short			seq_nums[2];
+	u16			seq_nums[2];	/* TX/RX sequence numbers */
 	atomic_t		usage_cnt;
 	struct			list_head entry;
 	struct			list_head queue_entry;
@@ -158,14 +162,19 @@ struct t7xx_port {
 	bool			chan_enable;
 	bool			chn_crt_stat;
 	struct task_struct	*thread;
-	struct mutex		tx_mutex_lock; /* Protects the seq number operation */
 	unsigned int		flags;
 	struct cdev		*cdev;
-	struct port_proxy  *port_proxy;
+#ifdef CONFIG_WWAN_DEBUGFS
+	struct t7xx_trace	*trace;
+	struct dentry		*debugfs_dir;
+#endif
+	struct port_proxy	*port_proxy;
+	struct t7xx_devlink	*dl;
+	struct mutex		tx_mutex_lock;
 };
 
 int t7xx_port_recv_skb(struct t7xx_port *port, struct sk_buff *skb);
-int t7xx_port_send_skb_to_md(struct t7xx_port *port, struct sk_buff *skb, bool blocking);
+int t7xx_port_send_skb_to_md(struct t7xx_port *port, struct sk_buff *skb);
 int port_register_device(const char *name, int major, int minor);
 void port_unregister_device(int major, int minor);
 int t7xx_port_write_room_to_md(struct t7xx_port *port);

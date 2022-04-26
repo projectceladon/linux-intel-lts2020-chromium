@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -53,7 +53,6 @@
 #define REG_CLDMA_UL_CURRENT_ADDRL_0	0x0044
 #define REG_CLDMA_UL_CURRENT_ADDRH_0	0x0048
 #define REG_CLDMA_UL_STATUS		0x0084
-#define CLDMA_INVALID_STATUS		GENMASK(31, 0)
 #define REG_CLDMA_UL_START_CMD		0x0088
 #define REG_CLDMA_UL_RESUME_CMD		0x008c
 #define REG_CLDMA_UL_STOP_CMD		0x0090
@@ -164,7 +163,7 @@ void t7xx_cldma_hw_start(struct t7xx_cldma_hw *hw_info);
 void t7xx_cldma_hw_start_queue(struct t7xx_cldma_hw *hw_info, u8 qno, enum mtk_txrx tx_rx);
 void t7xx_cldma_hw_tx_done(struct t7xx_cldma_hw *hw_info, unsigned int bitmask);
 void t7xx_cldma_hw_rx_done(struct t7xx_cldma_hw *hw_info, unsigned int bitmask);
-void t7xx_cldma_hw_stop_queue(struct t7xx_cldma_hw *hw_info, u8 qno, enum mtk_txrx tx_rx);
+void t7xx_cldma_hw_stop_all_qs(struct t7xx_cldma_hw *hw_info, enum mtk_txrx tx_rx);
 void t7xx_cldma_hw_set_start_addr(struct t7xx_cldma_hw *hw_info,
 				  unsigned char qno, u64 address, enum mtk_txrx tx_rx);
 void t7xx_cldma_hw_reset(void __iomem *ao_base);

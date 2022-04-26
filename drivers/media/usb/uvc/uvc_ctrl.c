@@ -1741,6 +1741,7 @@ int uvc_ctrl_set(struct uvc_fh *handle,
 	/* Clamp out of range values. */
 	switch (mapping->v4l2_type) {
 	case V4L2_CTRL_TYPE_INTEGER:
+	case V4L2_CTRL_TYPE_BITMASK:
 		if (!ctrl->cached) {
 			ret = uvc_ctrl_populate_cache(chain, ctrl);
 			if (ret < 0)
@@ -2388,14 +2389,8 @@ static void uvc_ctrl_prune_entity(struct uvc_device *dev,
 
 static int uvc_ctrl_init_roi(struct uvc_device *dev, struct uvc_control *ctrl)
 {
-	const u8 entity[16] = UVC_GUID_UVC_CAMERA;
 	struct uvc_roi *def;
 	int ret;
-
-	if (ctrl->info.selector != UVC_CT_REGION_OF_INTEREST_CONTROL ||
-	    !uvc_entity_match_guid(ctrl->entity, entity) ||
-	    !(dev->quirks & UVC_QUIRK_REINIT_ROI))
-		return 0;
 
 	if (WARN_ON(sizeof(struct uvc_roi) != ctrl->info.size))
 		return -EINVAL;
@@ -2473,6 +2468,7 @@ static void uvc_ctrl_init_ctrl(struct uvc_video_chain *chain,
 	const struct uvc_control_mapping *mapping = uvc_ctrl_mappings;
 	const struct uvc_control_mapping *mend =
 		mapping + ARRAY_SIZE(uvc_ctrl_mappings);
+	const u8 camera_entity[16] = UVC_GUID_UVC_CAMERA;
 
 	/* XU controls initialization requires querying the device for control
 	 * information. As some buggy UVC devices will crash when queried
@@ -2493,7 +2489,9 @@ static void uvc_ctrl_init_ctrl(struct uvc_video_chain *chain,
 			 * GET_INFO on standard controls.
 			 */
 			uvc_ctrl_get_flags(chain->dev, ctrl, &ctrl->info);
-			uvc_ctrl_init_roi(chain->dev, ctrl);
+			if (ctrl->info.selector == UVC_CT_REGION_OF_INTEREST_CONTROL &&
+			    uvc_entity_match_guid(ctrl->entity, camera_entity))
+				uvc_ctrl_init_roi(chain->dev, ctrl);
 			break;
 		 }
 	}

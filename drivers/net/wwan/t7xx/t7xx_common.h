@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -34,9 +34,7 @@ enum mtk_txrx {
 	MTK_RX,
 };
 
-#define TXQ_TYPE_DEFAULT	0
-
-#define CLDMA_NUM 2
+#define TX_DEFAULT_QUEUE	0
 
 #define MTK_SKB_64K		64528		/* 63kB + CCCI header */
 #define MTK_SKB_4K		3584		/* 3.5kB */
@@ -54,29 +52,16 @@ enum mtk_txrx {
 /* Coupled with HW - indicates if there is data following the CCCI header or not */
 #define CCCI_HEADER_NO_DATA	0xffffffff
 
-/* Control identification numbers for AP<->MD messages  */
-#define CTL_ID_HS1_MSG		0x0
-#define CTL_ID_HS2_MSG		0x1
-#define CTL_ID_HS3_MSG		0x2
-#define CTL_ID_MD_EX		0x4
-#define CTL_ID_DRV_VER_ERROR	0x5
-#define CTL_ID_MD_EX_ACK	0x6
-#define CTL_ID_MD_EX_PASS	0x8
-#define CTL_ID_PORT_ENUM	0x9
-
-/* Modem exception check identification code - "EXCP" */
-#define MD_EX_CHK_ID		0x45584350
-/* Modem exception check acknowledge identification code - "EREC" */
-#define MD_EX_CHK_ACK_ID	0x45524543
+#define CCCI_H_AST_BIT		BIT(31)
+#define CCCI_H_SEQ_FLD		GENMASK(30, 16)
+#define CCCI_H_CHN_FLD		GENMASK(15, 0)
 
 enum md_state {
-	MD_STATE_INVALID,		/* No traffic */
-	MD_STATE_GATED,			/* No traffic */
+	MD_STATE_INVALID,
 	MD_STATE_WAITING_FOR_HS1,
 	MD_STATE_WAITING_FOR_HS2,
 	MD_STATE_READY,
 	MD_STATE_EXCEPTION,
-	MD_STATE_RESET,			/* No traffic */
 	MD_STATE_WAITING_TO_STOP,
 	MD_STATE_STOPPED,
 };

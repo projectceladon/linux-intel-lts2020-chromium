@@ -152,9 +152,10 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 			       size_t count, loff_t *ppos)
 {
 	size_t actual_count, alloc_size, txq_mtu;
+	struct t7xx_port_static *port_static;
+	struct cldma_ctrl *md_ctrl;
 	int i, multi_packet = 1;
 	struct t7xx_port *port;
-	struct t7xx_port_static *port_static;
 	enum md_state md_state;
 	struct sk_buff *skb;
 	bool blocking;
@@ -174,7 +175,9 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 	if (t7xx_port_write_room_to_md(port) <= 0 && !blocking)
 		return -EAGAIN;
 
-	txq_mtu = cldma_txq_mtu(port_static->txq_index);
+	md_ctrl = port->t7xx_dev->md->md_ctrl[port_static->path_id];
+
+	txq_mtu = cldma_txq_mtu(md_ctrl, port_static->txq_index);
 	if (port_static->flags & PORT_F_RAW_DATA || port_static->flags & PORT_F_USER_HEADER) {
 		if (port_static->flags & PORT_F_USER_HEADER && count > txq_mtu) {
 			dev_err(port->dev, "packet size: %zu larger than MTU on %s\n",
@@ -194,7 +197,7 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 					(txq_mtu - CCCI_H_ELEN);
 		}
 	}
-	mutex_lock(&port->tx_mutex_lock);
+
 	for (i = 0; i < multi_packet; i++) {
 		struct ccci_header *ccci_h = NULL;
 
@@ -232,7 +235,8 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 					ccci_h->packet_len = cpu_to_le32(actual_count);
 
 				ccci_h->status &= cpu_to_le32(~HDR_FLD_CHN);
-				ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN, port_static->tx_ch));
+				ccci_h->status |= cpu_to_le32(FIELD_PREP(HDR_FLD_CHN,
+									 port_static->tx_ch));
 			}
 		} else {
 			/* ccci_header is provided by driver */
@@ -253,8 +257,9 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 		}
 
 		/* send out */
-		t7xx_port_proxy_set_seq_num(port, ccci_h);
-		ret = t7xx_port_send_skb_to_md(port, skb, blocking);
+		t7xx_port_proxy_set_tx_seq_num(port, ccci_h);
+		//FIXME: Do we need to bring back the blocking option?
+		ret = t7xx_port_send_skb_to_md(port, skb);
 		if (ret) {
 			if (ret == -EBUSY && !blocking)
 				ret = -EAGAIN;
@@ -267,17 +272,13 @@ static ssize_t port_char_write(struct file *file, const char __user *buf,
 			port->seq_nums[MTK_TX]++;
 		}
 
-		if (multi_packet == 1) {
-			mutex_unlock(&port->tx_mutex_lock);
+		if (multi_packet == 1)
 			return actual_count;
-		} else if (multi_packet == i + 1) {
-			mutex_unlock(&port->tx_mutex_lock);
+		else if (multi_packet == i + 1)
 			return count;
-		}
 	}
 
 err_out:
-	mutex_unlock(&port->tx_mutex_lock);
 	dev_err(port->dev, "write error done on %s, size: %zu, ret: %d\n",
 		port_static->name, actual_count, ret);
 	dev_kfree_skb(skb);
@@ -306,7 +307,8 @@ static int port_char_init(struct t7xx_port *port)
 
 		dev->ops = &char_fops;
 		dev->owner = THIS_MODULE;
-		if (cdev_add(dev, MKDEV(port_static->major, port_static->minor_base + port_static->minor), 1)) {
+		if (cdev_add(dev, MKDEV(port_static->major,
+					port_static->minor_base + port_static->minor), 1)) {
 			kobject_put(&dev->kobj);
 			return -ENOMEM;
 		}
@@ -331,7 +333,8 @@ static void port_char_uninit(struct t7xx_port *port)
 
 	if (port->flags & PORT_F_RX_CHAR_NODE && port->cdev) {
 		if (port->chn_crt_stat == CCCI_CHAN_ENABLE) {
-			port_unregister_device(port_static->major, port_static->minor_base + port_static->minor);
+			port_unregister_device(port_static->major,
+					       port_static->minor_base + port_static->minor);
 			spin_lock(&port->port_update_lock);
 			port->chn_crt_stat = CCCI_CHAN_DISABLE;
 			spin_unlock(&port->port_update_lock);
@@ -353,9 +356,10 @@ static int port_char_recv_skb(struct t7xx_port *port, struct sk_buff *skb)
 	struct t7xx_port_static *port_static = port->port_static;
 
 	if ((port_static->flags & PORT_F_RX_CHAR_NODE) && !atomic_read(&port->usage_cnt)) {
+		dev_kfree_skb_any(skb);
 		dev_err_ratelimited(port->dev,
 				    "port %s is not opened, dropping packets\n", port_static->name);
-		return -ENETDOWN;
+		return 0;
 	}
 	return t7xx_port_recv_skb(port, skb);
 }
@@ -364,8 +368,13 @@ static int port_status_update(struct t7xx_port *port)
 {
 	struct t7xx_port_static *port_static = port->port_static;
 
-	if (!(port_static->flags & PORT_F_RX_CHAR_NODE))
+	if (!(port_static->flags & PORT_F_RX_CHAR_NODE) || port->chn_crt_stat == port->chan_enable)
 		return 0;
+
+	/* Updating the channel status before the register to diverge the following calls */
+	spin_lock(&port->port_update_lock);
+	port->chn_crt_stat = !port->chn_crt_stat;
+	spin_unlock(&port->port_update_lock);
 
 	if (port->chan_enable == CCCI_CHAN_ENABLE) {
 		int ret;
@@ -373,22 +382,19 @@ static int port_status_update(struct t7xx_port *port)
 		port_static->flags &= ~PORT_F_RX_ALLOW_DROP;
 		ret = port_register_device(port_static->name, port_static->major,
 					   port_static->minor_base + port_static->minor);
-		if (ret)
+		if (ret) {
+			spin_lock(&port->port_update_lock);
+			port->chn_crt_stat = !port->chn_crt_stat;
+			spin_unlock(&port->port_update_lock);
 			return ret;
-
+		}
 		port_proxy_broadcast_state(port, MTK_PORT_STATE_ENABLE);
-		spin_lock(&port->port_update_lock);
-		port->chn_crt_stat = CCCI_CHAN_ENABLE;
-		spin_unlock(&port->port_update_lock);
 
 		return 0;
 	}
 
 	port_static->flags |= PORT_F_RX_ALLOW_DROP;
 	port_unregister_device(port_static->major, port_static->minor_base + port_static->minor);
-	spin_lock(&port->port_update_lock);
-	port->chn_crt_stat = CCCI_CHAN_DISABLE;
-	spin_unlock(&port->port_update_lock);
 	return port_proxy_broadcast_state(port, MTK_PORT_STATE_DISABLE);
 }
 
@@ -397,10 +403,8 @@ static int port_char_enable_chl(struct t7xx_port *port)
 	spin_lock(&port->port_update_lock);
 	port->chan_enable = CCCI_CHAN_ENABLE;
 	spin_unlock(&port->port_update_lock);
-	if (port->chn_crt_stat != port->chan_enable)
-		return port_status_update(port);
 
-	return 0;
+	return port_status_update(port);
 }
 
 static int port_char_disable_chl(struct t7xx_port *port)
@@ -408,10 +412,8 @@ static int port_char_disable_chl(struct t7xx_port *port)
 	spin_lock(&port->port_update_lock);
 	port->chan_enable = CCCI_CHAN_DISABLE;
 	spin_unlock(&port->port_update_lock);
-	if (port->chn_crt_stat != port->chan_enable)
-		return port_status_update(port);
 
-	return 0;
+	return port_status_update(port);
 }
 
 static void port_char_md_state_notify(struct t7xx_port *port, unsigned int state)

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -44,27 +44,31 @@ static void t7xx_mhccif_clear_interrupts(struct t7xx_pci_dev *t7xx_dev, u32 mask
 static irqreturn_t t7xx_mhccif_isr_thread(int irq, void *data)
 {
 	struct t7xx_pci_dev *t7xx_dev = data;
-	u32 int_sts, val;
+	u32 int_status, val;
 
 	val = L1_1_DISABLE_BIT(1) | L1_2_DISABLE_BIT(1);
 	iowrite32(val, IREG_BASE(t7xx_dev) + DIS_ASPM_LOWPWR_SET_0);
 
-	int_sts = t7xx_mhccif_read_sw_int_sts(t7xx_dev);
-	if (int_sts & t7xx_dev->mhccif_bitmask)
-		t7xx_pci_mhccif_isr(t7xx_dev);
+	int_status = t7xx_mhccif_read_sw_int_sts(t7xx_dev);
+	if (int_status & D2H_SW_INT_MASK) {
+		int ret = t7xx_pci_mhccif_isr(t7xx_dev);
 
-	t7xx_mhccif_clear_interrupts(t7xx_dev, int_sts);
+		if (ret)
+			dev_err(&t7xx_dev->pdev->dev, "PCI MHCCIF ISR failure: %d", ret);
+	}
 
-	if (int_sts & D2H_INT_DS_LOCK_ACK)
+	t7xx_mhccif_clear_interrupts(t7xx_dev, int_status);
+
+	if (int_status & D2H_INT_DS_LOCK_ACK)
 		complete_all(&t7xx_dev->sleep_lock_acquire);
 
-	if (int_sts & D2H_INT_SR_ACK)
+	if (int_status & D2H_INT_SR_ACK)
 		complete(&t7xx_dev->pm_sr_ack);
 
 	iowrite32(L1_DISABLE_BIT(1), IREG_BASE(t7xx_dev) + DIS_ASPM_LOWPWR_CLR_0);
 
-	int_sts = t7xx_mhccif_read_sw_int_sts(t7xx_dev);
-	if (!int_sts) {
+	int_status = t7xx_mhccif_read_sw_int_sts(t7xx_dev);
+	if (!int_status) {
 		val = L1_1_DISABLE_BIT(1) | L1_2_DISABLE_BIT(1);
 		iowrite32(val, IREG_BASE(t7xx_dev) + DIS_ASPM_LOWPWR_CLR_0);
 	}

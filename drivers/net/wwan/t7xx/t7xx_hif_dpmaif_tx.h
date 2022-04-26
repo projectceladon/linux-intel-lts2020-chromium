@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
@@ -25,21 +25,18 @@
 #include "t7xx_common.h"
 #include "t7xx_hif_dpmaif.h"
 
-/* SKB control buffer indexed values */
-#define TX_CB_NETIF_IDX		0
-#define TX_CB_QTYPE		1
-#define TX_CB_DRB_CNT		2
+#define DPMAIF_TX_DEFAULT_QUEUE	0
 
 /* UL DRB */
 struct dpmaif_drb_pd {
-	__le32			header;
-	__le32			p_data_addr;
-	__le32			data_addr_ext;
-	__le32			reserved2;
+	__le32	header;
+	__le32	p_data_addr;
+	__le32	data_addr_ext;
+	__le32	reserved2;
 };
 
 /* Header fields */
-#define DRB_PD_DATA_LEN		((u32)GENMASK(31, 16))
+#define DRB_PD_DATA_LEN		GENMASK(31, 16)
 #define DRB_PD_RES		GENMASK(15, 3)
 #define DRB_PD_CONT		BIT(2)
 #define DRB_PD_DTYP		GENMASK(1, 0)
@@ -67,16 +64,14 @@ struct dpmaif_drb_msg {
 struct dpmaif_drb_skb {
 	struct sk_buff		*skb;
 	dma_addr_t		bus_addr;
-	unsigned short		data_len;
-	u16			config;
+	unsigned int		data_len;
+	u16			index:13;
+	u16			is_msg:1;
+	u16			is_frag:1;
+	u16			is_last:1;
 };
 
-#define DRB_SKB_IS_LAST		BIT(15)
-#define DRB_SKB_IS_FRAG		BIT(14)
-#define DRB_SKB_IS_MSG		BIT(13)
-#define DRB_SKB_DRB_IDX		GENMASK(12, 0)
-
-int t7xx_dpmaif_tx_send_skb(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int txqt,
+int t7xx_dpmaif_tx_send_skb(struct dpmaif_ctrl *dpmaif_ctrl, unsigned int txq_number,
 			    struct sk_buff *skb);
 void t7xx_dpmaif_tx_thread_rel(struct dpmaif_ctrl *dpmaif_ctrl);
 int t7xx_dpmaif_tx_thread_init(struct dpmaif_ctrl *dpmaif_ctrl);

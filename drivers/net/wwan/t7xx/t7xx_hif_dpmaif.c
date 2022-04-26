@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021-2022, Intel Corporation.
  *
  * Authors:
  *  Amir Hanania <amir.hanania@intel.com>
@@ -15,7 +15,6 @@
  *  Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
-#include <linux/dev_printk.h>
 #include <linux/device.h>
 #include <linux/gfp.h>
 #include <linux/irqreturn.h>
@@ -30,6 +29,7 @@
 #include "t7xx_hif_dpmaif.h"
 #include "t7xx_hif_dpmaif_rx.h"
 #include "t7xx_hif_dpmaif_tx.h"
+#include "t7xx_netdev.h"
 #include "t7xx_pci.h"
 #include "t7xx_pcie_mac.h"
 
@@ -83,11 +83,13 @@ static void t7xx_dpmaif_irq_cb(struct dpmaif_isr_para *isr_para)
 	struct dpmaif_ctrl *dpmaif_ctrl = isr_para->dpmaif_ctrl;
 	struct dpmaif_hw_intr_st_para intr_status;
 	struct device *dev = dpmaif_ctrl->dev;
+	struct dpmaif_hw_info *hw_info;
 	int i;
 
 	memset(&intr_status, 0, sizeof(intr_status));
+	hw_info = &dpmaif_ctrl->hw_info;
 
-	if (t7xx_dpmaif_hw_get_intr_cnt(dpmaif_ctrl, &intr_status, isr_para->dlq_id) < 0) {
+	if (t7xx_dpmaif_hw_get_intr_cnt(hw_info, &intr_status, isr_para->dlq_id) < 0) {
 		dev_err(dev, "Failed to get HW interrupt count\n");
 		return;
 	}
@@ -108,24 +110,22 @@ static void t7xx_dpmaif_irq_cb(struct dpmaif_isr_para *isr_para)
 
 		case DPF_INTR_DL_BATCNT_LEN_ERR:
 			dev_err_ratelimited(dev, "DL interrupt: packet BAT count length error\n");
-			t7xx_dpmaif_dl_unmask_batcnt_len_err_intr(&dpmaif_ctrl->hif_hw_info);
+			t7xx_dpmaif_dl_unmask_batcnt_len_err_intr(hw_info);
 			break;
 
 		case DPF_INTR_DL_PITCNT_LEN_ERR:
 			dev_err_ratelimited(dev, "DL interrupt: PIT count length error\n");
-			t7xx_dpmaif_dl_unmask_pitcnt_len_err_intr(&dpmaif_ctrl->hif_hw_info);
+			t7xx_dpmaif_dl_unmask_pitcnt_len_err_intr(hw_info);
 			break;
 
 		case DPF_INTR_DL_Q0_PITCNT_LEN_ERR:
 			dev_err_ratelimited(dev, "DL interrupt: DLQ0 PIT count length error\n");
-			t7xx_dpmaif_dlq_unmask_pitcnt_len_err_intr(&dpmaif_ctrl->hif_hw_info,
-								   DPF_RX_QNO_DFT);
+			t7xx_dpmaif_dlq_unmask_pitcnt_len_err_intr(hw_info, DPF_RX_QNO_DFT);
 			break;
 
 		case DPF_INTR_DL_Q1_PITCNT_LEN_ERR:
 			dev_err_ratelimited(dev, "DL interrupt: DLQ1 PIT count length error\n");
-			t7xx_dpmaif_dlq_unmask_pitcnt_len_err_intr(&dpmaif_ctrl->hif_hw_info,
-								   DPF_RX_QNO1);
+			t7xx_dpmaif_dlq_unmask_pitcnt_len_err_intr(hw_info, DPF_RX_QNO1);
 			break;
 
 		case DPF_INTR_DL_DONE:
@@ -178,7 +178,7 @@ static void t7xx_dpmaif_register_pcie_irq(struct dpmaif_ctrl *dpmaif_ctrl)
 {
 	struct t7xx_pci_dev *t7xx_dev = dpmaif_ctrl->t7xx_dev;
 	struct dpmaif_isr_para *isr_para;
-	enum pcie_int int_type;
+	enum t7xx_int int_type;
 	int i;
 
 	t7xx_dpmaif_isr_parameter_init(dpmaif_ctrl);
@@ -290,6 +290,7 @@ static void t7xx_dpmaif_sw_release(struct dpmaif_ctrl *dpmaif_ctrl)
 
 static int t7xx_dpmaif_start(struct dpmaif_ctrl *dpmaif_ctrl)
 {
+	struct dpmaif_hw_info *hw_info = &dpmaif_ctrl->hw_info;
 	struct dpmaif_hw_params hw_init_para;
 	struct dpmaif_rx_queue *rxq;
 	struct dpmaif_tx_queue *txq;
@@ -315,22 +316,18 @@ static int t7xx_dpmaif_start(struct dpmaif_ctrl *dpmaif_ctrl)
 		hw_init_para.frg_bat_size_cnt[i] = rxq->bat_frag->bat_size_cnt;
 	}
 
-	memset(dpmaif_ctrl->bat_req.bat_mask, 0,
-	       dpmaif_ctrl->bat_req.bat_size_cnt * sizeof(unsigned char));
-
+	bitmap_zero(dpmaif_ctrl->bat_req.bat_bitmap, dpmaif_ctrl->bat_req.bat_size_cnt);
 	buf_cnt = dpmaif_ctrl->bat_req.bat_size_cnt - 1;
 	ret = t7xx_dpmaif_rx_buf_alloc(dpmaif_ctrl, &dpmaif_ctrl->bat_req, 0, buf_cnt, true);
 	if (ret) {
-		dev_err(dpmaif_ctrl->dev, "Failed to allocate RX buffer: %d\n",
-			ret);
+		dev_err(dpmaif_ctrl->dev, "Failed to allocate RX buffer: %d\n", ret);
 		return ret;
 	}
 
 	buf_cnt = dpmaif_ctrl->bat_frag.bat_size_cnt - 1;
 	ret = t7xx_dpmaif_rx_frag_alloc(dpmaif_ctrl, &dpmaif_ctrl->bat_frag, buf_cnt, true);
 	if (ret) {
-		dev_err(dpmaif_ctrl->dev, "Failed to allocate frag RX buffer: %d\n",
-			ret);
+		dev_err(dpmaif_ctrl->dev, "Failed to allocate frag RX buffer: %d\n", ret);
 		goto err_free_normal_bat;
 	}
 
@@ -342,22 +339,22 @@ static int t7xx_dpmaif_start(struct dpmaif_ctrl *dpmaif_ctrl)
 		hw_init_para.drb_size_cnt[i] = txq->drb_size_cnt;
 	}
 
-	ret = t7xx_dpmaif_hw_init(dpmaif_ctrl, &hw_init_para);
+	ret = t7xx_dpmaif_hw_init(hw_info, &hw_init_para);
 	if (ret) {
 		dev_err(dpmaif_ctrl->dev, "Failed to initialize DPMAIF HW: %d\n", ret);
 		goto err_free_frag_bat;
 	}
 
-	ret = t7xx_dpmaif_dl_snd_hw_bat_cnt(dpmaif_ctrl, rxq->bat_req->bat_size_cnt - 1);
+	ret = t7xx_dpmaif_dl_snd_hw_bat_cnt(hw_info, rxq->bat_req->bat_size_cnt - 1);
 	if (ret)
 		goto err_free_frag_bat;
 
-	ret = t7xx_dpmaif_dl_snd_hw_frg_cnt(dpmaif_ctrl, rxq->bat_frag->bat_size_cnt - 1);
+	ret = t7xx_dpmaif_dl_snd_hw_frg_cnt(hw_info, rxq->bat_frag->bat_size_cnt - 1);
 	if (ret)
 		goto err_free_frag_bat;
 
-	t7xx_dpmaif_ul_clr_all_intr(&dpmaif_ctrl->hif_hw_info);
-	t7xx_dpmaif_dl_clr_all_intr(&dpmaif_ctrl->hif_hw_info);
+	t7xx_dpmaif_ul_clr_all_intr(hw_info);
+	t7xx_dpmaif_dl_clr_all_intr(hw_info);
 	dpmaif_ctrl->state = DPMAIF_STATE_PWRON;
 	t7xx_dpmaif_enable_irq(dpmaif_ctrl);
 	wake_up(&dpmaif_ctrl->tx_wq);
@@ -380,8 +377,8 @@ static void t7xx_dpmaif_stop_sw(struct dpmaif_ctrl *dpmaif_ctrl)
 
 static void t7xx_dpmaif_stop_hw(struct dpmaif_ctrl *dpmaif_ctrl)
 {
-	t7xx_dpmaif_hw_stop_all_txq(dpmaif_ctrl);
-	t7xx_dpmaif_hw_stop_all_rxq(dpmaif_ctrl);
+	t7xx_dpmaif_hw_stop_all_txq(&dpmaif_ctrl->hw_info);
+	t7xx_dpmaif_hw_stop_all_rxq(&dpmaif_ctrl->hw_info);
 }
 
 static int t7xx_dpmaif_stop(struct dpmaif_ctrl *dpmaif_ctrl)
@@ -407,8 +404,8 @@ static int t7xx_dpmaif_suspend(struct t7xx_pci_dev *t7xx_dev, void *param)
 	struct dpmaif_ctrl *dpmaif_ctrl = param;
 
 	t7xx_dpmaif_tx_stop(dpmaif_ctrl);
-	t7xx_dpmaif_hw_stop_all_txq(dpmaif_ctrl);
-	t7xx_dpmaif_hw_stop_all_rxq(dpmaif_ctrl);
+	t7xx_dpmaif_hw_stop_all_txq(&dpmaif_ctrl->hw_info);
+	t7xx_dpmaif_hw_stop_all_rxq(&dpmaif_ctrl->hw_info);
 	t7xx_dpmaif_disable_irq(dpmaif_ctrl);
 	t7xx_dpmaif_rx_stop(dpmaif_ctrl);
 	return 0;
@@ -419,7 +416,7 @@ static void t7xx_dpmaif_unmask_dlq_intr(struct dpmaif_ctrl *dpmaif_ctrl)
 	int qno;
 
 	for (qno = 0; qno < DPMAIF_RXQ_NUM; qno++)
-		t7xx_dpmaif_dlq_unmask_rx_done(&dpmaif_ctrl->hif_hw_info, qno);
+		t7xx_dpmaif_dlq_unmask_rx_done(&dpmaif_ctrl->hw_info, qno);
 }
 
 static void t7xx_dpmaif_start_txrx_qs(struct dpmaif_ctrl *dpmaif_ctrl)
@@ -449,7 +446,7 @@ static int t7xx_dpmaif_resume(struct t7xx_pci_dev *t7xx_dev, void *param)
 	t7xx_dpmaif_start_txrx_qs(dpmaif_ctrl);
 	t7xx_dpmaif_enable_irq(dpmaif_ctrl);
 	t7xx_dpmaif_unmask_dlq_intr(dpmaif_ctrl);
-	t7xx_dpmaif_start_hw(dpmaif_ctrl);
+	t7xx_dpmaif_start_hw(&dpmaif_ctrl->hw_info);
 	wake_up(&dpmaif_ctrl->tx_wq);
 	return 0;
 }
@@ -545,8 +542,10 @@ struct dpmaif_ctrl *t7xx_dpmaif_hif_init(struct t7xx_pci_dev *t7xx_dev,
 	dpmaif_ctrl->callbacks = callbacks;
 	dpmaif_ctrl->dev = dev;
 	dpmaif_ctrl->dpmaif_sw_init_done = false;
-	dpmaif_ctrl->hif_hw_info.pcie_base = t7xx_dev->base_addr.pcie_ext_reg_base -
+	dpmaif_ctrl->hw_info.dev = dev;
+	dpmaif_ctrl->hw_info.pcie_base = t7xx_dev->base_addr.pcie_ext_reg_base -
 					     t7xx_dev->base_addr.pcie_dev_reg_trsl_addr;
+	dpmaif_ctrl->napi_enable = !!(t7xx_dev->ccmni_ctlb->capability & NIC_CAP_NAPI);
 
 	ret = t7xx_dpmaif_pm_entity_init(dpmaif_ctrl);
 	if (ret)
@@ -557,8 +556,8 @@ struct dpmaif_ctrl *t7xx_dpmaif_hif_init(struct t7xx_pci_dev *t7xx_dev,
 
 	ret = t7xx_dpmaif_rxtx_sw_allocs(dpmaif_ctrl);
 	if (ret) {
-		dev_err(dev, "Failed to allocate RX/TX SW resources: %d\n", ret);
 		t7xx_dpmaif_pm_entity_release(dpmaif_ctrl);
+		dev_err(dev, "Failed to allocate RX/TX SW resources: %d\n", ret);
 		return NULL;
 	}
 

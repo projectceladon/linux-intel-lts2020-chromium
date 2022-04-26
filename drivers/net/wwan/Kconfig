@@ -16,6 +16,17 @@ config WWAN
 
 if WWAN
 
+config WWAN_DEBUGFS
+	bool "WWAN devices debugfs interface" if EXPERT
+	depends on DEBUG_FS
+	default y
+	help
+	  Enables debugfs infrastructure for the WWAN core and device drivers.
+
+	  If this option is selected, then you can find the debug interface
+	  elements for each WWAN device in a directory that is corresponding to
+	  the device name: debugfs/wwan/wwanX.
+
 config WWAN_HWSIM
 	tristate "Simulated WWAN device"
 	help
@@ -38,6 +49,18 @@ config MHI_WWAN_CTRL
 	  To compile this driver as a module, choose M here: the module will be
 	  called mhi_wwan_ctrl.
 
+config MHI_WWAN_MBIM
+        tristate "MHI WWAN MBIM network driver for QCOM-based PCIe modems"
+        depends on MHI_BUS
+        help
+          MHI WWAN MBIM is a WWAN network driver for QCOM-based PCIe modems.
+          It implements MBIM over MHI, for IP data aggregation and muxing.
+          A default wwan0 network interface is created for MBIM data session
+          ID 0. Additional links can be created via wwan rtnetlink type.
+
+          To compile this driver as a module, choose M here: the module will be
+          called mhi_wwan_mbim.
+
 config RPMSG_WWAN_CTRL
 	tristate "RPMSG WWAN control driver"
 	depends on RPMSG
@@ -59,6 +82,8 @@ config RPMSG_WWAN_CTRL
 config IOSM
 	tristate "IOSM Driver for Intel M.2 WWAN Device"
 	depends on INTEL_IOMMU
+	select NET_DEVLINK
+	select RELAY if WWAN_DEBUGFS
 	help
 	  This driver enables Intel M.2 WWAN Device communication.
 
@@ -70,6 +95,8 @@ config IOSM
 config MTK_T7XX
 	tristate "MediaTek PCIe 5G WWAN modem T7xx device"
 	depends on PCI
+	select RELAY if WWAN_DEBUGFS
+	select NET_DEVLINK
 	help
 	  Enables MediaTek PCIe based 5G WWAN modem (T7xx series) device.
 	  Adapts WWAN framework and provides network interface like wwan0
