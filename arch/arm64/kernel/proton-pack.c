@@ -25,6 +25,7 @@
 #include <linux/prctl.h>
 #include <linux/sched/task_stack.h>
 
+#include <asm/debug-monitors.h>
 #include <asm/insn.h>
 #include <asm/spectre.h>
 #include <asm/traps.h>
@@ -218,7 +219,6 @@ enum mitigation_state arm64_get_spectre_v2_state(void)
 
 DEFINE_PER_CPU_READ_MOSTLY(struct bp_hardening_data, bp_hardening_data);
 
-static DEFINE_RAW_SPINLOCK(bp_lock);
 static void install_bp_hardening_cb(bp_hardening_cb_t fn)
 {
 	__this_cpu_write(bp_hardening_data.fn, fn);
@@ -830,6 +830,14 @@ enum mitigation_state arm64_get_spectre_bhb_state(void)
 	return spectre_bhb_state;
 }
 
+enum bhb_mitigation_bits {
+	BHB_LOOP,
+	BHB_FW,
+	BHB_HW,
+	BHB_INSN,
+};
+static unsigned long system_bhb_mitigations;
+
 /*
  * This must be called with SCOPE_LOCAL_CPU for each type of CPU, before any
  * SCOPE_SYSTEM call will give the right answer.
@@ -976,65 +984,11 @@ static void this_cpu_set_vectors(enum arm64_bp_harden_el1_vectors slot)
 	isb();
 }
 
-#ifdef CONFIG_KVM
-static int kvm_bhb_get_vecs_size(const char *start)
-{
-	if (start == __smccc_workaround_3_smc)
-		return __SMCCC_WORKAROUND_3_SMC_SZ;
-	else if (start == __spectre_bhb_loop_k8 ||
-		 start == __spectre_bhb_loop_k24 ||
-		 start == __spectre_bhb_loop_k32)
-		return __SPECTRE_BHB_LOOP_SZ;
-	else if (start == __spectre_bhb_clearbhb)
-		return __SPECTRE_BHB_CLEARBHB_SZ;
-
-	return 0;
-}
-
-static void kvm_setup_bhb_slot(const char *hyp_vecs_start)
-{
-	int cpu, slot = -1, size;
-	const char *hyp_vecs_end;
-
-	if (!IS_ENABLED(CONFIG_KVM) || !is_hyp_mode_available())
-		return;
-
-	size = kvm_bhb_get_vecs_size(hyp_vecs_start);
-	if (WARN_ON_ONCE(!hyp_vecs_start || !size))
-		return;
-	hyp_vecs_end = hyp_vecs_start + size;
-
-	raw_spin_lock(&bp_lock);
-	for_each_possible_cpu(cpu) {
-		if (per_cpu(bp_hardening_data.template_start, cpu) == hyp_vecs_start) {
-			slot = per_cpu(bp_hardening_data.hyp_vectors_slot, cpu);
-			break;
-		}
-	}
-
-	if (slot == -1) {
-		slot = atomic_inc_return(&arm64_el2_vector_last_slot);
-		BUG_ON(slot >= BP_HARDEN_EL2_SLOTS);
-		__copy_hyp_vect_bpi(slot, hyp_vecs_start, hyp_vecs_end);
-	}
-
-	__this_cpu_write(bp_hardening_data.hyp_vectors_slot, slot);
-	__this_cpu_write(bp_hardening_data.template_start, hyp_vecs_start);
-	raw_spin_unlock(&bp_lock);
-}
-#else
-#define __smccc_workaround_3_smc NULL
-#define __spectre_bhb_loop_k8 NULL
-#define __spectre_bhb_loop_k24 NULL
-#define __spectre_bhb_loop_k32 NULL
-#define __spectre_bhb_clearbhb NULL
-
-static void kvm_setup_bhb_slot(const char *hyp_vecs_start) { }
-#endif /* CONFIG_KVM */
-
 void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 {
+	bp_hardening_cb_t cpu_cb;
 	enum mitigation_state fw_state, state = SPECTRE_VULNERABLE;
+	struct bp_hardening_data *data = this_cpu_ptr(&bp_hardening_data);
 
 	if (!is_spectre_bhb_affected(entry, SCOPE_LOCAL_CPU))
 		return;
@@ -1047,39 +1001,82 @@ void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 		pr_info_once("spectre-bhb mitigation disabled by command line option\n");
 	} else if (supports_ecbhb(SCOPE_LOCAL_CPU)) {
 		state = SPECTRE_MITIGATED;
+		set_bit(BHB_HW, &system_bhb_mitigations);
 	} else if (supports_clearbhb(SCOPE_LOCAL_CPU)) {
-		kvm_setup_bhb_slot(__spectre_bhb_clearbhb);
+		/*
+		 * Ensure KVM uses the indirect vector which will have ClearBHB
+		 * added.
+		 */
+		if (!data->slot)
+			data->slot = HYP_VECTOR_INDIRECT;
+
 		this_cpu_set_vectors(EL1_VECTOR_BHB_CLEAR_INSN);
-
 		state = SPECTRE_MITIGATED;
+		set_bit(BHB_INSN, &system_bhb_mitigations);
 	} else if (spectre_bhb_loop_affected(SCOPE_LOCAL_CPU)) {
-		switch (spectre_bhb_loop_affected(SCOPE_SYSTEM)) {
-		case 8:
-			kvm_setup_bhb_slot(__spectre_bhb_loop_k8);
-			break;
-		case 24:
-			kvm_setup_bhb_slot(__spectre_bhb_loop_k24);
-			break;
-		case 32:
-			kvm_setup_bhb_slot(__spectre_bhb_loop_k32);
-			break;
-		default:
-			WARN_ON_ONCE(1);
-		}
-		this_cpu_set_vectors(EL1_VECTOR_BHB_LOOP);
+		/*
+		 * Ensure KVM uses the indirect vector which will have the
+		 * branchy-loop added. A57/A72-r0 will already have selected
+		 * the spectre-indirect vector, which is sufficient for BHB
+		 * too.
+		 */
+		if (!data->slot)
+			data->slot = HYP_VECTOR_INDIRECT;
 
+		this_cpu_set_vectors(EL1_VECTOR_BHB_LOOP);
 		state = SPECTRE_MITIGATED;
+		set_bit(BHB_LOOP, &system_bhb_mitigations);
 	} else if (is_spectre_bhb_fw_affected(SCOPE_LOCAL_CPU)) {
 		fw_state = spectre_bhb_get_cpu_fw_mitigation_state();
 		if (fw_state == SPECTRE_MITIGATED) {
-			kvm_setup_bhb_slot(__smccc_workaround_3_smc);
+			/*
+			 * Ensure KVM uses one of the spectre bp_hardening
+			 * vectors. The indirect vector doesn't include the EL3
+			 * call, so needs upgrading to
+			 * HYP_VECTOR_SPECTRE_INDIRECT.
+			 */
+			if (!data->slot || data->slot == HYP_VECTOR_INDIRECT)
+				data->slot += 1;
+
 			this_cpu_set_vectors(EL1_VECTOR_BHB_FW);
 
+			/*
+			 * The WA3 call in the vectors supersedes the WA1 call
+			 * made during context-switch. Uninstall any firmware
+			 * bp_hardening callback.
+			 */
+			cpu_cb = spectre_v2_get_sw_mitigation_cb();
+			if (__this_cpu_read(bp_hardening_data.fn) != cpu_cb)
+				__this_cpu_write(bp_hardening_data.fn, NULL);
+
 			state = SPECTRE_MITIGATED;
+			set_bit(BHB_FW, &system_bhb_mitigations);
 		}
 	}
 
 	update_mitigation_state(&spectre_bhb_state, state);
+}
+
+/* Patched to NOP when enabled */
+void noinstr spectre_bhb_patch_loop_mitigation_enable(struct alt_instr *alt,
+						     __le32 *origptr,
+						      __le32 *updptr, int nr_inst)
+{
+	BUG_ON(nr_inst != 1);
+
+	if (test_bit(BHB_LOOP, &system_bhb_mitigations))
+		*updptr++ = cpu_to_le32(aarch64_insn_gen_nop());
+}
+
+/* Patched to NOP when enabled */
+void noinstr spectre_bhb_patch_fw_mitigation_enabled(struct alt_instr *alt,
+						   __le32 *origptr,
+						   __le32 *updptr, int nr_inst)
+{
+	BUG_ON(nr_inst != 1);
+
+	if (test_bit(BHB_FW, &system_bhb_mitigations))
+		*updptr++ = cpu_to_le32(aarch64_insn_gen_nop());
 }
 
 /* Patched to correct the immediate */
@@ -1101,6 +1098,45 @@ void noinstr spectre_bhb_patch_loop_iter(struct alt_instr *alt,
 					 AARCH64_INSN_VARIANT_64BIT,
 					 AARCH64_INSN_MOVEWIDE_ZERO);
 	*updptr++ = cpu_to_le32(insn);
+}
+
+/* Patched to mov WA3 when supported */
+void noinstr spectre_bhb_patch_wa3(struct alt_instr *alt,
+				   __le32 *origptr, __le32 *updptr, int nr_inst)
+{
+	u8 rd;
+	u32 insn;
+
+	BUG_ON(nr_inst != 1); /* MOV -> MOV */
+
+	if (!IS_ENABLED(CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY) ||
+	    !test_bit(BHB_FW, &system_bhb_mitigations))
+		return;
+
+	insn = le32_to_cpu(*origptr);
+	rd = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, insn);
+
+	insn = aarch64_insn_gen_logical_immediate(AARCH64_INSN_LOGIC_ORR,
+						  AARCH64_INSN_VARIANT_32BIT,
+						  AARCH64_INSN_REG_ZR, rd,
+						  ARM_SMCCC_ARCH_WORKAROUND_3);
+	if (WARN_ON_ONCE(insn == AARCH64_BREAK_FAULT))
+		return;
+
+	*updptr++ = cpu_to_le32(insn);
+}
+
+/* Patched to NOP when not supported */
+void __init spectre_bhb_patch_clearbhb(struct alt_instr *alt,
+				   __le32 *origptr, __le32 *updptr, int nr_inst)
+{
+	BUG_ON(nr_inst != 2);
+
+	if (test_bit(BHB_INSN, &system_bhb_mitigations))
+		return;
+
+	*updptr++ = cpu_to_le32(aarch64_insn_gen_nop());
+	*updptr++ = cpu_to_le32(aarch64_insn_gen_nop());
 }
 
 #ifdef CONFIG_BPF_SYSCALL

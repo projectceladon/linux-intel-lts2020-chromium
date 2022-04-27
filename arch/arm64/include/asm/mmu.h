@@ -59,38 +59,6 @@ static inline bool arm64_kernel_unmapped_at_el0(void)
 	return cpus_have_const_cap(ARM64_UNMAP_KERNEL_AT_EL0);
 }
 
-typedef void (*bp_hardening_cb_t)(void);
-
-struct bp_hardening_data {
-	int			hyp_vectors_slot;
-	bp_hardening_cb_t	fn;
-
-	/*
-	 * template_start is only used by the BHB mitigation to identify the
-	 * hyp_vectors_slot sequence.
-	 */
-	const char *template_start;
-};
-
-DECLARE_PER_CPU_READ_MOSTLY(struct bp_hardening_data, bp_hardening_data);
-
-static inline struct bp_hardening_data *arm64_get_bp_hardening_data(void)
-{
-	return this_cpu_ptr(&bp_hardening_data);
-}
-
-static inline void arm64_apply_bp_hardening(void)
-{
-	struct bp_hardening_data *d;
-
-	if (!cpus_have_const_cap(ARM64_SPECTRE_V2))
-		return;
-
-	d = arm64_get_bp_hardening_data();
-	if (d->fn)
-		d->fn();
-}
-
 extern void arm64_memblock_init(void);
 extern void paging_init(void);
 extern void bootmem_init(void);
