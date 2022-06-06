@@ -1943,6 +1943,7 @@ int dpm_prepare(pm_message_t state)
 				 error);
 			log_suspend_abort_reason("Device %s not prepared for power transition: code %d",
 						 dev_name(dev), error);
+			dpm_save_failed_dev(dev_name(dev));
 		}
 
 		mutex_unlock(&dpm_list_mtx);

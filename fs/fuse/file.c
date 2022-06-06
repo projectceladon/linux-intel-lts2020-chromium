@@ -1166,7 +1166,7 @@ static ssize_t fuse_fill_write_pages(struct fuse_io_args *ia,
 
  again:
 		err = -EFAULT;
-		if (fault_in_iov_iter_readable(ii, bytes))
+		if (iov_iter_fault_in_readable(ii, bytes))
 			break;
 
 		err = -ENOMEM;
@@ -2402,6 +2402,7 @@ static const struct vm_operations_struct fuse_file_vm_ops = {
 	.fault		= filemap_fault,
 	.map_pages	= filemap_map_pages,
 	.page_mkwrite	= fuse_page_mkwrite,
+	.speculative	= true,
 };
 
 static int fuse_file_mmap(struct file *file, struct vm_area_struct *vma)

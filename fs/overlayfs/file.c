@@ -57,7 +57,8 @@ static struct file *ovl_open_realfile(const struct file *file,
 	if (err) {
 		realfile = ERR_PTR(err);
 	} else {
-		if (!inode_owner_or_capable(&init_user_ns, realinode))
+		if (old_cred && !inode_owner_or_capable(&init_user_ns,
+							realinode))
 			flags &= ~O_NOATIME;
 
 		realfile = open_with_fake_path(&file->f_path, flags, realinode,
@@ -322,7 +323,6 @@ static ssize_t ovl_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	}
 out:
 	ovl_revert_creds(file_inode(file)->i_sb, old_cred);
-
 	ovl_file_accessed(file);
 out_fdput:
 	fdput(real);
@@ -642,7 +642,7 @@ static int ovl_flush(struct file *file, fl_owner_t id)
 	if (real.file->f_op->flush) {
 		old_cred = ovl_override_creds(file_inode(file)->i_sb);
 		err = real.file->f_op->flush(real.file, id);
-		revert_creds(old_cred);
+		ovl_revert_creds(file_inode(file)->i_sb, old_cred);
 	}
 	fdput(real);
 
