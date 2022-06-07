@@ -1606,7 +1606,6 @@ int cfg80211_check_station_change(struct wiphy *wiphy,
  * @RATE_INFO_FLAGS_HE_MCS: HE MCS information
  * @RATE_INFO_FLAGS_EDMG: 60GHz MCS in EDMG mode
  * @RATE_INFO_FLAGS_EXTENDED_SC_DMG: 60GHz extended SC MCS
- * @RATE_INFO_FLAGS_EHT_MCS: EHT MCS information
  */
 enum rate_info_flags {
 	RATE_INFO_FLAGS_MCS			= BIT(0),
@@ -1616,7 +1615,6 @@ enum rate_info_flags {
 	RATE_INFO_FLAGS_HE_MCS			= BIT(4),
 	RATE_INFO_FLAGS_EDMG			= BIT(5),
 	RATE_INFO_FLAGS_EXTENDED_SC_DMG		= BIT(6),
-	RATE_INFO_FLAGS_EHT_MCS			= BIT(7),
 };
 
 /**
@@ -1631,8 +1629,6 @@ enum rate_info_flags {
  * @RATE_INFO_BW_80: 80 MHz bandwidth
  * @RATE_INFO_BW_160: 160 MHz bandwidth
  * @RATE_INFO_BW_HE_RU: bandwidth determined by HE RU allocation
- * @RATE_INFO_BW_320: 320 MHz bandwidth
- * @RATE_INFO_BW_EHT_RU: bandwidth determined by EHT RU allocation
  */
 enum rate_info_bw {
 	RATE_INFO_BW_20 = 0,
@@ -1642,8 +1638,6 @@ enum rate_info_bw {
 	RATE_INFO_BW_80,
 	RATE_INFO_BW_160,
 	RATE_INFO_BW_HE_RU,
-	RATE_INFO_BW_320,
-	RATE_INFO_BW_EHT_RU,
 };
 
 /**
@@ -1661,9 +1655,6 @@ enum rate_info_bw {
  * @he_ru_alloc: HE RU allocation (from &enum nl80211_he_ru_alloc,
  *	only valid if bw is %RATE_INFO_BW_HE_RU)
  * @n_bonded_ch: In case of EDMG the number of bonded channels (1-4)
- * @eht_gi: EHT guard interval (from &enum nl80211_eht_gi)
- * @eht_ru_alloc: EHT RU allocation (from &enum nl80211_eht_ru_alloc,
- *	only valid if bw is %RATE_INFO_BW_EHT_RU)
  */
 struct rate_info {
 	u8 flags;
@@ -1675,8 +1666,6 @@ struct rate_info {
 	u8 he_dcm;
 	u8 he_ru_alloc;
 	u8 n_bonded_ch;
-	u8 eht_gi;
-	u8 eht_ru_alloc;
 };
 
 /**
