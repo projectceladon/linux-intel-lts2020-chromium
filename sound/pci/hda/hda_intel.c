@@ -886,10 +886,12 @@ static int azx_get_delay_from_fifo(struct azx *chip, struct azx_dev *azx_dev,
 
 static void __azx_shutdown_chip(struct azx *chip, bool skip_link_reset)
 {
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	azx_stop_chip(chip);
 	if (!skip_link_reset)
 		azx_enter_link_reset(chip);
 	azx_clear_irq_pending(chip);
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	display_power(chip, false);
 }
 
@@ -964,6 +966,7 @@ static void __azx_runtime_resume(struct azx *chip)
 	struct hda_codec *codec;
 	int status;
 
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	display_power(chip, true);
 	if (hda->need_i915_power)
 		snd_hdac_i915_set_bclk(bus);
@@ -986,8 +989,10 @@ static void __azx_runtime_resume(struct azx *chip)
 	}
 
 	/* power down again for link-controlled chips */
-	if (!hda->need_i915_power)
+	if (!hda->need_i915_power) {
+		printk("audio Entered func %s and !hda->need_i915_power, file %s at %d", __func__,__FILE__,__LINE__);
 		display_power(chip, false);
+	}
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -1389,6 +1394,7 @@ static void azx_free(struct azx *chip)
 #ifdef CONFIG_SND_HDA_PATCH_LOADER
 	release_firmware(chip->fw);
 #endif
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	display_power(chip, false);
 
 	if (chip->driver_caps & AZX_DCAPS_I915_COMPONENT)
@@ -2295,6 +2301,7 @@ static int azx_probe_continue(struct azx *chip)
 	 * this power. For other platforms, like Baytrail/Braswell, only the
 	 * display codec needs the power and it can be released after probe.
 	 */
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	display_power(chip, true);
 
 	err = azx_first_init(chip);
@@ -2364,8 +2371,10 @@ out_free:
 		return err;
 	}
 
-	if (!hda->need_i915_power)
+	if (!hda->need_i915_power) {
+		printk("audio Entered func %s and !hda->need_i915_power, file %s at %d", __func__,__FILE__,__LINE__);
 		display_power(chip, false);
+	}
 	complete_all(&hda->probe_wait);
 	to_hda_bus(bus)->bus_probing = 0;
 	hda->probe_retry = 0;

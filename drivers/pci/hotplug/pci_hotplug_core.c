@@ -68,7 +68,7 @@ static ssize_t power_read_file(struct pci_slot *pci_slot, char *buf)
 {
 	int retval;
 	u8 value;
-
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	retval = get_power_status(pci_slot->hotplug, &value);
 	if (retval)
 		return retval;
@@ -270,6 +270,7 @@ static bool has_latch_file(struct pci_slot *pci_slot)
 static bool has_adapter_file(struct pci_slot *pci_slot)
 {
 	struct hotplug_slot *slot = pci_slot->hotplug;
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 
 	if ((!slot) || (!slot->ops))
 		return false;

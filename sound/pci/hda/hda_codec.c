@@ -805,8 +805,11 @@ static unsigned int hda_set_power_state(struct hda_codec *codec,
 /* enable/disable display power per codec */
 static void codec_display_power(struct hda_codec *codec, bool enable)
 {
-	if (codec->display_power_control)
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
+	if (codec->display_power_control){
+		printk("audio Entered func %s and (codec->display_power_control), file %s at %d", __func__,__FILE__,__LINE__);
 		snd_hdac_display_power(&codec->bus->core, codec->addr, enable);
+	}
 }
 
 /**
@@ -817,9 +820,12 @@ static void codec_display_power(struct hda_codec *codec, bool enable)
  */
 void snd_hda_codec_register(struct hda_codec *codec)
 {
-	if (codec->registered)
+	if (codec->registered) {
+		printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 		return;
+	}
 	if (device_is_registered(hda_codec_dev(codec))) {
+		printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 		codec_display_power(codec, true);
 		pm_runtime_enable(hda_codec_dev(codec));
 		/* it was powered up in snd_hda_codec_new(), now all done */
@@ -842,13 +848,16 @@ static int snd_hda_codec_dev_register(struct snd_device *device)
 void snd_hda_codec_unregister(struct hda_codec *codec)
 {
 	codec->in_freeing = 1;
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	/*
 	 * snd_hda_codec_device_new() is used by legacy HDA and ASoC driver.
 	 * We can't unregister ASoC device since it will be unregistered in
 	 * snd_hdac_ext_bus_device_remove().
 	 */
-	if (codec->core.type == HDA_DEV_LEGACY)
+	if (codec->core.type == HDA_DEV_LEGACY) {
+		printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 		snd_hdac_device_unregister(&codec->core);
+	}
 	codec_display_power(codec, false);
 
 	/*
@@ -2923,9 +2932,12 @@ static int hda_codec_runtime_suspend(struct device *dev)
 	struct hda_codec *codec = dev_to_hda_codec(dev);
 	unsigned int state;
 
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	/* Nothing to do if card registration fails and the component driver never probes */
-	if (!codec->card)
+	if (!codec->card) {
+		printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 		return 0;
+	}
 
 	cancel_delayed_work_sync(&codec->jackpoll_work);
 	state = hda_call_codec_suspend(codec);
@@ -2933,6 +2945,7 @@ static int hda_codec_runtime_suspend(struct device *dev)
 	    (codec_has_clkstop(codec) && codec_has_epss(codec) &&
 	     (state & AC_PWRST_CLK_STOP_OK)))
 		snd_hdac_codec_link_down(&codec->core);
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	codec_display_power(codec, false);
 	return 0;
 }
@@ -2945,6 +2958,7 @@ static int hda_codec_runtime_resume(struct device *dev)
 	if (!codec->card)
 		return 0;
 
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	codec_display_power(codec, true);
 	snd_hdac_codec_link_up(&codec->core);
 	hda_call_codec_resume(codec);

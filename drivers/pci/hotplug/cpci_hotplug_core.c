@@ -140,7 +140,7 @@ static int
 get_power_status(struct hotplug_slot *hotplug_slot, u8 *value)
 {
 	struct slot *slot = to_slot(hotplug_slot);
-
+	printk("audio Entered func %s, file %s at %d", __fun__,__FILE__,__LINE__);
 	*value = cpci_get_power_status(slot);
 	return 0;
 }

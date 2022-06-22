@@ -184,36 +184,43 @@ static int hda_codec_probe(struct snd_soc_component *component)
 
 	hlink = snd_hdac_ext_bus_link_at(bus, hdev->addr);
 	if (!hlink) {
+		printk("audio Entered func %s hdac link not found, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "hdac link not found\n");
 		return -EIO;
 	}
 
 	pm_runtime_get_sync(bus->dev);
-	if (hda_codec_is_display(codec))
+	if (hda_codec_is_display(codec)) {
+		printk("audio Enetered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 		snd_hdac_display_power(bus, hdev->addr, true);
+	}
 	snd_hdac_ext_bus_link_get(bus, hlink);
 
 	ret = snd_hda_codec_device_new(codec->bus, component->card->snd_card,
 				       hdev->addr, codec, false);
 	if (ret < 0) {
+		printk("audio Enetered func %s, create hda codec failed, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "create hda codec failed: %d\n", ret);
 		goto device_new_err;
 	}
 
 	ret = snd_hda_codec_set_name(codec, codec->preset->name);
 	if (ret < 0) {
+		printk("audio Enetered func %s, snd_hda_codec_set_name failed, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "name failed %s\n", codec->preset->name);
 		goto err;
 	}
 
 	ret = snd_hdac_regmap_init(&codec->core);
 	if (ret < 0) {
+		printk("audio Enetered func %s, regmap init failed, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "regmap init failed\n");
 		goto err;
 	}
 
 	patch = (hda_codec_patch_t)codec->preset->driver_data;
 	if (!patch) {
+		printk("audio Enetered func %s, no patch specified?, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "no patch specified?\n");
 		ret = -EINVAL;
 		goto err;
@@ -221,6 +228,7 @@ static int hda_codec_probe(struct snd_soc_component *component)
 
 	ret = patch(codec);
 	if (ret < 0) {
+		printk("audio Enetered func %s, patch failed, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "patch failed %d\n", ret);
 		goto err;
 	}
@@ -230,20 +238,24 @@ static int hda_codec_probe(struct snd_soc_component *component)
 
 	ret = snd_hda_codec_parse_pcms(codec);
 	if (ret < 0) {
+		printk("audio Enetered func %s, unable to map pcms to dai, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "unable to map pcms to dai %d\n", ret);
 		goto parse_pcms_err;
 	}
 
 	ret = hda_codec_register_dais(codec, component);
 	if (ret < 0) {
+		printk("audio Enetered func %s, update dais failed, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "update dais failed: %d\n", ret);
 		goto parse_pcms_err;
 	}
 
 	if (!hda_codec_is_display(codec)) {
 		ret = hda_codec_probe_complete(codec);
-		if (ret < 0)
+		if (ret < 0) {
+			printk("audio Enetered func %s,  hda_codec_probe_complete failed with ret < 0, file %s at %d", __func__,__FILE__,__LINE__);
 			goto complete_err;
+		}
 	}
 
 	codec->core.lazy_cache = true;
@@ -251,16 +263,20 @@ static int hda_codec_probe(struct snd_soc_component *component)
 	return 0;
 
 complete_err:
+	printk ("audio Entered func %s, jump to label complete_err:, file %s at %d", __func__,__FILE__,__LINE__);
 	hda_codec_unregister_dais(codec, component);
 parse_pcms_err:
+	printk ("audio Entered func %s, jump to label parse_pcms_err:, file %s at %d", __func__,__FILE__,__LINE__);
 	if (codec->patch_ops.free)
 		codec->patch_ops.free(codec);
 err:
+	printk ("audio Entered func %s, jump to label err:, file %s at %d", __func__,__FILE__,__LINE__);
 	snd_hda_codec_cleanup_for_unbind(codec);
 device_new_err:
-	if (hda_codec_is_display(codec))
+	if (hda_codec_is_display(codec)) {
+		printk("audio Enetered func %s, jump to label device_new_err, file %s at %d", __func__,__FILE__,__LINE__);
 		snd_hdac_display_power(bus, hdev->addr, false);
-
+	}
 	snd_hdac_ext_bus_link_put(bus, hlink);
 
 	pm_runtime_mark_last_busy(bus->dev);
@@ -290,9 +306,10 @@ static void hda_codec_remove(struct snd_soc_component *component)
 	/* snd_hdac_device_exit() is only called on bus remove */
 	pm_runtime_set_suspended(&hdev->dev);
 
-	if (hda_codec_is_display(codec))
+	if (hda_codec_is_display(codec)) {
+		printk("audio Enetered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 		snd_hdac_display_power(bus, hdev->addr, false);
-
+	}
 	hlink = snd_hdac_ext_bus_link_at(bus, hdev->addr);
 	if (hlink)
 		snd_hdac_ext_bus_link_put(bus, hlink);

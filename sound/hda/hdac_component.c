@@ -35,7 +35,7 @@ static struct drm_audio_component *hdac_get_acomp(struct device *dev)
 int snd_hdac_set_codec_wakeup(struct hdac_bus *bus, bool enable)
 {
 	struct drm_audio_component *acomp = bus->audio_component;
-
+	printk("audio Entered func %s enable is %d, file %s at %d", __func__, enable,__FILE__,__LINE__);
 	if (!acomp || !acomp->ops)
 		return -ENODEV;
 
@@ -66,24 +66,30 @@ EXPORT_SYMBOL_GPL(snd_hdac_set_codec_wakeup);
 void snd_hdac_display_power(struct hdac_bus *bus, unsigned int idx, bool enable)
 {
 	struct drm_audio_component *acomp = bus->audio_component;
-
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	dev_dbg(bus->dev, "display power %s\n",
 		enable ? "enable" : "disable");
 
 	mutex_lock(&bus->lock);
-	if (enable)
+	if (enable) {
+		printk("audio Entered func %s and if (enable), file %s at %d", __func__,__FILE__,__LINE__);
 		set_bit(idx, &bus->display_power_status);
-	else
+	} else {
+		printk("audio Entered func %s and if (enable) else case, file %s at %d", __func__,__FILE__,__LINE__);
 		clear_bit(idx, &bus->display_power_status);
-
+	}
 	if (!acomp || !acomp->ops)
 		goto unlock;
 
 	if (bus->display_power_status) {
+		printk("audio Entered func %s if (bus->display_power_status), file %s at %d", __func__,__FILE__,__LINE__);
 		if (!bus->display_power_active) {
+			printk("audio Entered func %s if (bus->display_power_status) and !bus->display_power_active, file %s at %d", __func__,__FILE__,__LINE__);
 			unsigned long cookie = -1;
 
-			if (acomp->ops->get_power)
+			if (acomp->ops->get_power) {
+				printk("audio Entered func %s if (bus->display_power_status) and !bus->display_power_active and if (acomp->ops->get_power), file %s at %d", __func__,__FILE__,__LINE__);
+			}
 				cookie = acomp->ops->get_power(acomp->dev);
 
 			snd_hdac_set_codec_wakeup(bus, true);
@@ -91,12 +97,15 @@ void snd_hdac_display_power(struct hdac_bus *bus, unsigned int idx, bool enable)
 			bus->display_power_active = cookie;
 		}
 	} else {
+		printk("audio Entered func %s if (bus->display_power_status) else, file %s at %d", __func__,__FILE__,__LINE__);
 		if (bus->display_power_active) {
+			printk("audio Entered func %s if (bus->display_power_status) else and if (bus->display_power_active), file %s at %d ", __func__, __FILE__,__LINE__);
 			unsigned long cookie = bus->display_power_active;
 
-			if (acomp->ops->put_power)
+			if (acomp->ops->put_power) {
+				printk("audio Entered func %s if (bus->display_power_status) else and if (bus->display_power_active) and if (acomp->ops->put_power), file %s at %d", __func__,__FILE__,__LINE__);
 				acomp->ops->put_power(acomp->dev, cookie);
-
+			}
 			bus->display_power_active = 0;
 		}
 	}
@@ -106,7 +115,7 @@ void snd_hdac_display_power(struct hdac_bus *bus, unsigned int idx, bool enable)
 EXPORT_SYMBOL_GPL(snd_hdac_display_power);
 
 /**
- * snd_hdac_sync_audio_rate - Set N/CTS based on the sample rate
+ * snd_hdac_sync_audio_rate - Set N/CTS based on the sample rate/
  * @codec: HDA codec
  * @nid: the pin widget NID
  * @dev_id: device identifier
