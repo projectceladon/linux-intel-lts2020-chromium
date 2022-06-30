@@ -21,50 +21,122 @@ static bool rtw89_disable_ps_mode;
 module_param_named(disable_ps_mode, rtw89_disable_ps_mode, bool, 0644);
 MODULE_PARM_DESC(disable_ps_mode, "Set Y to disable low power mode");
 
+#define RTW89_DEF_CHAN(_freq, _hw_val, _flags, _band)	\
+	{ .center_freq = _freq, .hw_value = _hw_val, .flags = _flags, .band = _band, }
+#define RTW89_DEF_CHAN_2G(_freq, _hw_val)	\
+	RTW89_DEF_CHAN(_freq, _hw_val, 0, NL80211_BAND_2GHZ)
+#define RTW89_DEF_CHAN_5G(_freq, _hw_val)	\
+	RTW89_DEF_CHAN(_freq, _hw_val, 0, NL80211_BAND_5GHZ)
+#define RTW89_DEF_CHAN_5G_NO_HT40MINUS(_freq, _hw_val)	\
+	RTW89_DEF_CHAN(_freq, _hw_val, IEEE80211_CHAN_NO_HT40MINUS, NL80211_BAND_5GHZ)
+#define RTW89_DEF_CHAN_6G(_freq, _hw_val)	\
+	RTW89_DEF_CHAN(_freq, _hw_val, 0, NL80211_BAND_6GHZ)
+
 static struct ieee80211_channel rtw89_channels_2ghz[] = {
-	{ .center_freq = 2412, .hw_value = 1, },
-	{ .center_freq = 2417, .hw_value = 2, },
-	{ .center_freq = 2422, .hw_value = 3, },
-	{ .center_freq = 2427, .hw_value = 4, },
-	{ .center_freq = 2432, .hw_value = 5, },
-	{ .center_freq = 2437, .hw_value = 6, },
-	{ .center_freq = 2442, .hw_value = 7, },
-	{ .center_freq = 2447, .hw_value = 8, },
-	{ .center_freq = 2452, .hw_value = 9, },
-	{ .center_freq = 2457, .hw_value = 10, },
-	{ .center_freq = 2462, .hw_value = 11, },
-	{ .center_freq = 2467, .hw_value = 12, },
-	{ .center_freq = 2472, .hw_value = 13, },
-	{ .center_freq = 2484, .hw_value = 14, },
+	RTW89_DEF_CHAN_2G(2412, 1),
+	RTW89_DEF_CHAN_2G(2417, 2),
+	RTW89_DEF_CHAN_2G(2422, 3),
+	RTW89_DEF_CHAN_2G(2427, 4),
+	RTW89_DEF_CHAN_2G(2432, 5),
+	RTW89_DEF_CHAN_2G(2437, 6),
+	RTW89_DEF_CHAN_2G(2442, 7),
+	RTW89_DEF_CHAN_2G(2447, 8),
+	RTW89_DEF_CHAN_2G(2452, 9),
+	RTW89_DEF_CHAN_2G(2457, 10),
+	RTW89_DEF_CHAN_2G(2462, 11),
+	RTW89_DEF_CHAN_2G(2467, 12),
+	RTW89_DEF_CHAN_2G(2472, 13),
+	RTW89_DEF_CHAN_2G(2484, 14),
 };
 
 static struct ieee80211_channel rtw89_channels_5ghz[] = {
-	{.center_freq = 5180, .hw_value = 36,},
-	{.center_freq = 5200, .hw_value = 40,},
-	{.center_freq = 5220, .hw_value = 44,},
-	{.center_freq = 5240, .hw_value = 48,},
-	{.center_freq = 5260, .hw_value = 52,},
-	{.center_freq = 5280, .hw_value = 56,},
-	{.center_freq = 5300, .hw_value = 60,},
-	{.center_freq = 5320, .hw_value = 64,},
-	{.center_freq = 5500, .hw_value = 100,},
-	{.center_freq = 5520, .hw_value = 104,},
-	{.center_freq = 5540, .hw_value = 108,},
-	{.center_freq = 5560, .hw_value = 112,},
-	{.center_freq = 5580, .hw_value = 116,},
-	{.center_freq = 5600, .hw_value = 120,},
-	{.center_freq = 5620, .hw_value = 124,},
-	{.center_freq = 5640, .hw_value = 128,},
-	{.center_freq = 5660, .hw_value = 132,},
-	{.center_freq = 5680, .hw_value = 136,},
-	{.center_freq = 5700, .hw_value = 140,},
-	{.center_freq = 5720, .hw_value = 144,},
-	{.center_freq = 5745, .hw_value = 149,},
-	{.center_freq = 5765, .hw_value = 153,},
-	{.center_freq = 5785, .hw_value = 157,},
-	{.center_freq = 5805, .hw_value = 161,},
-	{.center_freq = 5825, .hw_value = 165,
-	 .flags = IEEE80211_CHAN_NO_HT40MINUS},
+	RTW89_DEF_CHAN_5G(5180, 36),
+	RTW89_DEF_CHAN_5G(5200, 40),
+	RTW89_DEF_CHAN_5G(5220, 44),
+	RTW89_DEF_CHAN_5G(5240, 48),
+	RTW89_DEF_CHAN_5G(5260, 52),
+	RTW89_DEF_CHAN_5G(5280, 56),
+	RTW89_DEF_CHAN_5G(5300, 60),
+	RTW89_DEF_CHAN_5G(5320, 64),
+	RTW89_DEF_CHAN_5G(5500, 100),
+	RTW89_DEF_CHAN_5G(5520, 104),
+	RTW89_DEF_CHAN_5G(5540, 108),
+	RTW89_DEF_CHAN_5G(5560, 112),
+	RTW89_DEF_CHAN_5G(5580, 116),
+	RTW89_DEF_CHAN_5G(5600, 120),
+	RTW89_DEF_CHAN_5G(5620, 124),
+	RTW89_DEF_CHAN_5G(5640, 128),
+	RTW89_DEF_CHAN_5G(5660, 132),
+	RTW89_DEF_CHAN_5G(5680, 136),
+	RTW89_DEF_CHAN_5G(5700, 140),
+	RTW89_DEF_CHAN_5G(5720, 144),
+	RTW89_DEF_CHAN_5G(5745, 149),
+	RTW89_DEF_CHAN_5G(5765, 153),
+	RTW89_DEF_CHAN_5G(5785, 157),
+	RTW89_DEF_CHAN_5G(5805, 161),
+	RTW89_DEF_CHAN_5G_NO_HT40MINUS(5825, 165),
+};
+
+static struct ieee80211_channel rtw89_channels_6ghz[] = {
+	RTW89_DEF_CHAN_6G(5955, 1),
+	RTW89_DEF_CHAN_6G(5975, 5),
+	RTW89_DEF_CHAN_6G(5995, 9),
+	RTW89_DEF_CHAN_6G(6015, 13),
+	RTW89_DEF_CHAN_6G(6035, 17),
+	RTW89_DEF_CHAN_6G(6055, 21),
+	RTW89_DEF_CHAN_6G(6075, 25),
+	RTW89_DEF_CHAN_6G(6095, 29),
+	RTW89_DEF_CHAN_6G(6115, 33),
+	RTW89_DEF_CHAN_6G(6135, 37),
+	RTW89_DEF_CHAN_6G(6155, 41),
+	RTW89_DEF_CHAN_6G(6175, 45),
+	RTW89_DEF_CHAN_6G(6195, 49),
+	RTW89_DEF_CHAN_6G(6215, 53),
+	RTW89_DEF_CHAN_6G(6235, 57),
+	RTW89_DEF_CHAN_6G(6255, 61),
+	RTW89_DEF_CHAN_6G(6275, 65),
+	RTW89_DEF_CHAN_6G(6295, 69),
+	RTW89_DEF_CHAN_6G(6315, 73),
+	RTW89_DEF_CHAN_6G(6335, 77),
+	RTW89_DEF_CHAN_6G(6355, 81),
+	RTW89_DEF_CHAN_6G(6375, 85),
+	RTW89_DEF_CHAN_6G(6395, 89),
+	RTW89_DEF_CHAN_6G(6415, 93),
+	RTW89_DEF_CHAN_6G(6435, 97),
+	RTW89_DEF_CHAN_6G(6455, 101),
+	RTW89_DEF_CHAN_6G(6475, 105),
+	RTW89_DEF_CHAN_6G(6495, 109),
+	RTW89_DEF_CHAN_6G(6515, 113),
+	RTW89_DEF_CHAN_6G(6535, 117),
+	RTW89_DEF_CHAN_6G(6555, 121),
+	RTW89_DEF_CHAN_6G(6575, 125),
+	RTW89_DEF_CHAN_6G(6595, 129),
+	RTW89_DEF_CHAN_6G(6615, 133),
+	RTW89_DEF_CHAN_6G(6635, 137),
+	RTW89_DEF_CHAN_6G(6655, 141),
+	RTW89_DEF_CHAN_6G(6675, 145),
+	RTW89_DEF_CHAN_6G(6695, 149),
+	RTW89_DEF_CHAN_6G(6715, 153),
+	RTW89_DEF_CHAN_6G(6735, 157),
+	RTW89_DEF_CHAN_6G(6755, 161),
+	RTW89_DEF_CHAN_6G(6775, 165),
+	RTW89_DEF_CHAN_6G(6795, 169),
+	RTW89_DEF_CHAN_6G(6815, 173),
+	RTW89_DEF_CHAN_6G(6835, 177),
+	RTW89_DEF_CHAN_6G(6855, 181),
+	RTW89_DEF_CHAN_6G(6875, 185),
+	RTW89_DEF_CHAN_6G(6895, 189),
+	RTW89_DEF_CHAN_6G(6915, 193),
+	RTW89_DEF_CHAN_6G(6935, 197),
+	RTW89_DEF_CHAN_6G(6955, 201),
+	RTW89_DEF_CHAN_6G(6975, 205),
+	RTW89_DEF_CHAN_6G(6995, 209),
+	RTW89_DEF_CHAN_6G(7015, 213),
+	RTW89_DEF_CHAN_6G(7035, 217),
+	RTW89_DEF_CHAN_6G(7055, 221),
+	RTW89_DEF_CHAN_6G(7075, 225),
+	RTW89_DEF_CHAN_6G(7095, 229),
+	RTW89_DEF_CHAN_6G(7115, 233),
 };
 
 static struct ieee80211_rate rtw89_bitrates[] = {
@@ -118,6 +190,16 @@ static struct ieee80211_supported_band rtw89_sband_5ghz = {
 	.vht_cap	= {0},
 };
 
+static struct ieee80211_supported_band rtw89_sband_6ghz = {
+	.band		= NL80211_BAND_6GHZ,
+	.channels	= rtw89_channels_6ghz,
+	.n_channels	= ARRAY_SIZE(rtw89_channels_6ghz),
+
+	/* 6G has no CCK rates, 1M/2M/5.5M/11M */
+	.bitrates	= rtw89_bitrates + 4,
+	.n_bitrates	= ARRAY_SIZE(rtw89_bitrates) - 4,
+};
+
 static void rtw89_traffic_stats_accu(struct rtw89_dev *rtwdev,
 				     struct rtw89_traffic_stats *stats,
 				     struct sk_buff *skb, bool tx)
@@ -149,6 +231,7 @@ static void rtw89_get_channel_params(struct cfg80211_chan_def *chandef,
 	u8 center_chan;
 	u8 bandwidth = RTW89_CHANNEL_WIDTH_20;
 	u8 primary_chan_idx = 0;
+	u8 band;
 
 	center_chan = channel->hw_value;
 	primary_freq = channel->center_freq;
@@ -195,10 +278,24 @@ static void rtw89_get_channel_params(struct cfg80211_chan_def *chandef,
 		break;
 	}
 
+	switch (channel->band) {
+	default:
+	case NL80211_BAND_2GHZ:
+		band = RTW89_BAND_2G;
+		break;
+	case NL80211_BAND_5GHZ:
+		band = RTW89_BAND_5G;
+		break;
+	case NL80211_BAND_6GHZ:
+		band = RTW89_BAND_6G;
+		break;
+	}
+
 	chan_param->center_chan = center_chan;
 	chan_param->primary_chan = channel->hw_value;
 	chan_param->bandwidth = bandwidth;
 	chan_param->pri_ch_idx = primary_chan_idx;
+	chan_param->band_type = band;
 }
 
 void rtw89_set_channel(struct rtw89_dev *rtwdev)
@@ -209,7 +306,6 @@ void rtw89_set_channel(struct rtw89_dev *rtwdev)
 	struct rtw89_channel_params ch_param;
 	struct rtw89_channel_help_params bak;
 	u8 center_chan, bandwidth;
-	u8 band_type;
 	bool band_changed;
 
 	rtw89_get_channel_params(&hw->conf.chandef, &ch_param);
@@ -218,15 +314,15 @@ void rtw89_set_channel(struct rtw89_dev *rtwdev)
 
 	center_chan = ch_param.center_chan;
 	bandwidth = ch_param.bandwidth;
-	band_type = center_chan > 14 ? RTW89_BAND_5G : RTW89_BAND_2G;
-	band_changed = hal->current_band_type != band_type ||
+	band_changed = hal->current_band_type != ch_param.band_type ||
 		       hal->current_channel == 0;
 
 	hal->current_band_width = bandwidth;
 	hal->current_channel = center_chan;
 	hal->prev_primary_channel = hal->current_primary_channel;
+	hal->prev_band_type = hal->current_band_type;
 	hal->current_primary_channel = ch_param.primary_chan;
-	hal->current_band_type = band_type;
+	hal->current_band_type = ch_param.band_type;
 
 	switch (center_chan) {
 	case 1 ... 14:
@@ -596,6 +692,22 @@ rtw89_core_tx_btc_spec_pkt_notify(struct rtw89_dev *rtwdev,
 }
 
 static void
+rtw89_core_tx_wake(struct rtw89_dev *rtwdev,
+		   struct rtw89_core_tx_request *tx_req)
+{
+	if (!RTW89_CHK_FW_FEATURE(TX_WAKE, &rtwdev->fw))
+		return;
+
+	if (!test_bit(RTW89_FLAG_LOW_POWER_MODE, rtwdev->flags))
+		return;
+
+	if (tx_req->tx_type != RTW89_CORE_TX_TYPE_MGMT)
+		return;
+
+	rtw89_mac_notify_wake(rtwdev);
+}
+
+static void
 rtw89_core_tx_update_desc_info(struct rtw89_dev *rtwdev,
 			       struct rtw89_core_tx_request *tx_req)
 {
@@ -691,6 +803,8 @@ int rtw89_core_tx_write(struct rtw89_dev *rtwdev, struct ieee80211_vif *vif,
 	rtw89_traffic_stats_accu(rtwdev, &rtwdev->stats, skb, true);
 	rtw89_traffic_stats_accu(rtwdev, &rtwvif->stats, skb, true);
 	rtw89_core_tx_update_desc_info(rtwdev, &tx_req);
+	rtw89_core_tx_wake(rtwdev, &tx_req);
+
 	ret = rtw89_hci_tx_write(rtwdev, &tx_req);
 	if (ret) {
 		rtw89_err(rtwdev, "failed to transmit skb to HCI\n");
@@ -1083,6 +1197,15 @@ static void rtw89_core_hw_to_sband_rate(struct ieee80211_rx_status *rx_status)
 	if (rx_status->band == NL80211_BAND_2GHZ ||
 	    rx_status->encoding != RX_ENC_LEGACY)
 		return;
+
+	/* Some control frames' freq(ACKs in this case) are reported wrong due
+	 * to FW notify timing, set to lowest rate to prevent overflow.
+	 */
+	if (rx_status->rate_idx < RTW89_HW_RATE_OFDM6) {
+		rx_status->rate_idx = 0;
+		return;
+	}
+
 	/* No 4 CCK rates for non-2G */
 	rx_status->rate_idx -= 4;
 }
@@ -1250,12 +1373,21 @@ static void rtw89_core_update_rx_status(struct rtw89_dev *rtwdev,
 					struct ieee80211_rx_status *rx_status)
 {
 	struct ieee80211_hw *hw = rtwdev->hw;
+	struct rtw89_hal *hal = &rtwdev->hal;
 	u16 data_rate;
 	u8 data_rate_mode;
 
 	/* currently using single PHY */
 	rx_status->freq = hw->conf.chandef.chan->center_freq;
 	rx_status->band = hw->conf.chandef.chan->band;
+
+	if (rtwdev->scanning &&
+	    RTW89_CHK_FW_FEATURE(SCAN_OFFLOAD, &rtwdev->fw)) {
+		rx_status->freq =
+			ieee80211_channel_to_frequency(hal->current_channel,
+						       hal->current_band_type);
+		rx_status->band = rtwdev->hal.current_band_type;
+	}
 
 	if (desc_info->icv_err || desc_info->crc32_err)
 		rx_status->flag |= RX_FLAG_FAILED_FCS_CRC;
@@ -1509,11 +1641,12 @@ static void rtw89_core_txq_push(struct rtw89_dev *rtwdev,
 	unsigned long i;
 	int ret;
 
+	rcu_read_lock();
 	for (i = 0; i < frame_cnt; i++) {
 		skb = ieee80211_tx_dequeue_ni(rtwdev->hw, txq);
 		if (!skb) {
 			rtw89_debug(rtwdev, RTW89_DBG_TXRX, "dequeue a NULL skb\n");
-			return;
+			goto out;
 		}
 		rtw89_core_txq_check_agg(rtwdev, rtwtxq, skb);
 		ret = rtw89_core_tx_write(rtwdev, vif, sta, skb, NULL);
@@ -1523,6 +1656,8 @@ static void rtw89_core_txq_push(struct rtw89_dev *rtwdev,
 			break;
 		}
 	}
+out:
+	rcu_read_unlock();
 }
 
 static u32 rtw89_check_and_reclaim_tx_resource(struct rtw89_dev *rtwdev, u8 tid)
@@ -1596,6 +1731,16 @@ static void rtw89_core_txq_schedule(struct rtw89_dev *rtwdev, u8 ac, bool *reinv
 			rtw89_core_tx_kick_off(rtwdev, rtw89_core_get_qsel(rtwdev, txq->tid));
 	}
 	ieee80211_txq_schedule_end(hw, ac);
+}
+
+static void rtw89_ips_work(struct work_struct *work)
+{
+	struct rtw89_dev *rtwdev = container_of(work, struct rtw89_dev,
+						ips_work);
+
+	mutex_lock(&rtwdev->mutex);
+	rtw89_enter_ips(rtwdev);
+	mutex_unlock(&rtwdev->mutex);
 }
 
 static void rtw89_core_txq_work(struct work_struct *w)
@@ -2138,34 +2283,52 @@ static int rtw89_core_set_supported_band(struct rtw89_dev *rtwdev)
 {
 	struct ieee80211_hw *hw = rtwdev->hw;
 	struct ieee80211_supported_band *sband_2ghz = NULL, *sband_5ghz = NULL;
+	struct ieee80211_supported_band *sband_6ghz = NULL;
 	u32 size = sizeof(struct ieee80211_supported_band);
+	u8 support_bands = rtwdev->chip->support_bands;
 
-	sband_2ghz = kmemdup(&rtw89_sband_2ghz, size, GFP_KERNEL);
-	if (!sband_2ghz)
-		goto err;
-	rtw89_init_ht_cap(rtwdev, &sband_2ghz->ht_cap);
-	rtw89_init_he_cap(rtwdev, NL80211_BAND_2GHZ, sband_2ghz);
-	hw->wiphy->bands[NL80211_BAND_2GHZ] = sband_2ghz;
+	if (support_bands & BIT(NL80211_BAND_2GHZ)) {
+		sband_2ghz = kmemdup(&rtw89_sband_2ghz, size, GFP_KERNEL);
+		if (!sband_2ghz)
+			goto err;
+		rtw89_init_ht_cap(rtwdev, &sband_2ghz->ht_cap);
+		rtw89_init_he_cap(rtwdev, NL80211_BAND_2GHZ, sband_2ghz);
+		hw->wiphy->bands[NL80211_BAND_2GHZ] = sband_2ghz;
+	}
 
-	sband_5ghz = kmemdup(&rtw89_sband_5ghz, size, GFP_KERNEL);
-	if (!sband_5ghz)
-		goto err;
-	rtw89_init_ht_cap(rtwdev, &sband_5ghz->ht_cap);
-	rtw89_init_vht_cap(rtwdev, &sband_5ghz->vht_cap);
-	rtw89_init_he_cap(rtwdev, NL80211_BAND_5GHZ, sband_5ghz);
-	hw->wiphy->bands[NL80211_BAND_5GHZ] = sband_5ghz;
+	if (support_bands & BIT(NL80211_BAND_5GHZ)) {
+		sband_5ghz = kmemdup(&rtw89_sband_5ghz, size, GFP_KERNEL);
+		if (!sband_5ghz)
+			goto err;
+		rtw89_init_ht_cap(rtwdev, &sband_5ghz->ht_cap);
+		rtw89_init_vht_cap(rtwdev, &sband_5ghz->vht_cap);
+		rtw89_init_he_cap(rtwdev, NL80211_BAND_5GHZ, sband_5ghz);
+		hw->wiphy->bands[NL80211_BAND_5GHZ] = sband_5ghz;
+	}
+
+	if (support_bands & BIT(NL80211_BAND_6GHZ)) {
+		sband_6ghz = kmemdup(&rtw89_sband_6ghz, size, GFP_KERNEL);
+		if (!sband_6ghz)
+			goto err;
+		rtw89_init_he_cap(rtwdev, NL80211_BAND_6GHZ, sband_6ghz);
+		hw->wiphy->bands[NL80211_BAND_6GHZ] = sband_6ghz;
+	}
 
 	return 0;
 
 err:
 	hw->wiphy->bands[NL80211_BAND_2GHZ] = NULL;
 	hw->wiphy->bands[NL80211_BAND_5GHZ] = NULL;
+	hw->wiphy->bands[NL80211_BAND_6GHZ] = NULL;
 	if (sband_2ghz)
 		kfree(sband_2ghz->iftype_data);
 	if (sband_5ghz)
 		kfree(sband_5ghz->iftype_data);
+	if (sband_6ghz)
+		kfree(sband_6ghz->iftype_data);
 	kfree(sband_2ghz);
 	kfree(sband_5ghz);
+	kfree(sband_6ghz);
 	return -ENOMEM;
 }
 
@@ -2175,10 +2338,14 @@ static void rtw89_core_clr_supported_band(struct rtw89_dev *rtwdev)
 
 	kfree(hw->wiphy->bands[NL80211_BAND_2GHZ]->iftype_data);
 	kfree(hw->wiphy->bands[NL80211_BAND_5GHZ]->iftype_data);
+	if (hw->wiphy->bands[NL80211_BAND_6GHZ])
+		kfree(hw->wiphy->bands[NL80211_BAND_6GHZ]->iftype_data);
 	kfree(hw->wiphy->bands[NL80211_BAND_2GHZ]);
 	kfree(hw->wiphy->bands[NL80211_BAND_5GHZ]);
+	kfree(hw->wiphy->bands[NL80211_BAND_6GHZ]);
 	hw->wiphy->bands[NL80211_BAND_2GHZ] = NULL;
 	hw->wiphy->bands[NL80211_BAND_5GHZ] = NULL;
+	hw->wiphy->bands[NL80211_BAND_6GHZ] = NULL;
 }
 
 static void rtw89_core_ppdu_sts_init(struct rtw89_dev *rtwdev)
@@ -2277,10 +2444,16 @@ int rtw89_core_init(struct rtw89_dev *rtwdev)
 {
 	struct rtw89_btc *btc = &rtwdev->btc;
 	int ret;
+	u8 band;
 
 	INIT_LIST_HEAD(&rtwdev->ba_list);
 	INIT_LIST_HEAD(&rtwdev->rtwvifs_list);
 	INIT_LIST_HEAD(&rtwdev->early_h2c_list);
+	for (band = NL80211_BAND_2GHZ; band < NUM_NL80211_BANDS; band++) {
+		if (!(rtwdev->chip->support_bands & BIT(band)))
+			continue;
+		INIT_LIST_HEAD(&rtwdev->scan_info.pkt_list[band]);
+	}
 	INIT_WORK(&rtwdev->ba_work, rtw89_core_ba_work);
 	INIT_WORK(&rtwdev->txq_work, rtw89_core_txq_work);
 	INIT_DELAYED_WORK(&rtwdev->txq_reinvoke_work, rtw89_core_txq_reinvoke_work);
@@ -2291,11 +2464,13 @@ int rtw89_core_init(struct rtw89_dev *rtwdev)
 	INIT_DELAYED_WORK(&rtwdev->cfo_track_work, rtw89_phy_cfo_track_work);
 	rtwdev->txq_wq = alloc_workqueue("rtw89_tx_wq", WQ_UNBOUND | WQ_HIGHPRI, 0);
 	spin_lock_init(&rtwdev->ba_lock);
+	spin_lock_init(&rtwdev->rpwm_lock);
 	mutex_init(&rtwdev->mutex);
 	mutex_init(&rtwdev->rf_mutex);
 	rtwdev->total_sta_assoc = 0;
 
 	INIT_WORK(&rtwdev->c2h_work, rtw89_fw_c2h_work);
+	INIT_WORK(&rtwdev->ips_work, rtw89_ips_work);
 	skb_queue_head_init(&rtwdev->c2h_queue);
 	rtw89_core_ppdu_sts_init(rtwdev);
 	rtw89_traffic_stats_init(rtwdev, &rtwdev->stats);
@@ -2330,6 +2505,41 @@ void rtw89_core_deinit(struct rtw89_dev *rtwdev)
 	mutex_destroy(&rtwdev->mutex);
 }
 EXPORT_SYMBOL(rtw89_core_deinit);
+
+void rtw89_core_scan_start(struct rtw89_dev *rtwdev, struct rtw89_vif *rtwvif,
+			   const u8 *mac_addr, bool hw_scan)
+{
+	struct rtw89_hal *hal = &rtwdev->hal;
+
+	rtwdev->scanning = true;
+	rtw89_leave_lps(rtwdev);
+	if (hw_scan && rtwvif->net_type == RTW89_NET_TYPE_NO_LINK)
+		rtw89_leave_ips(rtwdev);
+
+	ether_addr_copy(rtwvif->mac_addr, mac_addr);
+	rtw89_btc_ntfy_scan_start(rtwdev, RTW89_PHY_0, hal->current_band_type);
+	rtw89_chip_rfk_scan(rtwdev, true);
+	rtw89_hci_recalc_int_mit(rtwdev);
+
+	rtw89_fw_h2c_cam(rtwdev, rtwvif, NULL, mac_addr);
+}
+
+void rtw89_core_scan_complete(struct rtw89_dev *rtwdev,
+			      struct ieee80211_vif *vif, bool hw_scan)
+{
+	struct rtw89_vif *rtwvif = (struct rtw89_vif *)vif->drv_priv;
+
+	ether_addr_copy(rtwvif->mac_addr, vif->addr);
+	rtw89_fw_h2c_cam(rtwdev, rtwvif, NULL, NULL);
+
+	rtw89_chip_rfk_scan(rtwdev, false);
+	rtw89_btc_ntfy_scan_finish(rtwdev, RTW89_PHY_0);
+
+	rtwdev->scanning = false;
+	rtwdev->dig.bypass_dig = true;
+	if (hw_scan && rtwvif->net_type == RTW89_NET_TYPE_NO_LINK)
+		ieee80211_queue_work(rtwdev->hw, &rtwdev->ips_work);
+}
 
 static void rtw89_read_chip_ver(struct rtw89_dev *rtwdev)
 {
@@ -2437,12 +2647,16 @@ static int rtw89_core_register_hw(struct rtw89_dev *rtwdev)
 	ieee80211_hw_set(hw, SUPPORTS_AMSDU_IN_AMPDU);
 	ieee80211_hw_set(hw, SUPPORTS_PS);
 	ieee80211_hw_set(hw, SUPPORTS_DYNAMIC_PS);
+	ieee80211_hw_set(hw, SINGLE_SCAN_ON_ALL_BANDS);
 
 	hw->wiphy->interface_modes = BIT(NL80211_IFTYPE_STATION);
 	hw->wiphy->available_antennas_tx = BIT(rtwdev->chip->rf_path_num) - 1;
 	hw->wiphy->available_antennas_rx = BIT(rtwdev->chip->rf_path_num) - 1;
 
 	hw->wiphy->features |= NL80211_FEATURE_SCAN_RANDOM_MAC_ADDR;
+
+	hw->wiphy->max_scan_ssids = RTW89_SCANOFLD_MAX_SSID;
+	hw->wiphy->max_scan_ie_len = RTW89_SCANOFLD_MAX_IE_LEN;
 
 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_CAN_REPLACE_PTK0);
 

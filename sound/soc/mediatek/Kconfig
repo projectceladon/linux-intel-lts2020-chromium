@@ -199,7 +199,7 @@ config SND_SOC_MT8195
 	  If unsure select "N".
 
 config SND_SOC_MT8195_MT6359
-	tristate "ASoC Audio driver for MT8195 with MT6359 and I2S codec"
+	tristate "ASoC Audio driver for MT8195 with MT6359 and I2S codecs"
 	depends on I2C && GPIOLIB
 	depends on SND_SOC_MT8195 && MTK_PMIC_WRAP
 	select SND_SOC_MT6359
@@ -211,7 +211,7 @@ config SND_SOC_MT8195_MT6359
 	select SND_SOC_DMIC
 	select SND_SOC_HDMI_CODEC
 	help
-	  This adds support for ASoC machine driver for Mediatek MT8195 
-	  boards with the MT6359 and other I2S audio codec.
+	  This adds support for ASoC machine driver for Mediatek MT8195
+	  boards with the MT6359 and other I2S audio codecs.
 	  Select Y if you have such device.
 	  If unsure select "N".

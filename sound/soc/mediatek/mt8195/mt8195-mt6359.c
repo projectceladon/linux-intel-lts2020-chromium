@@ -27,16 +27,16 @@
 #define RT1019_SPEAKER_AMP_PRESENT		BIT(1)
 #define MAX98390_SPEAKER_AMP_PRESENT		BIT(2)
 
-#define MAX98390_CODEC_DAI	"max98390-aif1"
-#define MAX98390_DEV0_NAME	"max98390.2-0038" /* right */
-#define MAX98390_DEV1_NAME	"max98390.2-0039" /* left */
-
 #define RT1011_CODEC_DAI	"rt1011-aif"
 #define RT1011_DEV0_NAME	"rt1011.2-0038"
 #define RT1011_DEV1_NAME	"rt1011.2-0039"
 
 #define RT1019_CODEC_DAI	"HiFi"
 #define RT1019_DEV0_NAME	"rt1019p"
+
+#define MAX98390_CODEC_DAI	"max98390-aif1"
+#define MAX98390_DEV0_NAME	"max98390.2-0038" /* right */
+#define MAX98390_DEV1_NAME	"max98390.2-0039" /* left */
 
 #define RT5682_CODEC_DAI	"rt5682-aif1"
 #define RT5682_DEV0_NAME	"rt5682.2-001a"
@@ -595,7 +595,7 @@ static int mt8195_rt1011_etdm_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
 	struct snd_soc_dai *codec_dai;
 	struct snd_soc_card *card = rtd->card;
-	int srate, i, ret = 0;
+	int srate, i, ret;
 
 	srate = params_rate(params);
 
@@ -615,7 +615,7 @@ static int mt8195_rt1011_etdm_hw_params(struct snd_pcm_substream *substream,
 			return ret;
 		}
 	}
-	return ret;
+	return 0;
 }
 
 static const struct snd_soc_ops mt8195_rt1011_etdm_ops = {
@@ -644,7 +644,6 @@ static int mt8195_rt1011_init(struct snd_soc_pcm_runtime *rtd)
 
 	ret = snd_soc_dapm_add_routes(&card->dapm, mt8195_rt1011_routes,
 				      ARRAY_SIZE(mt8195_rt1011_routes));
-
 	if (ret)
 		dev_err(rtd->dev, "unable to add dapm routes, ret %d\n", ret);
 
@@ -673,7 +672,6 @@ static int mt8195_rt1019_init(struct snd_soc_pcm_runtime *rtd)
 
 	ret = snd_soc_dapm_add_routes(&card->dapm, mt8195_rt1019_routes,
 				      ARRAY_SIZE(mt8195_rt1019_routes));
-
 	if (ret)
 		dev_err(rtd->dev, "unable to add dapm routes, ret %d\n", ret);
 
@@ -702,7 +700,6 @@ static int mt8195_max98390_init(struct snd_soc_pcm_runtime *rtd)
 
 	ret = snd_soc_dapm_add_routes(&card->dapm, mt8195_max98390_routes,
 				      ARRAY_SIZE(mt8195_max98390_routes));
-
 	if (ret)
 		dev_err(rtd->dev, "unable to add dapm routes, ret %d\n", ret);
 
@@ -1658,6 +1655,7 @@ static const struct of_device_id mt8195_mt6359_dt_match[] = {
 		.compatible = "mediatek,mt8195_mt6359_max98390_rt5682",
 		.data = &mt8195_mt6359_max98390_rt5682_card,
 	},
+	{},
 };
 #endif
 

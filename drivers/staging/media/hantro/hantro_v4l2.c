@@ -642,8 +642,7 @@ static int vidioc_encoder_cmd(struct file *file, void *priv,
 	    v4l2_m2m_has_stopped(ctx->fh.m2m_ctx))
 		v4l2_event_queue_fh(&ctx->fh, &hantro_eos_event);
 
-	if (ec->cmd == V4L2_ENC_CMD_START &&
-	    v4l2_m2m_has_stopped(ctx->fh.m2m_ctx))
+	if (ec->cmd == V4L2_ENC_CMD_START)
 		vb2_clear_last_buffer_dequeued(&ctx->fh.m2m_ctx->cap_q_ctx.q);
 
 	return 0;

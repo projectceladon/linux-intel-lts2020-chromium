@@ -6,6 +6,7 @@
 #include <linux/io-64-nonatomic-lo-hi.h>
 #include <linux/psp-sev.h>
 #include <linux/types.h>
+#include <linux/workqueue.h>
 
 #include <asm/msr.h>
 
@@ -15,9 +16,11 @@
 #define PSP_MBOX_OFFSET		0x10570
 #define PSP_CMD_TIMEOUT_US	(500 * USEC_PER_MSEC)
 
+#define PSP_I2C_COOLDOWN_TIME_MS 100
+
 #define PSP_I2C_REQ_BUS_CMD		0x64
-#define PSP_I2C_REQ_RETRY_CNT		10
-#define PSP_I2C_REQ_RETRY_DELAY_US	(50 * USEC_PER_MSEC)
+#define PSP_I2C_REQ_RETRY_CNT		400
+#define PSP_I2C_REQ_RETRY_DELAY_US	(25 * USEC_PER_MSEC)
 #define PSP_I2C_REQ_STS_OK		0x0
 #define PSP_I2C_REQ_STS_BUS_BUSY	0x1
 #define PSP_I2C_REQ_STS_INV_PARAM	0x3
@@ -213,20 +216,67 @@ static int psp_send_i2c_req(enum psp_i2c_req_type i2c_req_type)
 				PSP_I2C_REQ_RETRY_DELAY_US,
 				PSP_I2C_REQ_RETRY_CNT * PSP_I2C_REQ_RETRY_DELAY_US,
 				0, req);
-	if (ret)
+	if (ret) {
+		dev_err(psp_i2c_dev, "Timed out waiting for PSP to %s I2C bus\n",
+			(i2c_req_type == PSP_I2C_REQ_ACQUIRE) ?
+			"release" : "acquire");
 		goto cleanup;
+	}
 
 	ret = status;
-	if (ret)
+	if (ret) {
+		dev_err(psp_i2c_dev, "PSP communication error\n");
 		goto cleanup;
+	}
 
 	dev_dbg(psp_i2c_dev, "Request accepted by PSP after %ums\n",
 		jiffies_to_msecs(jiffies - start));
 
 cleanup:
+	if (ret) {
+		dev_err(psp_i2c_dev, "Assume i2c bus is for exclusive host usage\n");
+		psp_i2c_mbox_fail = true;
+	}
+
 	kfree(req);
 	return ret;
 }
+
+static void release_bus_now(void)
+{
+	int status;
+
+	if (!psp_i2c_sem_acquired)
+		return;
+
+	status = psp_send_i2c_req(PSP_I2C_REQ_RELEASE);
+	if (status)
+		return;
+
+	dev_dbg(psp_i2c_dev, "PSP semaphore held for %ums\n",
+		jiffies_to_msecs(jiffies - psp_i2c_sem_acquired));
+
+	psp_i2c_sem_acquired = 0;
+}
+
+static void psp_release_i2c_bus_deferred(struct work_struct *work)
+{
+
+	mutex_lock(&psp_i2c_access_mutex);
+
+	/*
+	 * If there is any pending transaction, cannot release the bus here.
+	 * psp_release_i2c_bus will take care of this later.
+	 */
+	if (psp_i2c_access_count)
+		goto cleanup;
+
+	release_bus_now();
+
+cleanup:
+	mutex_unlock(&psp_i2c_access_mutex);
+}
+static DECLARE_DELAYED_WORK(release_queue, psp_release_i2c_bus_deferred);
 
 static int psp_acquire_i2c_bus(void)
 {
@@ -238,29 +288,23 @@ static int psp_acquire_i2c_bus(void)
 	if (psp_i2c_mbox_fail)
 		goto cleanup;
 
+	psp_i2c_access_count++;
+
 	/*
-	 * Simply increment usage counter and return if PSP semaphore was
-	 * already taken by kernel.
+	 * No need to request bus arbitration once we are inside cooldown
+	 * period.
 	 */
-	if (psp_i2c_access_count) {
-		psp_i2c_access_count++;
+	if (psp_i2c_sem_acquired)
 		goto cleanup;
-	};
 
 	status = psp_send_i2c_req(PSP_I2C_REQ_ACQUIRE);
-	if (status) {
-		if (status == -ETIMEDOUT)
-			dev_err(psp_i2c_dev, "Timed out waiting for PSP to release I2C bus\n");
-		else
-			dev_err(psp_i2c_dev, "PSP communication error\n");
-
-		dev_err(psp_i2c_dev, "Assume i2c bus is for exclusive host usage\n");
-		psp_i2c_mbox_fail = true;
+	if (status)
 		goto cleanup;
-	}
 
 	psp_i2c_sem_acquired = jiffies;
-	psp_i2c_access_count++;
+
+	schedule_delayed_work(&release_queue,
+			      msecs_to_jiffies(PSP_I2C_COOLDOWN_TIME_MS));
 
 	/*
 	 * In case of errors with PSP arbitrator psp_i2c_mbox_fail variable is
@@ -275,8 +319,6 @@ cleanup:
 
 static void psp_release_i2c_bus(void)
 {
-	int status;
-
 	mutex_lock(&psp_i2c_access_mutex);
 
 	/* Return early if mailbox was malfunctional */
@@ -291,21 +333,12 @@ static void psp_release_i2c_bus(void)
 	if (psp_i2c_access_count)
 		goto cleanup;
 
-	/* Send a release command to PSP */
-	status = psp_send_i2c_req(PSP_I2C_REQ_RELEASE);
-	if (status) {
-		if (status == -ETIMEDOUT)
-			dev_err(psp_i2c_dev, "Timed out waiting for PSP to acquire I2C bus\n");
-		else
-			dev_err(psp_i2c_dev, "PSP communication error\n");
-
-		dev_err(psp_i2c_dev, "Assume i2c bus is for exclusive host usage\n");
-		psp_i2c_mbox_fail = true;
-		goto cleanup;
-	}
-
-	dev_dbg(psp_i2c_dev, "PSP semaphore held for %ums\n",
-		jiffies_to_msecs(jiffies - psp_i2c_sem_acquired));
+	/*
+	 * Send a release command to PSP if the cooldown timeout elapsed but x86 still
+	 * owns the ctrlr.
+	 */
+	if (!delayed_work_pending(&release_queue))
+		release_bus_now();
 
 cleanup:
 	mutex_unlock(&psp_i2c_access_mutex);

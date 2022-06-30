@@ -369,6 +369,32 @@ void snd_sof_ipc_reply(struct snd_sof_dev *sdev, u32 msg_id)
 }
 EXPORT_SYMBOL(snd_sof_ipc_reply);
 
+static void ipc_comp_notification(struct snd_sof_dev *sdev,
+				  struct sof_ipc_cmd_hdr *hdr)
+{
+	u32 msg_type = hdr->cmd & SOF_CMD_TYPE_MASK;
+	struct sof_ipc_ctrl_data *cdata;
+
+	switch (msg_type) {
+	case SOF_IPC_COMP_GET_VALUE:
+	case SOF_IPC_COMP_GET_DATA:
+		cdata = kmalloc(hdr->size, GFP_KERNEL);
+		if (!cdata)
+			return;
+
+		/* read back full message */
+		snd_sof_ipc_msg_data(sdev, NULL, cdata, hdr->size);
+		break;
+	default:
+		dev_err(sdev->dev, "error: unhandled component message %#x\n", msg_type);
+		return;
+	}
+
+	snd_sof_control_notify(sdev, cdata);
+
+	kfree(cdata);
+}
+
 /* DSP firmware has sent host a message  */
 void snd_sof_ipc_msgs_rx(struct snd_sof_dev *sdev)
 {
@@ -408,7 +434,9 @@ void snd_sof_ipc_msgs_rx(struct snd_sof_dev *sdev)
 	case SOF_IPC_GLB_COMPOUND:
 	case SOF_IPC_GLB_TPLG_MSG:
 	case SOF_IPC_GLB_PM_MSG:
+		break;
 	case SOF_IPC_GLB_COMP_MSG:
+		ipc_comp_notification(sdev, &hdr);
 		break;
 	case SOF_IPC_GLB_STREAM_MSG:
 		/* need to pass msg id into the function */
@@ -581,11 +609,6 @@ static int sof_get_ctrl_copy_params(enum sof_ipc_ctrl_type ctrl_type,
 		sparams->src = (u8 *)src->chanv;
 		sparams->dst = (u8 *)dst->chanv;
 		break;
-	case SOF_CTRL_TYPE_VALUE_COMP_GET:
-	case SOF_CTRL_TYPE_VALUE_COMP_SET:
-		sparams->src = (u8 *)src->compv;
-		sparams->dst = (u8 *)dst->compv;
-		break;
 	case SOF_CTRL_TYPE_DATA_GET:
 	case SOF_CTRL_TYPE_DATA_SET:
 		sparams->src = (u8 *)src->data->data;
@@ -605,7 +628,7 @@ static int sof_get_ctrl_copy_params(enum sof_ipc_ctrl_type ctrl_type,
 static int sof_set_get_large_ctrl_data(struct snd_sof_dev *sdev,
 				       struct sof_ipc_ctrl_data *cdata,
 				       struct sof_ipc_ctrl_data_params *sparams,
-				       bool send)
+				       bool set)
 {
 	struct sof_ipc_ctrl_data *partdata;
 	size_t send_bytes;
@@ -620,7 +643,7 @@ static int sof_set_get_large_ctrl_data(struct snd_sof_dev *sdev,
 	if (!partdata)
 		return -ENOMEM;
 
-	if (send)
+	if (set)
 		err = sof_get_ctrl_copy_params(cdata->type, cdata, partdata,
 					       sparams);
 	else
@@ -649,7 +672,7 @@ static int sof_set_get_large_ctrl_data(struct snd_sof_dev *sdev,
 		msg_bytes -= send_bytes;
 		partdata->elems_remaining = msg_bytes;
 
-		if (send)
+		if (set)
 			memcpy(sparams->dst, sparams->src + offset, send_bytes);
 
 		err = sof_ipc_tx_message_unlocked(sdev->ipc,
@@ -661,7 +684,7 @@ static int sof_set_get_large_ctrl_data(struct snd_sof_dev *sdev,
 		if (err < 0)
 			break;
 
-		if (!send)
+		if (!set)
 			memcpy(sparams->dst + offset, sparams->src, send_bytes);
 
 		offset += pl_size;
@@ -676,11 +699,7 @@ static int sof_set_get_large_ctrl_data(struct snd_sof_dev *sdev,
 /*
  * IPC get()/set() for kcontrols.
  */
-int snd_sof_ipc_set_get_comp_data(struct snd_sof_control *scontrol,
-				  u32 ipc_cmd,
-				  enum sof_ipc_ctrl_type ctrl_type,
-				  enum sof_ipc_ctrl_cmd ctrl_cmd,
-				  bool send)
+int snd_sof_ipc_set_get_comp_data(struct snd_sof_control *scontrol, bool set)
 {
 	struct snd_soc_component *scomp = scontrol->scomp;
 	struct sof_ipc_ctrl_data *cdata = scontrol->control_data;
@@ -688,9 +707,11 @@ int snd_sof_ipc_set_get_comp_data(struct snd_sof_control *scontrol,
 	struct sof_ipc_fw_ready *ready = &sdev->fw_ready;
 	struct sof_ipc_fw_version *v = &ready->version;
 	struct sof_ipc_ctrl_data_params sparams;
+	enum sof_ipc_ctrl_type ctrl_type;
 	struct snd_sof_widget *swidget;
 	bool widget_found = false;
 	size_t send_bytes;
+	u32 ipc_cmd;
 	int err;
 
 	list_for_each_entry(swidget, &sdev->widget_list, list) {
@@ -718,7 +739,7 @@ int snd_sof_ipc_set_get_comp_data(struct snd_sof_control *scontrol,
 		/* write/read value header via mmaped region */
 		send_bytes = sizeof(struct sof_ipc_ctrl_value_chan) *
 		cdata->num_elems;
-		if (send)
+		if (set)
 			err = snd_sof_dsp_block_write(sdev, SOF_FW_BLK_TYPE_IRAM,
 						      scontrol->readback_offset,
 						      cdata->chanv, send_bytes);
@@ -730,12 +751,25 @@ int snd_sof_ipc_set_get_comp_data(struct snd_sof_control *scontrol,
 
 		if (err)
 			dev_err_once(sdev->dev, "error: %s TYPE_IRAM failed\n",
-				     send ? "write to" :  "read from");
+				     set ? "write to" :  "read from");
 		return err;
 	}
 
+	/*
+	 * Select the IPC cmd and the ctrl_type based on the ctrl_cmd and the
+	 * direction
+	 * Note: SOF_CTRL_TYPE_VALUE_COMP_* is not used and supported currently
+	 *	 for ctrl_type
+	 */
+	if (cdata->cmd == SOF_CTRL_CMD_BINARY) {
+		ipc_cmd = set ? SOF_IPC_COMP_SET_DATA : SOF_IPC_COMP_GET_DATA;
+		ctrl_type = set ? SOF_CTRL_TYPE_DATA_SET : SOF_CTRL_TYPE_DATA_GET;
+	} else {
+		ipc_cmd = set ? SOF_IPC_COMP_SET_VALUE : SOF_IPC_COMP_GET_VALUE;
+		ctrl_type = set ? SOF_CTRL_TYPE_VALUE_CHAN_SET : SOF_CTRL_TYPE_VALUE_CHAN_GET;
+	}
+
 	cdata->rhdr.hdr.cmd = SOF_IPC_GLB_COMP_MSG | ipc_cmd;
-	cdata->cmd = ctrl_cmd;
 	cdata->type = ctrl_type;
 	cdata->comp_id = scontrol->comp_id;
 	cdata->msg_index = 0;
@@ -746,13 +780,6 @@ int snd_sof_ipc_set_get_comp_data(struct snd_sof_control *scontrol,
 	case SOF_CTRL_TYPE_VALUE_CHAN_SET:
 		sparams.msg_bytes = scontrol->num_channels *
 			sizeof(struct sof_ipc_ctrl_value_chan);
-		sparams.hdr_bytes = sizeof(struct sof_ipc_ctrl_data);
-		sparams.elems = scontrol->num_channels;
-		break;
-	case SOF_CTRL_TYPE_VALUE_COMP_GET:
-	case SOF_CTRL_TYPE_VALUE_COMP_SET:
-		sparams.msg_bytes = scontrol->num_channels *
-			sizeof(struct sof_ipc_ctrl_value_comp);
 		sparams.hdr_bytes = sizeof(struct sof_ipc_ctrl_data);
 		sparams.elems = scontrol->num_channels;
 		break;
@@ -794,7 +821,7 @@ int snd_sof_ipc_set_get_comp_data(struct snd_sof_control *scontrol,
 		return -EINVAL;
 	}
 
-	err = sof_set_get_large_ctrl_data(sdev, cdata, &sparams, send);
+	err = sof_set_get_large_ctrl_data(sdev, cdata, &sparams, set);
 
 	if (err < 0)
 		dev_err(sdev->dev, "error: set/get large ctrl ipc comp %d\n",

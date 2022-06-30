@@ -25,6 +25,7 @@
 #include <linux/suspend.h>
 #include <linux/workqueue.h>
 
+#include <soc/rockchip/pm_domains.h>
 #include <soc/rockchip/rk3399_ddrclk.h>
 #include <soc/rockchip/rk3399_dmc.h>
 #include <soc/rockchip/rk3399_grf.h>
@@ -341,6 +342,16 @@ static int rk3399_dmcfreq_target(struct device *dev, unsigned long *freq,
 	mutex_lock(&dmcfreq->lock);
 
 	/*
+	 * Ensure power-domain transitions don't interfere with ARM Trusted
+	 * Firmware power-domain idling.
+	 */
+	err = rockchip_pmu_block();
+	if (err) {
+		dev_err(dev, "Failed to block PMU: %d\n", err);
+		goto out_unlock;
+	}
+
+	/*
 	 * Some idle parameters may be based on the DDR controller clock, which
 	 * is half of the DDR frequency.
 	 * pd_idle and standby_idle are based on the controller clock cycle.
@@ -465,6 +476,8 @@ static int rk3399_dmcfreq_target(struct device *dev, unsigned long *freq,
 	rk3399_dfi_calc_top_threshold(dmcfreq->devfreq);
 	devfreq_event_set_event(dmcfreq->edev);
 out:
+	rockchip_pmu_unblock();
+out_unlock:
 	mutex_unlock(&dmcfreq->lock);
 	return err;
 }
@@ -808,16 +821,12 @@ no_pmu:
 
 	devm_devfreq_register_opp_notifier(dev, data->devfreq);
 
-	ret = pd_register_dmc_nb(data->devfreq);
-	if (ret < 0)
-		goto out;
-
 	data->cpufreq_policy_nb.notifier_call = rk3399_cpufreq_policy_notify;
 	data->cpufreq_trans_nb.notifier_call = rk3399_cpufreq_trans_notify;
 	ret = cpufreq_register_notifier(&data->cpufreq_policy_nb,
 					CPUFREQ_POLICY_NOTIFIER);
 	if (ret < 0)
-		goto pd_unregister;
+		goto out;
 
 	ret = cpufreq_register_notifier(&data->cpufreq_trans_nb,
 					CPUFREQ_TRANSITION_NOTIFIER);
@@ -843,9 +852,6 @@ policy_unregister:
 				    CPUFREQ_POLICY_NOTIFIER);
 	cancel_work_sync(&data->boost_work);
 
-pd_unregister:
-	pd_unregister_dmc_nb(data->devfreq);
-
 out:
 	return ret;
 }
@@ -859,7 +865,6 @@ static int rk3399_dmcfreq_remove(struct platform_device *pdev)
 	WARN_ON(cpufreq_unregister_notifier(&dmcfreq->cpufreq_policy_nb,
 					    CPUFREQ_POLICY_NOTIFIER));
 	cancel_work_sync(&dmcfreq->boost_work);
-	WARN_ON(pd_unregister_dmc_nb(dmcfreq->devfreq));
 
 	return devfreq_remove_governor(&rk3399_dfi_governor);
 }

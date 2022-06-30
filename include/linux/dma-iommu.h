@@ -44,6 +44,8 @@ int iommu_dma_reserve_iova(struct device *dev, dma_addr_t base,
 
 int iommu_dma_enable_best_fit_algo(struct device *dev);
 
+extern bool iommu_dma_forcedac;
+
 #else /* CONFIG_IOMMU_DMA */
 
 struct iommu_domain;
