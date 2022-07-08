@@ -195,9 +195,11 @@ static void avs_hda_probe_work(struct work_struct *work)
 	if (ret < 0)
 		dev_info(bus->dev, "i915 init unsuccessful: %d\n", ret);
 
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	snd_hdac_display_power(bus, HDA_CODEC_IDX_CONTROLLER, true);
 	avs_hdac_bus_init_chip(bus, true);
 	avs_hdac_bus_probe_codecs(bus);
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	snd_hdac_display_power(bus, HDA_CODEC_IDX_CONTROLLER, false);
 
 	/* with all codecs probed, links can be powered down */
@@ -529,6 +531,7 @@ static void avs_pci_remove(struct pci_dev *pci)
 
 	/* snd_hdac_ext_stop_streams does that already? */
 	snd_hdac_bus_stop_chip(bus);
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	snd_hdac_display_power(bus, HDA_CODEC_IDX_CONTROLLER, false);
 	if (bus->audio_component)
 		snd_hdac_i915_exit(bus);
@@ -590,6 +593,7 @@ static int __maybe_unused avs_suspend_common(struct avs_dev *adev, bool low_powe
 	snd_hdac_bus_enter_link_reset(bus);
 	avs_hdac_clock_gating_enable(bus, true);
 
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	snd_hdac_display_power(bus, HDA_CODEC_IDX_CONTROLLER, false);
 
 	return 0;
@@ -601,6 +605,7 @@ static int __maybe_unused avs_resume_common(struct avs_dev *adev, bool low_power
 	struct hdac_ext_link *hlink;
 	int ret;
 
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	snd_hdac_display_power(bus, HDA_CODEC_IDX_CONTROLLER, true);
 	avs_hdac_bus_init_chip(bus, true);
 

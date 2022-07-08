@@ -9734,7 +9734,7 @@ static int patch_alc269(struct hda_codec *codec)
 {
 	struct alc_spec *spec;
 	int err;
-
+	printk ("Entered func %s", __func__);
 	err = alc_alloc_spec(codec, 0x0b);
 	if (err < 0)
 		return err;

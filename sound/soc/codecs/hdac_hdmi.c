@@ -2144,9 +2144,11 @@ static int hdac_hdmi_dev_probe(struct hdac_device *hdev)
 	struct hdac_driver *hdrv = drv_to_hdac_driver(hdev->dev.driver);
 	const struct hda_device_id *hdac_id = hdac_get_device_id(hdev, hdrv);
 
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	/* hold the ref while we probe */
 	hlink = snd_hdac_ext_bus_get_link(hdev->bus, dev_name(&hdev->dev));
 	if (!hlink) {
+		printk("audio Entered func %s, hdac link not found, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(&hdev->dev, "hdac link not found\n");
 		return -EIO;
 	}
@@ -2188,6 +2190,7 @@ static int hdac_hdmi_dev_probe(struct hdac_device *hdev)
 
 	ret = hdac_hdmi_parse_and_map_nid(hdev, &hdmi_dais, &num_dais);
 	if (ret < 0) {
+		printk("audio Entered func %s, Failed in parse and map nid with err: %d", __func__, ret);
 		dev_err(&hdev->dev,
 			"Failed in parse and map nid with err: %d\n", ret);
 		return ret;
@@ -2230,10 +2233,13 @@ static int hdac_hdmi_runtime_suspend(struct device *dev)
 	struct hdac_ext_link *hlink = NULL;
 
 	dev_dbg(dev, "Enter: %s\n", __func__);
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 
 	/* controller may not have been initialized for the first time */
-	if (!bus)
+	if (!bus) {
+		printk("audio Entered func %s, if (!bus), file %s at %d", __func__,__FILE__,__LINE__);
 		return 0;
+	}
 
 	/*
 	 * Power down afg.
@@ -2247,6 +2253,7 @@ static int hdac_hdmi_runtime_suspend(struct device *dev)
 
 	hlink = snd_hdac_ext_bus_get_link(bus, dev_name(dev));
 	if (!hlink) {
+		printk("audio Entered func %s hdac link not found, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(dev, "hdac link not found\n");
 		return -EIO;
 	}
@@ -2265,6 +2272,7 @@ static int hdac_hdmi_runtime_resume(struct device *dev)
 	struct hdac_bus *bus = hdev->bus;
 	struct hdac_ext_link *hlink = NULL;
 
+	printk("audio Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 	dev_dbg(dev, "Enter: %s\n", __func__);
 
 	/* controller may not have been initialized for the first time */
@@ -2273,6 +2281,7 @@ static int hdac_hdmi_runtime_resume(struct device *dev)
 
 	hlink = snd_hdac_ext_bus_get_link(bus, dev_name(dev));
 	if (!hlink) {
+		printk("audio Entered func %s, hdac link not found, file %s at %d", __func__,__FILE__,__LINE__);
 		dev_err(dev, "hdac link not found\n");
 		return -EIO;
 	}

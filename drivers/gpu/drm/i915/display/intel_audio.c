@@ -997,14 +997,16 @@ static unsigned long i915_audio_component_get_power(struct device *kdev)
 {
 	struct drm_i915_private *dev_priv = kdev_to_i915(kdev);
 	intel_wakeref_t ret;
-
+	printk("Entered func %s file %s at %d", __func__, __FILE__, __LINE__);
 	/* Catch potential impedance mismatches before they occur! */
 	BUILD_BUG_ON(sizeof(intel_wakeref_t) > sizeof(unsigned long));
 
 	ret = intel_display_power_get(dev_priv, POWER_DOMAIN_AUDIO);
 
 	if (dev_priv->audio_power_refcount++ == 0) {
+		printk("Entered func %s dev_priv->audio_power_refcount++ == 0 file %s at %d", __func__, __FILE__, __LINE__);
 		if (DISPLAY_VER(dev_priv) >= 9) {
+			printk("Entered func %s dev_priv->audio_power_refcount++ == 0 and DISPLAY_VER(dev_priv) >= 9", __func__);
 			intel_de_write(dev_priv, AUD_FREQ_CNTRL,
 				       dev_priv->audio_freq_cntrl);
 			drm_dbg_kms(&dev_priv->drm,
@@ -1016,9 +1018,19 @@ static unsigned long i915_audio_component_get_power(struct device *kdev)
 		if (IS_GEMINILAKE(dev_priv))
 			glk_force_audio_cdclk(dev_priv, true);
 
-		if (DISPLAY_VER(dev_priv) >= 10)
+		if (DISPLAY_VER(dev_priv) >= 10) {
+			printk("Entered func %s dev_priv->audio_power_refcount++ == 0 and DISPLAY_VER(dev_priv) >= 10", __func__);
+			drm_info(&dev_priv->drm, "%s: AUD_PIN_BUF at get_power %x (saved %x)\n", __func__, intel_de_read(dev_priv, AUD_PIN_BUF_CTL), dev_priv->audio_pin_buf_ctl);
+
+			if (!dev_priv->audio_pin_buf_ctl) {
+				/* use one known good value for ADLP */
+				dev_priv->audio_pin_buf_ctl = 0x30177117;
+				drm_err(&dev_priv->drm, "%s: AUD_PIN_BUF zero, trying with default of %x\n", __func__, dev_priv->audio_pin_buf_ctl);
+			}
+
 			intel_de_write(dev_priv, AUD_PIN_BUF_CTL,
-				       (intel_de_read(dev_priv, AUD_PIN_BUF_CTL) | AUD_PIN_BUF_ENABLE));
+				       dev_priv->audio_pin_buf_ctl | AUD_PIN_BUF_ENABLE);
+		}
 	}
 
 	return ret;
@@ -1043,12 +1055,15 @@ static void i915_audio_component_codec_wake_override(struct device *kdev,
 	struct drm_i915_private *dev_priv = kdev_to_i915(kdev);
 	unsigned long cookie;
 	u32 tmp;
-
-	if (DISPLAY_VER(dev_priv) < 9)
+	printk("Entered func %s file %s at %d", __func__, __FILE__,__LINE__);
+	if (DISPLAY_VER(dev_priv) < 9) {
+		printk("Entered func %s and DISPLAY_VER(dev_priv) < 9 file %s at %d", __func__,__FILE__,__LINE__);
 		return;
+	}
 
 	cookie = i915_audio_component_get_power(kdev);
 
+	printk("Entered func %s after returning from i915_audio_component_get_power, file %s at %d", __func__,__FILE__,__LINE__);
 	/*
 	 * Enable/disable generating the codec wake signal, overriding the
 	 * internal logic to generate the codec wake to controller.
@@ -1059,6 +1074,7 @@ static void i915_audio_component_codec_wake_override(struct device *kdev,
 	usleep_range(1000, 1500);
 
 	if (enable) {
+		printk("Entered func %s and enable is true, file %s at %d", __func__,__FILE__,__LINE__);
 		tmp = intel_de_read(dev_priv, HSW_AUD_CHICKENBIT);
 		tmp |= SKL_AUD_CODEC_WAKE_SIGNAL;
 		intel_de_write(dev_priv, HSW_AUD_CHICKENBIT, tmp);
@@ -1139,11 +1155,13 @@ static int i915_audio_component_sync_audio_rate(struct device *kdev, int port,
 	struct intel_crtc *crtc;
 	unsigned long cookie;
 	int err = 0;
+	printk("Entered func %s, file %s at %d", __func__,__FILE__,__LINE__);
 
 	if (!HAS_DDI(dev_priv))
 		return 0;
 
 	cookie = i915_audio_component_get_power(kdev);
+	printk("Entered func %s and returned from i915_audio_component_get_power, file %s at %d", __func__,__FILE__,__LINE__);
 	mutex_lock(&dev_priv->av_mutex);
 
 	/* 1. get the pipe */
@@ -1316,6 +1334,11 @@ static void i915_audio_component_init(struct drm_i915_private *dev_priv)
 			    aud_freq, aud_freq_init);
 
 		dev_priv->audio_freq_cntrl = aud_freq;
+
+		dev_priv->audio_pin_buf_ctl = intel_de_read(dev_priv, AUD_PIN_BUF_CTL);
+		drm_dbg_kms(&dev_priv->drm, "AUD_PIN_BUF_CTL at init 0x%x\n",
+			    dev_priv->audio_pin_buf_ctl);
+
 	}
 
 	dev_priv->audio_component_registered = true;
