@@ -377,6 +377,7 @@ EXPORT_SYMBOL_GPL(dma_buf_set_name);
 static long dma_buf_set_name_user(struct dma_buf *dmabuf, const char __user *buf)
 {
 	char *name = strndup_user(buf, DMA_BUF_NAME_LEN);
+	long ret = 0;
 
 	if (IS_ERR(name))
 		return PTR_ERR(name);
@@ -1534,10 +1535,6 @@ static int dma_buf_debug_show(struct seq_file *s, void *unused)
 		if (ret)
 			goto error_unlock;
 
-<<<<<<< HEAD
-
-=======
->>>>>>> 910b540ffa51dcf33a73d8713652c00dbd823ce1
 		spin_lock(&buf_obj->name_lock);
 		seq_printf(s, "%08zu\t%08x\t%08x\t%08ld\t%s\t%08lu\t%s\n",
 				buf_obj->size,

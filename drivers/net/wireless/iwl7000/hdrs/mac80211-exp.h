@@ -110,7 +110,6 @@
 #define rhashtable_walk_peek __iwl7000_rhashtable_walk_peek
 #define rhashtable_walk_stop __iwl7000_rhashtable_walk_stop
 #define rhashtable_init __iwl7000_rhashtable_init
-#define rhltable_init __iwl7000_rhltable_init
 #define rhashtable_free_and_destroy __iwl7000_rhashtable_free_and_destroy
 #define rhashtable_destroy __iwl7000_rhashtable_destroy
 #define __rht_bucket_nested __iwl7000___rht_bucket_nested

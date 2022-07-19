@@ -1091,7 +1091,6 @@ int rhltable_init(struct rhltable *hlt, const struct rhashtable_params *params)
 	hlt->ht.rhlist = true;
 	return err;
 }
-EXPORT_SYMBOL_GPL(rhltable_init);
 
 static void rhashtable_free_one(struct rhashtable *ht, struct rhash_head *obj,
 				void (*free_fn)(void *ptr, void *arg),

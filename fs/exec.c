@@ -938,7 +938,6 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 	if (name->name[0] != '\0') {
 		fsnotify_open(file);
 
-		trace_open_exec(name->name);
 	}
 
 out:
