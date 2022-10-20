@@ -3649,6 +3649,9 @@ static int __io_splice_prep(struct io_kiocb *req,
 	struct io_splice* sp = &req->splice;
 	unsigned int valid_flags = SPLICE_F_FD_IN_FIXED | SPLICE_F_ALL;
 
+	if (req->file->f_op->may_pollfree)
+		return -EOPNOTSUPP;
+
 	if (unlikely(req->ctx->flags & IORING_SETUP_IOPOLL))
 		return -EINVAL;
 
