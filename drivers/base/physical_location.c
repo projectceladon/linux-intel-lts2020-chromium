@@ -32,6 +32,7 @@ bool dev_add_physical_location(struct device *dev)
 	dev->physical_location->dock = pld->dock;
 	dev->physical_location->lid = pld->lid;
 
+	ACPI_FREE(pld);
 	return true;
 }
 
@@ -55,6 +56,9 @@ static ssize_t panel_show(struct device *dev, struct device_attribute *attr,
 		break;
 	case DEVICE_PANEL_FRONT:
 		panel = "front";
+		break;
+	case DEVICE_PANEL_BACK:
+		panel = "back";
 		break;
 	default:
 		panel = "unknown";

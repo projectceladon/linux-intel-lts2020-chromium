@@ -34,10 +34,10 @@
 	/delete-node/ charger-thermistor@0;
 };
 
-&usb_hub_2_0 {
+&usb_hub_2_x {
 	 vdd-supply = <&pp3300_l7c>;
 };
 
-&usb_hub_3_0 {
+&usb_hub_3_x {
 	 vdd-supply = <&pp3300_l7c>;
 };

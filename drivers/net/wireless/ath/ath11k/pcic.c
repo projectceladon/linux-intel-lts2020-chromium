@@ -140,80 +140,99 @@ int ath11k_pcic_init_msi_config(struct ath11k_base *ab)
 }
 EXPORT_SYMBOL(ath11k_pcic_init_msi_config);
 
-static inline u32 ath11k_pcic_get_window_start(struct ath11k_base *ab,
-					       u32 offset)
+static void __ath11k_pcic_write32(struct ath11k_base *ab, u32 offset, u32 value)
 {
-	u32 window_start = 0;
-
-	if ((offset ^ HAL_SEQ_WCSS_UMAC_OFFSET) < ATH11K_PCI_WINDOW_RANGE_MASK)
-		window_start = ab->hw_params.dp_window_idx * ATH11K_PCI_WINDOW_START;
-	else if ((offset ^ HAL_SEQ_WCSS_UMAC_CE0_SRC_REG(ab)) <
-		 ATH11K_PCI_WINDOW_RANGE_MASK)
-		window_start = ab->hw_params.ce_window_idx * ATH11K_PCI_WINDOW_START;
-
-	return window_start;
+	if (offset < ATH11K_PCI_WINDOW_START)
+		iowrite32(value, ab->mem  + offset);
+	else
+		ab->pci.ops->window_write32(ab, offset, value);
 }
 
 void ath11k_pcic_write32(struct ath11k_base *ab, u32 offset, u32 value)
 {
-	u32 window_start;
 	int ret = 0;
+	bool wakeup_required;
 
 	/* for offset beyond BAR + 4K - 32, may
 	 * need to wakeup the device to access.
 	 */
-	if (test_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags) &&
-	    offset >= ATH11K_PCI_ACCESS_ALWAYS_OFF && ab->pci.ops->wakeup)
+	wakeup_required = test_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags) &&
+			  offset >= ATH11K_PCI_ACCESS_ALWAYS_OFF;
+	if (wakeup_required && ab->pci.ops->wakeup)
 		ret = ab->pci.ops->wakeup(ab);
 
-	if (offset < ATH11K_PCI_WINDOW_START) {
-		iowrite32(value, ab->mem  + offset);
-	} else if (ab->hw_params.static_window_map) {
-		window_start = ath11k_pcic_get_window_start(ab, offset);
-		iowrite32(value, ab->mem + window_start +
-			  (offset & ATH11K_PCI_WINDOW_RANGE_MASK));
-	} else if (ab->pci.ops->window_write32) {
-		ab->pci.ops->window_write32(ab, offset, value);
-	}
+	__ath11k_pcic_write32(ab, offset, value);
 
-	if (test_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags) &&
-	    offset >= ATH11K_PCI_ACCESS_ALWAYS_OFF && ab->pci.ops->release &&
-	    !ret)
+	if (wakeup_required && !ret && ab->pci.ops->release)
 		ab->pci.ops->release(ab);
 }
 EXPORT_SYMBOL(ath11k_pcic_write32);
 
+static u32 __ath11k_pcic_read32(struct ath11k_base *ab, u32 offset)
+{
+	u32 val;
+
+	if (offset < ATH11K_PCI_WINDOW_START)
+		val = ioread32(ab->mem + offset);
+	else
+		val = ab->pci.ops->window_read32(ab, offset);
+
+	return val;
+}
+
 u32 ath11k_pcic_read32(struct ath11k_base *ab, u32 offset)
 {
-	u32 val = 0;
-	u32 window_start;
 	int ret = 0;
+	u32 val;
+	bool wakeup_required;
 
 	/* for offset beyond BAR + 4K - 32, may
 	 * need to wakeup the device to access.
 	 */
-	if (test_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags) &&
-	    offset >= ATH11K_PCI_ACCESS_ALWAYS_OFF && ab->pci.ops->wakeup)
+	wakeup_required = test_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags) &&
+			  offset >= ATH11K_PCI_ACCESS_ALWAYS_OFF;
+	if (wakeup_required && ab->pci.ops->wakeup)
 		ret = ab->pci.ops->wakeup(ab);
 
-	if (offset < ATH11K_PCI_WINDOW_START) {
-		val = ioread32(ab->mem + offset);
-	} else if (ab->hw_params.static_window_map) {
-		window_start = ath11k_pcic_get_window_start(ab, offset);
-		val = ioread32(ab->mem + window_start +
-			       (offset & ATH11K_PCI_WINDOW_RANGE_MASK));
-	} else if (ab->pci.ops->window_read32) {
-		val = ab->pci.ops->window_read32(ab, offset);
-	}
+	val = __ath11k_pcic_read32(ab, offset);
 
-	if (test_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags) &&
-	    offset >= ATH11K_PCI_ACCESS_ALWAYS_OFF && ab->pci.ops->release &&
-	    !ret)
+	if (wakeup_required && !ret && ab->pci.ops->release)
 		ab->pci.ops->release(ab);
 
 	return val;
 }
 EXPORT_SYMBOL(ath11k_pcic_read32);
+
+int ath11k_pcic_read(struct ath11k_base *ab, void *buf, u32 start, u32 end)
+{
+	int ret = 0;
+	bool wakeup_required;
+	u32 *data = buf;
+	u32 i;
+
+	/* for offset beyond BAR + 4K - 32, may
+	 * need to wakeup the device to access.
+	 */
+	wakeup_required = test_bit(ATH11K_FLAG_DEVICE_INIT_DONE, &ab->dev_flags) &&
+			  end >= ATH11K_PCI_ACCESS_ALWAYS_OFF;
+	if (wakeup_required && ab->pci.ops->wakeup) {
+		ret = ab->pci.ops->wakeup(ab);
+		if (ret) {
+			ath11k_warn(ab, "failed to wakeup for read from 0x%x: %d\n",
+				    start, ret);
+			return ret;
+		}
+	}
+
+	for (i = start; i < end + 1; i += 4)
+		*data++ = __ath11k_pcic_read32(ab, i);
+
+	if (wakeup_required && ab->pci.ops->release)
+		ab->pci.ops->release(ab);
+
+	return 0;
+}
+EXPORT_SYMBOL(ath11k_pcic_read);
 
 void ath11k_pcic_get_msi_address(struct ath11k_base *ab, u32 *msi_addr_lo,
 				 u32 *msi_addr_hi)
@@ -440,6 +459,7 @@ void ath11k_pcic_ext_irq_enable(struct ath11k_base *ab)
 		struct ath11k_ext_irq_grp *irq_grp = &ab->ext_irq_grp[i];
 
 		if (!irq_grp->napi_enabled) {
+			dev_set_threaded(&irq_grp->napi_ndev, true);
 			napi_enable(&irq_grp->napi);
 			irq_grp->napi_enabled = true;
 		}
@@ -516,11 +536,6 @@ static irqreturn_t ath11k_pcic_ext_interrupt_handler(int irq, void *arg)
 static int
 ath11k_pcic_get_msi_irq(struct ath11k_base *ab, unsigned int vector)
 {
-	if (!ab->pci.ops->get_msi_irq) {
-		WARN_ONCE(1, "get_msi_irq pci op not defined");
-		return -EOPNOTSUPP;
-	}
-
 	return ab->pci.ops->get_msi_irq(ab, vector);
 }
 
@@ -746,3 +761,19 @@ int ath11k_pcic_map_service_to_pipe(struct ath11k_base *ab, u16 service_id,
 	return 0;
 }
 EXPORT_SYMBOL(ath11k_pcic_map_service_to_pipe);
+
+int ath11k_pcic_register_pci_ops(struct ath11k_base *ab,
+				 const struct ath11k_pci_ops *pci_ops)
+{
+	if (!pci_ops)
+		return 0;
+
+	/* Return error if mandatory pci_ops callbacks are missing */
+	if (!pci_ops->get_msi_irq || !pci_ops->window_write32 ||
+	    !pci_ops->window_read32)
+		return -EINVAL;
+
+	ab->pci.ops = pci_ops;
+	return 0;
+}
+EXPORT_SYMBOL(ath11k_pcic_register_pci_ops);

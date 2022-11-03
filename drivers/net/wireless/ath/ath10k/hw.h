@@ -629,6 +629,14 @@ struct ath10k_hw_params {
 
 	bool dynamic_sar_support;
 
+	bool hw_restart_disconnect;
+
+	/* limit tx credit */
+	bool tx_credit_limit;
+
+	/* WAR - Delay the unmapping of the buffer */
+	bool delay_unmap_buffer;
+
 	u32 start_retry;
 };
 

@@ -14,6 +14,30 @@
 struct intel_context;
 struct i915_pxp_component;
 
+#define INTEL_PXP_MAX_HWDRM_SESSIONS 16
+
+struct intel_pxp_session {
+	/** @index: Numeric identifier for this protected session */
+	int index;
+	/** @protection_type: type of protection requested */
+	int protection_type;
+	/** @protection_mode: mode of protection requested */
+	int protection_mode;
+	/** @drmfile: pointer to drm_file, which is allocated on device file open() call */
+	struct drm_file *drmfile;
+
+	/**
+	 * @is_valid: indicates whether the session has been established
+	 *            in the HW root of trust. Note that, after a teardown, the
+	 *            session can still be considered in play on the HW even if
+	 *            the keys are gone, so we can't rely on the HW state of the
+	 *            session to know if it's valid.
+	 */
+	bool is_valid;
+
+	u32 tag;
+};
+
 /**
  * struct intel_pxp - pxp state
  */
@@ -35,13 +59,6 @@ struct intel_pxp {
 
 	/** @arb_mutex: protects arb session start */
 	struct mutex arb_mutex;
-	/**
-	 * @arb_is_valid: tracks arb session status.
-	 * After a teardown, the arb session can still be in play on the HW
-	 * even if the keys are gone, so we can't rely on the HW state of the
-	 * session to know if it's valid and need to track the status in SW.
-	 */
-	bool arb_is_valid;
 
 	/**
 	 * @key_instance: tracks which key instance we're on, so we can use it
@@ -69,6 +86,12 @@ struct intel_pxp {
 	 */
 	struct completion termination;
 
+	struct mutex session_mutex;
+	DECLARE_BITMAP(reserved_sessions, INTEL_PXP_MAX_HWDRM_SESSIONS);
+	struct intel_pxp_session *hwdrm_sessions[INTEL_PXP_MAX_HWDRM_SESSIONS];
+	struct intel_pxp_session arb_session;
+	u8 next_tag_id[INTEL_PXP_MAX_HWDRM_SESSIONS];
+
 	/** @session_work: worker that manages session events. */
 	struct work_struct session_work;
 	/** @session_events: pending session events, protected with gt->irq_lock. */
@@ -76,6 +99,13 @@ struct intel_pxp {
 #define PXP_TERMINATION_REQUEST  BIT(0)
 #define PXP_TERMINATION_COMPLETE BIT(1)
 #define PXP_INVAL_REQUIRED       BIT(2)
+
+	/**
+	 * @last_tee_msg_interrupted: tracks if the last tee msg transaction was
+	 * interrupted by a pending signal. Since the msg still ends up being sent,
+	 * we need to drop the response to clear this state.
+	 **/
+	bool last_tee_msg_interrupted;
 };
 
 #endif /* __INTEL_PXP_TYPES_H__ */

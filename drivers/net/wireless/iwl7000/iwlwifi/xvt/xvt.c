@@ -153,6 +153,25 @@ static const struct iwl_hcmd_arr iwl_xvt_cmd_groups[] = {
 	[DEBUG_GROUP] = HCMD_ARR(iwl_xvt_debug_names),
 };
 
+static void iwl_xvt_fwrt_dump_start(void *ctx)
+{
+	struct iwl_xvt *xvt = ctx;
+
+	mutex_lock(&xvt->mutex);
+}
+
+static void iwl_xvt_fwrt_dump_end(void *ctx)
+{
+	struct iwl_xvt *xvt = ctx;
+
+	mutex_unlock(&xvt->mutex);
+}
+
+static const struct iwl_fw_runtime_ops iwl_xvt_fwrt_ops = {
+	.dump_start = iwl_xvt_fwrt_dump_start,
+	.dump_end = iwl_xvt_fwrt_dump_end,
+};
+
 static int iwl_xvt_tm_send_hcmd(void *op_mode, struct iwl_host_cmd *host_cmd)
 {
 	struct iwl_xvt *xvt = (struct iwl_xvt *)op_mode;
@@ -190,7 +209,7 @@ static struct iwl_op_mode *iwl_xvt_start(struct iwl_trans *trans,
 	xvt->trans = trans;
 	xvt->dev = trans->dev;
 
-	iwl_fw_runtime_init(&xvt->fwrt, trans, fw, NULL, NULL,
+	iwl_fw_runtime_init(&xvt->fwrt, trans, fw, &iwl_xvt_fwrt_ops, xvt,
 			    NULL, NULL, dbgfs_dir);
 
 	mutex_init(&xvt->mutex);
@@ -584,6 +603,12 @@ static void iwl_xvt_nic_config(struct iwl_op_mode *op_mode)
 	radio_cfg_dash = (xvt->fw->phy_config & FW_PHY_CFG_RADIO_DASH) >>
 			 FW_PHY_CFG_RADIO_DASH_POS;
 
+	IWL_DEBUG_INFO(xvt, "Radio type=0x%x-0x%x-0x%x\n", radio_cfg_type,
+		       radio_cfg_step, radio_cfg_dash);
+
+	if (xvt->trans->trans_cfg->device_family >= IWL_DEVICE_FAMILY_AX210)
+		return;
+
 	reg_val = CSR_HW_REV_STEP_DASH(xvt->trans->hw_rev);
 
 	/* radio configuration */
@@ -613,9 +638,6 @@ static void iwl_xvt_nic_config(struct iwl_op_mode *op_mode)
 				CSR_HW_IF_CONFIG_REG_BIT_RADIO_SI |
 				CSR_HW_IF_CONFIG_REG_BIT_MAC_SI,
 				reg_val);
-
-	IWL_DEBUG_INFO(xvt, "Radio type=0x%x-0x%x-0x%x\n", radio_cfg_type,
-		       radio_cfg_step, radio_cfg_dash);
 
 	/*
 	 * W/A : NIC is stuck in a reset state after Early PCIe power off
@@ -1051,4 +1073,31 @@ int iwl_xvt_init_ppag_tables(struct iwl_xvt *xvt)
 		return 0;
 
 	return iwl_xvt_ppag_send_cmd(xvt);
+}
+
+void iwl_xvt_txpath_flush_send_cmd(struct iwl_xvt *xvt, u32 sta_id, u16 tids)
+{
+	int ret;
+	struct iwl_tx_path_flush_cmd flush_cmd = {
+		.sta_id = cpu_to_le32(sta_id),
+		.tid_mask = cpu_to_le16(tids),
+	};
+
+	struct iwl_host_cmd cmd = {
+		.id = TXPATH_FLUSH,
+		.len = { sizeof(flush_cmd), },
+		.data = { &flush_cmd, },
+		.flags = CMD_WANT_SKB,
+	};
+
+	IWL_DEBUG_TX_QUEUES(xvt, "flush for sta id %d tid mask 0x%x\n", sta_id, tids);
+
+	ret = iwl_xvt_send_cmd(xvt, &cmd);
+
+	if (ret) {
+		IWL_ERR(xvt, "Failed to send flush command (%d)\n", ret);
+		return;
+	}
+
+	iwl_xvt_txpath_flush(xvt, cmd.resp_pkt);
 }

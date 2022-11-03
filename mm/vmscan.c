@@ -202,6 +202,28 @@ static void set_task_reclaim_state(struct task_struct *task,
 	task->reclaim_state = rs;
 }
 
+int min_filelist_kbytes_handler(struct ctl_table *table, int write,
+				void *buf, size_t *len, loff_t *pos)
+{
+	size_t written;
+
+	if (!lru_gen_enabled() || write)
+		return proc_dointvec(table, write, buf, len, pos);
+
+	if (!*len || *pos) {
+		*len = 0;
+		return 0;
+	}
+
+	written = min_t(size_t, 2, *len);
+	memcpy(buf, "0\n", written);
+
+	*len = written;
+	*pos = written;
+
+	return 0;
+}
+
 static LIST_HEAD(shrinker_list);
 static DECLARE_RWSEM(shrinker_rwsem);
 
@@ -3395,6 +3417,12 @@ done:
 
 	spin_unlock(&mm_list->lock);
 
+	if (mm && first)
+		reset_bloom_filter(lruvec, walk->max_seq + 1);
+
+	if (*iter)
+		mmput_async(*iter);
+
 	*iter = mm;
 
 	return last;
@@ -6436,8 +6464,7 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *memcg,
 }
 #endif
 
-static void age_active_anon(struct pglist_data *pgdat,
-				struct scan_control *sc)
+static void kswapd_age_node(struct pglist_data *pgdat, struct scan_control *sc)
 {
 	struct mem_cgroup *memcg;
 	struct lruvec *lruvec;
@@ -6763,12 +6790,11 @@ restart:
 		sc.may_swap = !nr_boost_reclaim;
 
 		/*
-		 * Do some background aging of the anon list, to give
-		 * pages a chance to be referenced before reclaiming. All
-		 * pages are rotated regardless of classzone as this is
-		 * about consistent aging.
+		 * Do some background aging, to give pages a chance to be
+		 * referenced before reclaiming. All pages are rotated
+		 * regardless of classzone as this is about consistent aging.
 		 */
-		age_active_anon(pgdat, &sc);
+		kswapd_age_node(pgdat, &sc);
 
 		/*
 		 * If we're getting trouble reclaiming, start doing writepage

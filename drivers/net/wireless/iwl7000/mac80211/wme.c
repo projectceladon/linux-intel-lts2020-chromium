@@ -2,6 +2,7 @@
 /*
  * Copyright 2004, Instant802 Networks, Inc.
  * Copyright 2013-2014  Intel Mobile Communications GmbH
+ * Copyright (C) 2022 Intel Corporation
  */
 
 #include <linux/netdevice.h>
@@ -148,7 +149,7 @@ u16 __ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 
 	/* all mesh/ocb stations are required to support WME */
 	if (sdata->vif.type == NL80211_IFTYPE_MESH_POINT ||
-	    ieee80211_viftype_ocb(sdata->vif.type))
+	    sdata->vif.type == NL80211_IFTYPE_OCB)
 		qos = true;
 	else if (sta)
 		qos = sta->sta.wme;
@@ -210,7 +211,7 @@ u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 		if (sta)
 			break;
 
-		ra = sdata->u.mgd.bssid;
+		ra = sdata->deflink.u.mgd.bssid;
 		break;
 	case NL80211_IFTYPE_ADHOC:
 		ra = skb->data;

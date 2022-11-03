@@ -103,14 +103,13 @@ err_pm_runtime_put_sync:
 
 int mtk_mdp_comp_clock_on(struct mtk_mdp_comp *comp)
 {
-	int i, err, status;
+	int i, err;
 
 	for (i = 0; i < ARRAY_SIZE(comp->clk); i++) {
 		if (IS_ERR(comp->clk[i]))
 			continue;
 		err = clk_prepare_enable(comp->clk[i]);
 		if (err) {
-			status = err;
 			dev_err(comp->dev, "failed to enable clock, err %d. i:%d\n", err, i);
 			goto err_clk_prepare_enable;
 		}
@@ -141,69 +140,12 @@ void mtk_mdp_comp_clock_off(struct mtk_mdp_comp *comp)
 	}
 }
 
-/*
- * The MDP master device node is identified by the device tree alias
- * "mdp-rdma0".
- */
-static bool is_mdp_master(struct device *dev)
-{
-	struct device_node *aliases, *mdp_rdma0_node;
-	const char *mdp_rdma0_path;
-
-	if (!dev->of_node)
-		return false;
-
-	aliases = of_find_node_by_path("/aliases");
-	if (!aliases) {
-		dev_err(dev, "no aliases found for mdp-rdma0");
-		return false;
-	}
-
-	mdp_rdma0_path = of_get_property(aliases, "mdp-rdma0", NULL);
-	if (!mdp_rdma0_path) {
-		dev_err(dev, "get mdp-rdma0 property of /aliases failed");
-		return false;
-	}
-
-	mdp_rdma0_node = of_find_node_by_path(mdp_rdma0_path);
-	if (!mdp_rdma0_node) {
-		dev_err(dev, "path resolution failed for %s", mdp_rdma0_path);
-		return false;
-	}
-
-	return dev->of_node == mdp_rdma0_node;
-}
-
-static int mtk_mdp_comp_bind(struct device *dev, struct device *master,
-			void *data)
+static int mtk_mdp_comp_bind(struct device *dev, struct device *master, void *data)
 {
 	struct mtk_mdp_comp *comp = dev_get_drvdata(dev);
 	struct mtk_mdp_dev *mdp = data;
 
 	mtk_mdp_register_component(mdp, comp);
-
-	if (is_mdp_master(dev)) {
-		int ret;
-
-		ret = v4l2_device_register(dev, &mdp->v4l2_dev);
-		if (ret) {
-			dev_err(dev, "Failed to register v4l2 device\n");
-			return -EINVAL;
-		}
-
-		ret = vb2_dma_contig_set_max_seg_size(dev, DMA_BIT_MASK(32));
-		if (ret) {
-			dev_err(dev, "Failed to set vb2 dma mag seg size\n");
-			return -EINVAL;
-		}
-
-		/*
-		 * MDP DMA ops will be handled by the DMA callbacks associated with this
-		 * device;
-		 */
-		mdp->rdma_dev = dev;
-	}
-
 	pm_runtime_enable(dev);
 
 	return 0;
@@ -258,8 +200,22 @@ err:
 static int mtk_mdp_comp_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct device_node *vpu_node;
 	int status;
 	struct mtk_mdp_comp *comp;
+
+	vpu_node = of_parse_phandle(dev->of_node, "mediatek,vpu", 0);
+	if (vpu_node) {
+		of_node_put(vpu_node);
+		/*
+		 * The device tree node with a mediatek,vpu property is deemed
+		 * the MDP "master" device, we don't want to add a component
+		 * for it in this function because the initialization for the
+		 * master is done elsewhere.
+		 */
+		dev_info(dev, "vpu node found, not probing\n");
+		return -ENODEV;
+	}
 
 	comp = devm_kzalloc(dev, sizeof(*comp), GFP_KERNEL);
 	if (!comp)

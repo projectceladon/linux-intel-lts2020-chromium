@@ -143,8 +143,8 @@
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
 
+		/* The BIOS leaves this regulator on */
 		regulator-boot-on;
-		regulator-always-on;
 
 		gpio = <&tlmm 157 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
@@ -295,6 +295,14 @@
 
 	/* BOARD-SPECIFIC TOP LEVEL NODES */
 
+	max98360a: audio-codec-0 {
+		compatible = "maxim,max98360a";
+		pinctrl-names = "default";
+		pinctrl-0 = <&amp_en>;
+		sdmode-gpios = <&tlmm 63 GPIO_ACTIVE_HIGH>;
+		#sound-dai-cells = <0>;
+	};
+
 	pwmleds: pwmleds {
 		compatible = "pwm-leds";
 		status = "disabled";
@@ -387,7 +395,7 @@ ap_sar_sensor_i2c: &i2c1 {
 
 		vdd-supply = <&pp1800_prox>;
 
-		label = "proximity-wifi-lte0";
+		label = "proximity-wifi_cellular-0";
 		status = "disabled";
 	};
 
@@ -403,7 +411,7 @@ ap_sar_sensor_i2c: &i2c1 {
 
 		vdd-supply = <&pp1800_prox>;
 
-		label = "proximity-wifi-lte1";
+		label = "proximity-wifi_cellular-1";
 		status = "disabled";
 	};
 };
@@ -433,8 +441,6 @@ ap_i2c_tpm: &i2c14 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&dp_hot_plug_det>;
 	data-lanes = <0 1>;
-	vdda-1p2-supply = <&vdd_a_usbssdp_0_1p2>;
-	vdda-0p9-supply = <&vdd_a_usbssdp_0_core>;
 };
 
 &mdss_mdp {
@@ -446,7 +452,7 @@ ap_i2c_tpm: &i2c14 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pcie1_clkreq_n>, <&ssd_rst_l>, <&pe_wake_odl>;
 
-	perst-gpio = <&tlmm 2 GPIO_ACTIVE_LOW>;
+	perst-gpios = <&tlmm 2 GPIO_ACTIVE_LOW>;
 	vddpe-3v3-supply = <&pp3300_ssd>;
 };
 
@@ -482,6 +488,10 @@ ap_i2c_tpm: &i2c14 {
 	vqmmc-supply = <&ppvar_l6c>;
 
 	cd-gpios = <&tlmm 91 GPIO_ACTIVE_LOW>;
+};
+
+&spi_flash {
+	spi-max-frequency = <50000000>;
 };
 
 /* Fingerprint, enabled on a per-board basis */
@@ -592,6 +602,25 @@ ap_ec_spi: &spi10 {
 
 &usb_1_dwc3 {
 	dr_mode = "host";
+
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* 2.x hub on port 1 */
+	usb_hub_2_x: hub@1 {
+		compatible = "usbbda,5411";
+		reg = <1>;
+		vdd-supply = <&pp3300_hub>;
+		peer-hub = <&usb_hub_3_x>;
+	};
+
+	/* 3.x hub on port 2 */
+	usb_hub_3_x: hub@2 {
+		compatible = "usbbda,411";
+		reg = <2>;
+		vdd-supply = <&pp3300_hub>;
+		peer-hub = <&usb_hub_2_x>;
+	};
 };
 
 &usb_1_hsphy {
@@ -602,21 +631,24 @@ ap_ec_spi: &spi10 {
 	status = "okay";
 };
 
-&usb_2 {
-	status = "okay";
-};
-
-&usb_2_dwc3 {
-	dr_mode = "host";
-};
-
-&usb_2_hsphy {
-	status = "okay";
-};
-
 /* PINCTRL - ADDITIONS TO NODES IN PARENT DEVICE TREE FILES */
 
 &dp_hot_plug_det {
+	bias-disable;
+};
+
+&mi2s1_data0 {
+	drive-strength = <6>;
+	bias-disable;
+};
+
+&mi2s1_sclk {
+	drive-strength = <6>;
+	bias-disable;
+};
+
+&mi2s1_ws {
+	drive-strength = <6>;
 	bias-disable;
 };
 

@@ -10,10 +10,10 @@
 /* These are code, but not functions.  Defined in entry.S */
 DECLARE_NOT_CALLED_FROM_C(xen_failsafe_callback);
 
-DECLARE_NOT_CALLED_FROM_C(xen_sysenter_target);
+DECLARE_NOT_CALLED_FROM_C(xen_entry_SYSENTER_compat);
 #ifdef CONFIG_X86_64
-DECLARE_NOT_CALLED_FROM_C(xen_syscall_target);
-DECLARE_NOT_CALLED_FROM_C(xen_syscall32_target);
+DECLARE_NOT_CALLED_FROM_C(xen_entry_SYSCALL_64);
+DECLARE_NOT_CALLED_FROM_C(xen_entry_SYSCALL_compat);
 #endif
 
 extern void *xen_initial_gdt;

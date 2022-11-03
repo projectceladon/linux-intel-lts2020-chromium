@@ -105,14 +105,18 @@ struct drm_bridge *dp_bridge_init(struct msm_dp *dp_display, struct drm_device *
 			DRM_BRIDGE_OP_MODES;
 	}
 
+	drm_bridge_add(bridge);
+
 	rc = drm_bridge_attach(encoder, bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
 	if (rc) {
 		DRM_ERROR("failed to attach bridge, rc=%d\n", rc);
+		drm_bridge_remove(bridge);
+
 		return ERR_PTR(rc);
 	}
 
 	if (dp_display->next_bridge) {
-		rc = drm_bridge_attach(dp_display->encoder,
+		rc = drm_bridge_attach(encoder,
 					dp_display->next_bridge, bridge,
 					DRM_BRIDGE_ATTACH_NO_CONNECTOR);
 		if (rc < 0) {
@@ -126,15 +130,15 @@ struct drm_bridge *dp_bridge_init(struct msm_dp *dp_display, struct drm_device *
 }
 
 /* connector initialization */
-struct drm_connector *dp_drm_connector_init(struct msm_dp *dp_display)
+struct drm_connector *dp_drm_connector_init(struct msm_dp *dp_display, struct drm_encoder *encoder)
 {
 	struct drm_connector *connector = NULL;
 
-	connector = drm_bridge_connector_init(dp_display->drm_dev, dp_display->encoder);
+	connector = drm_bridge_connector_init(dp_display->drm_dev, encoder);
 	if (IS_ERR(connector))
 		return connector;
 
-	drm_connector_attach_encoder(connector, dp_display->encoder);
+	drm_connector_attach_encoder(connector, encoder);
 
 	return connector;
 }

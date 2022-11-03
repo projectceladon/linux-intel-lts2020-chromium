@@ -14,6 +14,7 @@
 #define IWL_FW_INI_DOMAIN_ALWAYS_ON			0
 #define IWL_FW_INI_REGION_ID_MASK			GENMASK(15, 0)
 #define IWL_FW_INI_REGION_DUMP_POLICY_MASK		GENMASK(31, 16)
+#define IWL_FW_INI_PRESET_DISABLE		0xff
 
 /**
  * struct iwl_fw_ini_hcmd
@@ -476,6 +477,7 @@ enum iwl_fw_ini_time_point {
  * @IWL_FW_INI_APPLY_POLICY_OVERRIDE_CFG: override trigger configuration
  * @IWL_FW_INI_APPLY_POLICY_OVERRIDE_DATA: override trigger data.
  *	Append otherwise
+ * @IWL_FW_INI_APPLY_POLICY_DUMP_COMPLETE_CMD: send cmd once dump collected
  */
 enum iwl_fw_ini_trigger_apply_policy {
 	IWL_FW_INI_APPLY_POLICY_MATCH_TIME_POINT	= BIT(0),
@@ -483,6 +485,7 @@ enum iwl_fw_ini_trigger_apply_policy {
 	IWL_FW_INI_APPLY_POLICY_OVERRIDE_REGIONS	= BIT(8),
 	IWL_FW_INI_APPLY_POLICY_OVERRIDE_CFG		= BIT(9),
 	IWL_FW_INI_APPLY_POLICY_OVERRIDE_DATA		= BIT(10),
+	IWL_FW_INI_APPLY_POLICY_DUMP_COMPLETE_CMD	= BIT(16),
 };
 
 /**
@@ -524,4 +527,5 @@ enum iwl_fw_ini_dump_type {
 	IWL_FW_INI_DUMP_MEDIUM,
 	IWL_FW_INI_DUMP_VERBOSE,
 };
+
 #endif

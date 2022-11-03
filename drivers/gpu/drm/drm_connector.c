@@ -24,6 +24,7 @@
 #include <drm/drm_connector.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_encoder.h>
+#include <drm/drm_panel.h>
 #include <drm/drm_utils.h>
 #include <drm/drm_print.h>
 #include <drm/drm_drv.h>
@@ -1252,7 +1253,7 @@ static const struct drm_prop_enum_list dp_colorspaces[] = {
  *	INPUT_PROP_DIRECT) will still map 1:1 to the actual LCD panel
  *	coordinates, so if userspace rotates the picture to adjust for
  *	the orientation it must also apply the same transformation to the
- *	touchscreen input coordinates. This property value is set by calling
+ *	touchscreen input coordinates. This property is initialized by calling
  *	drm_connector_set_panel_orientation() or
  *	drm_connector_set_panel_orientation_with_quirk()
  *
@@ -1485,40 +1486,6 @@ int drm_connector_attach_content_type_property(struct drm_connector *connector)
 	return 0;
 }
 EXPORT_SYMBOL(drm_connector_attach_content_type_property);
-
-
-/**
- * drm_hdmi_avi_infoframe_content_type() - fill the HDMI AVI infoframe
- *                                         content type information, based
- *                                         on correspondent DRM property.
- * @frame: HDMI AVI infoframe
- * @conn_state: DRM display connector state
- *
- */
-void drm_hdmi_avi_infoframe_content_type(struct hdmi_avi_infoframe *frame,
-					 const struct drm_connector_state *conn_state)
-{
-	switch (conn_state->content_type) {
-	case DRM_MODE_CONTENT_TYPE_GRAPHICS:
-		frame->content_type = HDMI_CONTENT_TYPE_GRAPHICS;
-		break;
-	case DRM_MODE_CONTENT_TYPE_CINEMA:
-		frame->content_type = HDMI_CONTENT_TYPE_CINEMA;
-		break;
-	case DRM_MODE_CONTENT_TYPE_GAME:
-		frame->content_type = HDMI_CONTENT_TYPE_GAME;
-		break;
-	case DRM_MODE_CONTENT_TYPE_PHOTO:
-		frame->content_type = HDMI_CONTENT_TYPE_PHOTO;
-		break;
-	default:
-		/* Graphics is the default(0) */
-		frame->content_type = HDMI_CONTENT_TYPE_GRAPHICS;
-	}
-
-	frame->itc = conn_state->content_type != DRM_MODE_CONTENT_TYPE_NO_DATA;
-}
-EXPORT_SYMBOL(drm_hdmi_avi_infoframe_content_type);
 
 /**
  * drm_connector_attach_tv_margin_properties - attach TV connector margin
@@ -2344,8 +2311,8 @@ EXPORT_SYMBOL(drm_connector_set_vrr_capable_property);
  * @connector: connector for which to set the panel-orientation property.
  * @panel_orientation: drm_panel_orientation value to set
  *
- * This function sets the connector's panel_orientation value. If the property
- * doesn't exist, it will return an error.
+ * This function sets the connector's panel_orientation and attaches
+ * a "panel orientation" property to the connector.
  *
  * Calling this function on a connector where the panel_orientation has
  * already been set is a no-op (e.g. the orientation has been overridden with
@@ -2353,6 +2320,9 @@ EXPORT_SYMBOL(drm_connector_set_vrr_capable_property);
  *
  * It is allowed to call this function with a panel_orientation of
  * DRM_MODE_PANEL_ORIENTATION_UNKNOWN, in which case it is a no-op.
+ *
+ * The function shouldn't be called in panel after drm is registered (i.e.
+ * drm_dev_register() is called in drm).
  *
  * Returns:
  * Zero on success, negative errno on failure.
@@ -2376,11 +2346,19 @@ int drm_connector_set_panel_orientation(
 	info->panel_orientation = panel_orientation;
 
 	prop = dev->mode_config.panel_orientation_property;
-	if (WARN_ON(!prop))
-		return -EINVAL;
+	if (!prop) {
+		prop = drm_property_create_enum(dev, DRM_MODE_PROP_IMMUTABLE,
+				"panel orientation",
+				drm_panel_orientation_enum_list,
+				ARRAY_SIZE(drm_panel_orientation_enum_list));
+		if (!prop)
+			return -ENOMEM;
 
-	drm_object_property_set_value(&connector->base, prop,
-				      info->panel_orientation);
+		dev->mode_config.panel_orientation_property = prop;
+	}
+
+	drm_object_attach_property(&connector->base, prop,
+				   info->panel_orientation);
 	return 0;
 }
 EXPORT_SYMBOL(drm_connector_set_panel_orientation);
@@ -2416,38 +2394,31 @@ int drm_connector_set_panel_orientation_with_quirk(
 EXPORT_SYMBOL(drm_connector_set_panel_orientation_with_quirk);
 
 /**
- * drm_connector_init_panel_orientation_property -
- * 	create the connector's panel orientation property
+ * drm_connector_set_orientation_from_panel -
+ *	set the connector's panel_orientation from panel's callback.
+ * @connector: connector for which to init the panel-orientation property.
+ * @panel: panel that can provide orientation information.
  *
- * This function attaches a "panel orientation" property to the connector
- * and initializes its value to DRM_MODE_PANEL_ORIENTATION_UNKNOWN.
- *
- * The value of the property can be set by drm_connector_set_panel_orientation()
- * or drm_connector_set_panel_orientation_with_quirk() later.
+ * Drm drivers should call this function before drm_dev_register().
+ * Orientation is obtained from panel's .get_orientation() callback.
  *
  * Returns:
  * Zero on success, negative errno on failure.
  */
-int drm_connector_init_panel_orientation_property(
-	struct drm_connector *connector)
+int drm_connector_set_orientation_from_panel(
+	struct drm_connector *connector,
+	struct drm_panel *panel)
 {
-	struct drm_device *dev = connector->dev;
-	struct drm_property *prop;
+	enum drm_panel_orientation orientation;
 
-	prop = drm_property_create_enum(dev, DRM_MODE_PROP_IMMUTABLE,
-			"panel orientation",
-			drm_panel_orientation_enum_list,
-			ARRAY_SIZE(drm_panel_orientation_enum_list));
-	if (!prop)
-		return -ENOMEM;
+	if (panel && panel->funcs && panel->funcs->get_orientation)
+		orientation = panel->funcs->get_orientation(panel);
+	else
+		orientation = DRM_MODE_PANEL_ORIENTATION_UNKNOWN;
 
-	dev->mode_config.panel_orientation_property = prop;
-	drm_object_attach_property(&connector->base, prop,
-				   DRM_MODE_PANEL_ORIENTATION_UNKNOWN);
-
-	return 0;
+	return drm_connector_set_panel_orientation(connector, orientation);
 }
-EXPORT_SYMBOL(drm_connector_init_panel_orientation_property);
+EXPORT_SYMBOL(drm_connector_set_orientation_from_panel);
 
 static const struct drm_prop_enum_list privacy_screen_enum[] = {
 	{ PRIVACY_SCREEN_DISABLED,		"Disabled" },

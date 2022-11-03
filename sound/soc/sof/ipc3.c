@@ -11,7 +11,7 @@
 #include <sound/sof/control.h>
 #include "sof-priv.h"
 #include "sof-audio.h"
-#include "ipc3-ops.h"
+#include "ipc3-priv.h"
 #include "ops.h"
 
 typedef void (*ipc3_rx_callback)(struct snd_sof_dev *sdev, void *msg_buf);
@@ -147,6 +147,8 @@ static void ipc3_log_header(struct device *dev, u8 *text, u32 cmd)
 		case SOF_IPC_TRACE_DMA_PARAMS:
 			str2 = "DMA_PARAMS"; break;
 		case SOF_IPC_TRACE_DMA_POSITION:
+			if (!sof_debug_check_flag(SOF_DBG_PRINT_DMA_POSITION_UPDATE_LOGS))
+				return;
 			str2 = "DMA_POSITION"; break;
 		case SOF_IPC_TRACE_DMA_PARAMS_EXT:
 			str2 = "DMA_PARAMS_EXT"; break;
@@ -290,7 +292,7 @@ static int ipc3_wait_tx_done(struct snd_sof_ipc *ipc, void *reply_data)
 		dev_err(sdev->dev,
 			"ipc tx timed out for %#x (msg/reply size: %d/%zu)\n",
 			hdr->cmd, hdr->size, msg->reply_size);
-		snd_sof_handle_fw_exception(ipc->sdev);
+		snd_sof_handle_fw_exception(ipc->sdev, "IPC timeout");
 		ret = -ETIMEDOUT;
 	} else {
 		ret = msg->reply_error;
@@ -299,7 +301,8 @@ static int ipc3_wait_tx_done(struct snd_sof_ipc *ipc, void *reply_data)
 				"ipc tx error for %#x (msg/reply size: %d/%zu): %d\n",
 				hdr->cmd, hdr->size, msg->reply_size, ret);
 		} else {
-			ipc3_log_header(sdev->dev, "ipc tx succeeded", hdr->cmd);
+			if (sof_debug_check_flag(SOF_DBG_PRINT_IPC_SUCCESS_LOGS))
+				ipc3_log_header(sdev->dev, "ipc tx succeeded", hdr->cmd);
 			if (msg->reply_size)
 				/* copy the data returned from DSP */
 				memcpy(reply_data, msg->reply_data,
@@ -475,8 +478,8 @@ static int sof_ipc3_set_get_data(struct snd_sof_dev *sdev, void *data, size_t da
 	return ret;
 }
 
-static int sof_ipc3_get_ext_windows(struct snd_sof_dev *sdev,
-				    const struct sof_ipc_ext_data_hdr *ext_hdr)
+int sof_ipc3_get_ext_windows(struct snd_sof_dev *sdev,
+			     const struct sof_ipc_ext_data_hdr *ext_hdr)
 {
 	const struct sof_ipc_window *w =
 		container_of(ext_hdr, struct sof_ipc_window, ext_hdr);
@@ -500,8 +503,8 @@ static int sof_ipc3_get_ext_windows(struct snd_sof_dev *sdev,
 	return 0;
 }
 
-static int sof_ipc3_get_cc_info(struct snd_sof_dev *sdev,
-				const struct sof_ipc_ext_data_hdr *ext_hdr)
+int sof_ipc3_get_cc_info(struct snd_sof_dev *sdev,
+			 const struct sof_ipc_ext_data_hdr *ext_hdr)
 {
 	int ret;
 
@@ -735,6 +738,56 @@ static int ipc3_init_reply_data_buffer(struct snd_sof_dev *sdev)
 	return 0;
 }
 
+int sof_ipc3_validate_fw_version(struct snd_sof_dev *sdev)
+{
+	struct sof_ipc_fw_ready *ready = &sdev->fw_ready;
+	struct sof_ipc_fw_version *v = &ready->version;
+
+	dev_info(sdev->dev,
+		 "Firmware info: version %d:%d:%d-%s\n",  v->major, v->minor,
+		 v->micro, v->tag);
+	dev_info(sdev->dev,
+		 "Firmware: ABI %d:%d:%d Kernel ABI %d:%d:%d\n",
+		 SOF_ABI_VERSION_MAJOR(v->abi_version),
+		 SOF_ABI_VERSION_MINOR(v->abi_version),
+		 SOF_ABI_VERSION_PATCH(v->abi_version),
+		 SOF_ABI_MAJOR, SOF_ABI_MINOR, SOF_ABI_PATCH);
+
+	if (SOF_ABI_VERSION_INCOMPATIBLE(SOF_ABI_VERSION, v->abi_version)) {
+		dev_err(sdev->dev, "incompatible FW ABI version\n");
+		return -EINVAL;
+	}
+
+	if (SOF_ABI_VERSION_MINOR(v->abi_version) > SOF_ABI_MINOR) {
+		if (!IS_ENABLED(CONFIG_SND_SOC_SOF_STRICT_ABI_CHECKS)) {
+			dev_warn(sdev->dev, "FW ABI is more recent than kernel\n");
+		} else {
+			dev_err(sdev->dev, "FW ABI is more recent than kernel\n");
+			return -EINVAL;
+		}
+	}
+
+	if (ready->flags & SOF_IPC_INFO_BUILD) {
+		dev_info(sdev->dev,
+			 "Firmware debug build %d on %s-%s - options:\n"
+			 " GDB: %s\n"
+			 " lock debug: %s\n"
+			 " lock vdebug: %s\n",
+			 v->build, v->date, v->time,
+			 (ready->flags & SOF_IPC_INFO_GDB) ?
+				"enabled" : "disabled",
+			 (ready->flags & SOF_IPC_INFO_LOCKS) ?
+				"enabled" : "disabled",
+			 (ready->flags & SOF_IPC_INFO_LOCKSV) ?
+				"enabled" : "disabled");
+	}
+
+	/* copy the fw_version into debugfs at first boot */
+	memcpy(&sdev->fw_version, v, sizeof(*v));
+
+	return 0;
+}
+
 static int ipc3_fw_ready(struct snd_sof_dev *sdev, u32 cmd)
 {
 	struct sof_ipc_fw_ready *fw_ready = &sdev->fw_ready;
@@ -767,7 +820,7 @@ static int ipc3_fw_ready(struct snd_sof_dev *sdev, u32 cmd)
 	}
 
 	/* make sure ABI version is compatible */
-	ret = snd_sof_ipc_valid(sdev);
+	ret = sof_ipc3_validate_fw_version(sdev);
 	if (ret < 0)
 		return ret;
 
@@ -896,7 +949,7 @@ static void ipc3_trace_message(struct snd_sof_dev *sdev, void *msg_buf)
 
 	switch (msg_type) {
 	case SOF_IPC_TRACE_DMA_POSITION:
-		snd_sof_trace_update_pos(sdev, msg_buf);
+		ipc3_dtrace_posn_update(sdev, msg_buf);
 		break;
 	default:
 		dev_err(sdev->dev, "unhandled trace message %#x\n", msg_type);
@@ -987,6 +1040,23 @@ static void sof_ipc3_rx_msg(struct snd_sof_dev *sdev)
 	ipc3_log_header(sdev->dev, "ipc rx done", hdr.cmd);
 }
 
+static int sof_ipc3_set_core_state(struct snd_sof_dev *sdev, int core_idx, bool on)
+{
+	struct sof_ipc_pm_core_config core_cfg = {
+		.hdr.size = sizeof(core_cfg),
+		.hdr.cmd = SOF_IPC_GLB_PM_MSG | SOF_IPC_PM_CORE_ENABLE,
+	};
+	struct sof_ipc_reply reply;
+
+	if (on)
+		core_cfg.enable_mask = sdev->enabled_cores_mask | BIT(core_idx);
+	else
+		core_cfg.enable_mask = sdev->enabled_cores_mask & ~BIT(core_idx);
+
+	return sof_ipc3_tx_msg(sdev, &core_cfg, sizeof(core_cfg),
+			       &reply, sizeof(reply), false);
+}
+
 static int sof_ipc3_ctx_ipc(struct snd_sof_dev *sdev, int cmd)
 {
 	struct sof_ipc_pm_ctx pm_ctx = {
@@ -1013,12 +1083,15 @@ static int sof_ipc3_ctx_restore(struct snd_sof_dev *sdev)
 static const struct sof_ipc_pm_ops ipc3_pm_ops = {
 	.ctx_save = sof_ipc3_ctx_save,
 	.ctx_restore = sof_ipc3_ctx_restore,
+	.set_core_state = sof_ipc3_set_core_state,
 };
 
 const struct sof_ipc_ops ipc3_ops = {
 	.tplg = &ipc3_tplg_ops,
 	.pm = &ipc3_pm_ops,
 	.pcm = &ipc3_pcm_ops,
+	.fw_loader = &ipc3_loader_ops,
+	.fw_tracing = &ipc3_dtrace_ops,
 
 	.tx_msg = sof_ipc3_tx_msg,
 	.rx_msg = sof_ipc3_rx_msg,

@@ -267,9 +267,6 @@ static struct snd_sof_dsp_ops sof_byt_ops = {
 	.pcm_open	= sof_stream_pcm_open,
 	.pcm_close	= sof_stream_pcm_close,
 
-	/* module loading */
-	.load_module	= snd_sof_parse_module_memcpy,
-
 	/*Firmware loading */
 	.load_firmware	= snd_sof_load_firmware_memcpy,
 
@@ -348,9 +345,6 @@ static struct snd_sof_dsp_ops sof_cht_ops = {
 	/* stream callbacks */
 	.pcm_open	= sof_stream_pcm_open,
 	.pcm_close	= sof_stream_pcm_close,
-
-	/* module loading */
-	.load_module	= snd_sof_parse_module_memcpy,
 
 	/*Firmware loading */
 	.load_firmware	= snd_sof_load_firmware_memcpy,
@@ -471,10 +465,7 @@ static int sof_baytrail_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	desc = device_get_match_data(&pdev->dev);
-	if (!desc)
-		return -ENODEV;
-
+	desc = (const struct sof_dev_desc *)id->driver_data;
 	if (desc == &sof_acpi_baytrail_desc && soc_intel_is_byt_cr(pdev))
 		desc = &sof_acpi_baytrailcr_desc;
 

@@ -52,6 +52,16 @@
 #define SX9324_REG_CLK_SPRD		0x15
 
 #define SX9324_REG_AFE_CTRL0		0x20
+#define SX9324_REG_AFE_CTRL0_RINT_SHIFT		6
+#define SX9324_REG_AFE_CTRL0_RINT_MASK \
+	GENMASK(SX9324_REG_AFE_CTRL0_RINT_SHIFT + 1, \
+		SX9324_REG_AFE_CTRL0_RINT_SHIFT)
+#define SX9324_REG_AFE_CTRL0_RINT_LOWEST	0x00
+#define SX9324_REG_AFE_CTRL0_CSIDLE_SHIFT	4
+#define SX9324_REG_AFE_CTRL0_CSIDLE_MASK \
+	GENMASK(SX9324_REG_AFE_CTRL0_CSIDLE_SHIFT + 1, \
+		SX9324_REG_AFE_CTRL0_CSIDLE_SHIFT)
+#define SX9324_REG_AFE_CTRL0_RINT_LOWEST	0x00
 #define SX9324_REG_AFE_CTRL1		0x21
 #define SX9324_REG_AFE_CTRL2		0x22
 #define SX9324_REG_AFE_CTRL3		0x23
@@ -70,13 +80,19 @@
 #define SX9324_REG_AFE_PH2		0x2a
 #define SX9324_REG_AFE_PH3		0x2b
 #define SX9324_REG_AFE_CTRL8		0x2c
-#define SX9324_REG_AFE_CTRL8_RESFILTN_4KOHM 0x02
+#define SX9324_REG_AFE_CTRL8_RESERVED	0x10
+#define SX9324_REG_AFE_CTRL8_RESFILTIN_4KOHM 0x02
+#define SX9324_REG_AFE_CTRL8_RESFILTIN_MASK GENMASK(3, 0)
 #define SX9324_REG_AFE_CTRL9		0x2d
+#define SX9324_REG_AFE_CTRL9_AGAIN_MASK			GENMASK(3, 0)
 #define SX9324_REG_AFE_CTRL9_AGAIN_1	0x08
 
 #define SX9324_REG_PROX_CTRL0		0x30
 #define SX9324_REG_PROX_CTRL0_GAIN_MASK	GENMASK(5, 3)
-#define SX9324_REG_PROX_CTRL0_GAIN_1		0x80
+#define SX9324_REG_PROX_CTRL0_GAIN_SHIFT	3
+#define SX9324_REG_PROX_CTRL0_GAIN_RSVD		0x0
+#define SX9324_REG_PROX_CTRL0_GAIN_1		0x1
+#define SX9324_REG_PROX_CTRL0_GAIN_8		0x4
 #define SX9324_REG_PROX_CTRL0_RAWFILT_MASK	GENMASK(2, 0)
 #define SX9324_REG_PROX_CTRL0_RAWFILT_1P50	0x01
 #define SX9324_REG_PROX_CTRL1		0x31
@@ -89,7 +105,7 @@
 #define SX9324_REG_PROX_CTRL4_AVGNEGFILT_MASK	GENMASK(5, 3)
 #define SX9324_REG_PROX_CTRL4_AVGNEG_FILT_2 0x08
 #define SX9324_REG_PROX_CTRL4_AVGPOSFILT_MASK	GENMASK(2, 0)
-#define SX9324_REG_PROX_CTRL3_AVGPOS_FILT_256 0x04
+#define SX9324_REG_PROX_CTRL4_AVGPOS_FILT_256 0x04
 #define SX9324_REG_PROX_CTRL5		0x35
 #define SX9324_REG_PROX_CTRL5_HYST_MASK			GENMASK(5, 4)
 #define SX9324_REG_PROX_CTRL5_CLOSE_DEBOUNCE_MASK	GENMASK(3, 2)
@@ -230,38 +246,38 @@ static const struct {
 	int val;
 	int val2;
 } sx9324_samp_freq_table[] = {
-	{1000, 0 },  /* 00000: Min (no idle time) */
-	{500, 0 },  /* 00001: 2 ms */
-	{250, 0 },  /* 00010: 4 ms */
-	{166, 666666 },  /* 00011: 6 ms */
-	{125, 0 },  /* 00100: 8 ms */
-	{100, 0 },  /* 00101: 10 ms */
-	{71, 428571 },  /* 00110: 14 ms */
-	{55, 555556 },  /* 00111: 18 ms */
-	{45, 454545 },  /* 01000: 22 ms */
-	{38, 461538 },  /* 01001: 26 ms */
-	{33, 333333 },  /* 01010: 30 ms */
-	{29, 411765 },  /* 01011: 34 ms */
-	{26, 315789 },  /* 01100: 38 ms */
-	{23, 809524 },  /* 01101: 42 ms */
-	{21, 739130 },  /* 01110: 46 ms */
-	{20, 0 },  /* 01111: 50 ms */
-	{17, 857143 },  /* 10000: 56 ms */
-	{16, 129032 },  /* 10001: 62 ms */
-	{14, 705882 },  /* 10010: 68 ms */
-	{13, 513514 },  /* 10011: 74 ms */
-	{12, 500000 },  /* 10100: 80 ms */
-	{11, 111111 },  /* 10101: 90 ms */
-	{10, 0 },  /* 10110: 100 ms (Typ.) */
-	{5, 0 },  /* 10111: 200 ms */
-	{3, 333333 },  /* 11000: 300 ms */
-	{2, 500000 },  /* 11001: 400 ms */
-	{1, 666667 },  /* 11010: 600 ms */
-	{1, 250000 },  /* 11011: 800 ms */
-	{1, 0 },  /* 11100: 1 s */
-	{0, 500000 },  /* 11101: 2 s */
-	{0, 333333 },  /* 11110: 3 s */
-	{0, 250000 },  /* 11111: 4 s */
+	{ 1000, 0 },  /* 00000: Min (no idle time) */
+	{ 500, 0 },  /* 00001: 2 ms */
+	{ 250, 0 },  /* 00010: 4 ms */
+	{ 166, 666666 },  /* 00011: 6 ms */
+	{ 125, 0 },  /* 00100: 8 ms */
+	{ 100, 0 },  /* 00101: 10 ms */
+	{ 71, 428571 },  /* 00110: 14 ms */
+	{ 55, 555556 },  /* 00111: 18 ms */
+	{ 45, 454545 },  /* 01000: 22 ms */
+	{ 38, 461538 },  /* 01001: 26 ms */
+	{ 33, 333333 },  /* 01010: 30 ms */
+	{ 29, 411765 },  /* 01011: 34 ms */
+	{ 26, 315789 },  /* 01100: 38 ms */
+	{ 23, 809524 },  /* 01101: 42 ms */
+	{ 21, 739130 },  /* 01110: 46 ms */
+	{ 20, 0 },  /* 01111: 50 ms */
+	{ 17, 857143 },  /* 10000: 56 ms */
+	{ 16, 129032 },  /* 10001: 62 ms */
+	{ 14, 705882 },  /* 10010: 68 ms */
+	{ 13, 513514 },  /* 10011: 74 ms */
+	{ 12, 500000 },  /* 10100: 80 ms */
+	{ 11, 111111 },  /* 10101: 90 ms */
+	{ 10, 0 },  /* 10110: 100 ms (Typ.) */
+	{ 5, 0 },  /* 10111: 200 ms */
+	{ 3, 333333 },  /* 11000: 300 ms */
+	{ 2, 500000 },  /* 11001: 400 ms */
+	{ 1, 666667 },  /* 11010: 600 ms */
+	{ 1, 250000 },  /* 11011: 800 ms */
+	{ 1, 0 },  /* 11100: 1 s */
+	{ 0, 500000 },  /* 11101: 2 s */
+	{ 0, 333333 },  /* 11110: 3 s */
+	{ 0, 250000 },  /* 11111: 4 s */
 };
 
 static const unsigned int sx9324_scan_period_table[] = {
@@ -379,7 +395,14 @@ static int sx9324_read_gain(struct sx_common_data *data,
 	if (ret)
 		return ret;
 
-	*val = 1 << FIELD_GET(SX9324_REG_PROX_CTRL0_GAIN_MASK, regval);
+	regval = FIELD_GET(SX9324_REG_PROX_CTRL0_GAIN_MASK, regval);
+	if (regval)
+		regval--;
+	else if (regval == SX9324_REG_PROX_CTRL0_GAIN_RSVD ||
+		 regval > SX9324_REG_PROX_CTRL0_GAIN_8)
+		return -EINVAL;
+
+	*val = 1 << regval;
 
 	return IIO_VAL_INT;
 }
@@ -725,8 +748,12 @@ static int sx9324_write_gain(struct sx_common_data *data,
 	unsigned int gain, reg;
 	int ret;
 
-	gain = ilog2(val);
 	reg = SX9324_REG_PROX_CTRL0 + chan->channel / 2;
+
+	gain = ilog2(val) + 1;
+	if (val <= 0 || gain > SX9324_REG_PROX_CTRL0_GAIN_8)
+		return -EINVAL;
+
 	gain = FIELD_PREP(SX9324_REG_PROX_CTRL0_GAIN_MASK, gain);
 
 	mutex_lock(&data->mutex);
@@ -767,7 +794,7 @@ static const struct sx_common_reg_default sx9324_default_regs[] = {
 	 */
 	{ SX9324_REG_GNRL_CTRL1, SX9324_REG_GNRL_CTRL1_PAUSECTRL },
 
-	{ SX9324_REG_AFE_CTRL0, 0x00 },
+	{ SX9324_REG_AFE_CTRL0, SX9324_REG_AFE_CTRL0_RINT_LOWEST },
 	{ SX9324_REG_AFE_CTRL3, 0x00 },
 	{ SX9324_REG_AFE_CTRL4, SX9324_REG_AFE_CTRL4_FREQ_83_33HZ |
 		SX9324_REG_AFE_CTRL4_RES_100 },
@@ -781,18 +808,21 @@ static const struct sx_common_reg_default sx9324_default_regs[] = {
 	{ SX9324_REG_AFE_PH2, 0x1a },
 	{ SX9324_REG_AFE_PH3, 0x16 },
 
-	{ SX9324_REG_AFE_CTRL8, SX9324_REG_AFE_CTRL8_RESFILTN_4KOHM },
+	{ SX9324_REG_AFE_CTRL8, SX9324_REG_AFE_CTRL8_RESERVED |
+		SX9324_REG_AFE_CTRL8_RESFILTIN_4KOHM },
 	{ SX9324_REG_AFE_CTRL9, SX9324_REG_AFE_CTRL9_AGAIN_1 },
 
-	{ SX9324_REG_PROX_CTRL0, SX9324_REG_PROX_CTRL0_GAIN_1 |
+	{ SX9324_REG_PROX_CTRL0,
+		SX9324_REG_PROX_CTRL0_GAIN_1 << SX9324_REG_PROX_CTRL0_GAIN_SHIFT |
 		SX9324_REG_PROX_CTRL0_RAWFILT_1P50 },
-	{ SX9324_REG_PROX_CTRL1, SX9324_REG_PROX_CTRL0_GAIN_1 |
+	{ SX9324_REG_PROX_CTRL1,
+		SX9324_REG_PROX_CTRL0_GAIN_1 << SX9324_REG_PROX_CTRL0_GAIN_SHIFT |
 		SX9324_REG_PROX_CTRL0_RAWFILT_1P50 },
 	{ SX9324_REG_PROX_CTRL2, SX9324_REG_PROX_CTRL2_AVGNEG_THRESH_16K },
 	{ SX9324_REG_PROX_CTRL3, SX9324_REG_PROX_CTRL3_AVGDEB_2SAMPLES |
 		SX9324_REG_PROX_CTRL3_AVGPOS_THRESH_16K },
 	{ SX9324_REG_PROX_CTRL4, SX9324_REG_PROX_CTRL4_AVGNEG_FILT_2 |
-		SX9324_REG_PROX_CTRL3_AVGPOS_FILT_256 },
+		SX9324_REG_PROX_CTRL4_AVGPOS_FILT_256 },
 	{ SX9324_REG_PROX_CTRL5, 0x00 },
 	{ SX9324_REG_PROX_CTRL6, SX9324_REG_PROX_CTRL6_PROXTHRESH_32 },
 	{ SX9324_REG_PROX_CTRL7, SX9324_REG_PROX_CTRL6_PROXTHRESH_32 },
@@ -845,6 +875,10 @@ static const struct sx_common_reg_default *
 sx9324_get_default_reg(struct device *dev, int idx,
 		       struct sx_common_reg_default *reg_def)
 {
+	static const char * const sx9324_rints[] = { "lowest", "low", "high",
+		"highest" };
+	static const char * const sx9324_csidle[] = { "hi-z", "hi-z", "gnd",
+		"vdd" };
 #define SX9324_PIN_DEF "semtech,ph0-pin"
 #define SX9324_RESOLUTION_DEF "semtech,ph01-resolution"
 #define SX9324_PROXRAW_DEF "semtech,ph01-proxraw-strength"
@@ -852,6 +886,7 @@ sx9324_get_default_reg(struct device *dev, int idx,
 	char prop[] = SX9324_PROXRAW_DEF;
 	u32 start = 0, raw = 0, pos = 0;
 	int ret, count, ph, pin;
+	const char *res;
 
 	memcpy(reg_def, &sx9324_default_regs[idx], sizeof(*reg_def));
 	switch (reg_def->reg) {
@@ -867,10 +902,33 @@ sx9324_get_default_reg(struct device *dev, int idx,
 			break;
 		ret = device_property_read_u32_array(dev, prop, pin_defs,
 						     ARRAY_SIZE(pin_defs));
+		if (ret)
+			break;
+
 		for (pin = 0; pin < SX9324_NUM_PINS; pin++)
 			raw |= (pin_defs[pin] << (2 * pin)) &
 			       SX9324_REG_AFE_PH0_PIN_MASK(pin);
 		reg_def->def = raw;
+		break;
+	case SX9324_REG_AFE_CTRL0:
+		ret = device_property_read_string(dev,
+				"semtech,cs-idle-sleep", &res);
+		if (!ret)
+			ret = match_string(sx9324_csidle, ARRAY_SIZE(sx9324_csidle), res);
+		if (ret >= 0) {
+			reg_def->def &= ~SX9324_REG_AFE_CTRL0_CSIDLE_MASK;
+			reg_def->def |= ret << SX9324_REG_AFE_CTRL0_CSIDLE_SHIFT;
+		}
+
+		ret = device_property_read_string(dev,
+				"semtech,int-comp-resistor", &res);
+		if (ret)
+			break;
+		ret = match_string(sx9324_rints, ARRAY_SIZE(sx9324_rints), res);
+		if (ret < 0)
+			break;
+		reg_def->def &= ~SX9324_REG_AFE_CTRL0_RINT_MASK;
+		reg_def->def |= ret << SX9324_REG_AFE_CTRL0_RINT_SHIFT;
 		break;
 	case SX9324_REG_AFE_CTRL4:
 	case SX9324_REG_AFE_CTRL7:
@@ -891,6 +949,39 @@ sx9324_get_default_reg(struct device *dev, int idx,
 		reg_def->def |= FIELD_PREP(SX9324_REG_AFE_CTRL4_RESOLUTION_MASK,
 					   raw);
 		break;
+	case SX9324_REG_AFE_CTRL8:
+		ret = device_property_read_u32(dev,
+				"semtech,input-precharge-resistor-ohms",
+				&raw);
+		if (ret)
+			break;
+
+		reg_def->def &= ~SX9324_REG_AFE_CTRL8_RESFILTIN_MASK;
+		reg_def->def |= FIELD_PREP(SX9324_REG_AFE_CTRL8_RESFILTIN_MASK,
+					   raw / 2000);
+		break;
+
+	case SX9324_REG_AFE_CTRL9:
+		ret = device_property_read_u32(dev,
+				"semtech,input-analog-gain", &raw);
+		if (ret)
+			break;
+		/*
+		 * The analog gain has the following setting:
+		 * +---------+----------------+----------------+
+		 * | dt(raw) | physical value | register value |
+		 * +---------+----------------+----------------+
+		 * |  0      |      x1.247    |      6         |
+		 * |  1      |      x1        |      8         |
+		 * |  2      |      x0.768    |     11         |
+		 * |  3      |      x0.552    |     15         |
+		 * +---------+----------------+----------------+
+		 */
+		reg_def->def &= ~SX9324_REG_AFE_CTRL9_AGAIN_MASK;
+		reg_def->def |= FIELD_PREP(SX9324_REG_AFE_CTRL9_AGAIN_MASK,
+					   6 + raw * (raw + 3) / 2);
+		break;
+
 	case SX9324_REG_ADV_CTRL5:
 		ret = device_property_read_u32(dev, "semtech,startup-sensor",
 					       &start);
@@ -1038,7 +1129,7 @@ static const struct of_device_id sx9324_of_match[] = {
 MODULE_DEVICE_TABLE(of, sx9324_of_match);
 
 static const struct i2c_device_id sx9324_id[] = {
-	{"sx9324", SX9324_WHOAMI_VALUE },
+	{ "sx9324", SX9324_WHOAMI_VALUE },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, sx9324_id);

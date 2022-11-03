@@ -32,13 +32,9 @@
 #define VOL_HALF_DB_STEP	50
 
 /* TLV data items */
-#define TLV_ITEMS	3
 #define TLV_MIN		0
 #define TLV_STEP	1
 #define TLV_MUTE	2
-
-/* size of tplg abi in byte */
-#define SOF_TPLG_ABI_SIZE 3
 
 /**
  * sof_update_ipc_object - Parse multiple sets of tokens within the token array associated with the
@@ -134,7 +130,7 @@ int sof_update_ipc_object(struct snd_soc_component *scomp, void *object, enum so
 	return 0;
 }
 
-static inline int get_tlv_data(const int *p, int tlv[TLV_ITEMS])
+static inline int get_tlv_data(const int *p, int tlv[SOF_TLV_ITEMS])
 {
 	/* we only support dB scale TLV type at the moment */
 	if ((int)p[SNDRV_CTL_TLVO_TYPE] != SNDRV_CTL_TLVT_DB_SCALE)
@@ -224,7 +220,7 @@ static u32 vol_pow32(u32 a, int exp, u32 fwl)
  * Function to calculate volume gain from TLV data.
  * This function can only handle gain steps that are multiples of 0.5 dB
  */
-static u32 vol_compute_gain(u32 value, int *tlv)
+u32 vol_compute_gain(u32 value, int *tlv)
 {
 	int dB_gain;
 	u32 linear_gain;
@@ -263,20 +259,17 @@ static u32 vol_compute_gain(u32 value, int *tlv)
  * "size" specifies the number of entries in the table
  */
 static int set_up_volume_table(struct snd_sof_control *scontrol,
-			       int tlv[TLV_ITEMS], int size)
+			       int tlv[SOF_TLV_ITEMS], int size)
 {
-	int j;
+	struct snd_soc_component *scomp = scontrol->scomp;
+	struct snd_sof_dev *sdev = snd_soc_component_get_drvdata(scomp);
+	const struct sof_ipc_tplg_ops *tplg_ops = sdev->ipc->ops->tplg;
 
-	/* init the volume table */
-	scontrol->volume_table = kcalloc(size, sizeof(u32), GFP_KERNEL);
-	if (!scontrol->volume_table)
-		return -ENOMEM;
+	if (tplg_ops->control->set_up_volume_table)
+		return tplg_ops->control->set_up_volume_table(scontrol, tlv, size);
 
-	/* populate the volume table */
-	for (j = 0; j < size ; j++)
-		scontrol->volume_table[j] = vol_compute_gain(j, tlv);
-
-	return 0;
+	dev_err(scomp->dev, "Mandatory op %s not set\n", __func__);
+	return -EINVAL;
 }
 
 struct sof_dai_types {
@@ -294,6 +287,7 @@ static const struct sof_dai_types sof_dais[] = {
 	{"ACP", SOF_DAI_AMD_BT},
 	{"ACPSP", SOF_DAI_AMD_SP},
 	{"ACPDMIC", SOF_DAI_AMD_DMIC},
+	{"ACPHS", SOF_DAI_AMD_HS},
 	{"AFE", SOF_DAI_MEDIATEK_AFE},
 };
 
@@ -772,7 +766,7 @@ static int sof_control_load_volume(struct snd_soc_component *scomp,
 	struct snd_sof_dev *sdev = snd_soc_component_get_drvdata(scomp);
 	struct snd_soc_tplg_mixer_control *mc =
 		container_of(hdr, struct snd_soc_tplg_mixer_control, hdr);
-	int tlv[TLV_ITEMS];
+	int tlv[SOF_TLV_ITEMS];
 	unsigned int mask;
 	int ret;
 
@@ -1145,6 +1139,21 @@ static int spcm_bind(struct snd_soc_component *scomp, struct snd_sof_pcm *spcm,
 	return 0;
 }
 
+static int sof_get_token_value(u32 token_id, struct snd_sof_tuple *tuples, int num_tuples)
+{
+	int i;
+
+	if (!tuples)
+		return -EINVAL;
+
+	for (i = 0; i < num_tuples; i++) {
+		if (tuples[i].token == token_id)
+			return tuples[i].value.v;
+	}
+
+	return -EINVAL;
+}
+
 static int sof_widget_parse_tokens(struct snd_soc_component *scomp, struct snd_sof_widget *swidget,
 				   struct snd_soc_tplg_dapm_widget *tw,
 				   enum sof_tokens *object_token_list, int count)
@@ -1172,6 +1181,8 @@ static int sof_widget_parse_tokens(struct snd_soc_component *scomp, struct snd_s
 
 	/* parse token list for widget */
 	for (i = 0; i < count; i++) {
+		int num_sets = 1;
+
 		if (object_token_list[i] >= SOF_TOKEN_COUNT) {
 			dev_err(scomp->dev, "Invalid token id %d for widget %s\n",
 				object_token_list[i], swidget->widget->name);
@@ -1179,8 +1190,9 @@ static int sof_widget_parse_tokens(struct snd_soc_component *scomp, struct snd_s
 			goto err;
 		}
 
-		/* parse and save UUID in swidget */
-		if (object_token_list[i] == SOF_COMP_EXT_TOKENS) {
+		switch (object_token_list[i]) {
+		case SOF_COMP_EXT_TOKENS:
+			/* parse and save UUID in swidget */
 			ret = sof_parse_tokens(scomp, swidget,
 					       token_list[object_token_list[i]].tokens,
 					       token_list[object_token_list[i]].count,
@@ -1193,11 +1205,41 @@ static int sof_widget_parse_tokens(struct snd_soc_component *scomp, struct snd_s
 			}
 
 			continue;
+		case SOF_IN_AUDIO_FORMAT_TOKENS:
+		case SOF_OUT_AUDIO_FORMAT_TOKENS:
+		case SOF_COPIER_GATEWAY_CFG_TOKENS:
+		case SOF_AUDIO_FORMAT_BUFFER_SIZE_TOKENS:
+			num_sets = sof_get_token_value(SOF_TKN_COMP_NUM_AUDIO_FORMATS,
+						       swidget->tuples, swidget->num_tuples);
+
+			if (num_sets < 0) {
+				dev_err(sdev->dev, "Invalid audio format count for %s\n",
+					swidget->widget->name);
+				ret = num_sets;
+				goto err;
+			}
+
+			if (num_sets > 1) {
+				struct snd_sof_tuple *new_tuples;
+
+				num_tuples += token_list[object_token_list[i]].count * num_sets;
+				new_tuples = krealloc(swidget->tuples,
+						      sizeof(*new_tuples) * num_tuples, GFP_KERNEL);
+				if (!new_tuples) {
+					ret = -ENOMEM;
+					goto err;
+				}
+
+				swidget->tuples = new_tuples;
+			}
+			break;
+		default:
+			break;
 		}
 
 		/* copy one set of tuples per token ID into swidget->tuples */
 		ret = sof_copy_tuples(sdev, private->array, le32_to_cpu(private->size),
-				      object_token_list[i], 1, swidget->tuples,
+				      object_token_list[i], num_sets, swidget->tuples,
 				      num_tuples, &swidget->num_tuples);
 		if (ret < 0) {
 			dev_err(scomp->dev, "Failed parsing %s for widget %s err: %d\n",
@@ -1210,21 +1252,6 @@ static int sof_widget_parse_tokens(struct snd_soc_component *scomp, struct snd_s
 err:
 	kfree(swidget->tuples);
 	return ret;
-}
-
-static int sof_get_token_value(u32 token_id, struct snd_sof_tuple *tuples, int num_tuples)
-{
-	int i;
-
-	if (!tuples)
-		return -EINVAL;
-
-	for (i = 0; i < num_tuples; i++) {
-		if (tuples[i].token == token_id)
-			return tuples[i].value.v;
-	}
-
-	return -EINVAL;
 }
 
 /* external widget init - used for any driver specific init */
@@ -1393,7 +1420,6 @@ static int sof_widget_unload(struct snd_soc_component *scomp,
 	struct soc_bytes_ext *sbe;
 	struct snd_sof_dai *dai;
 	struct soc_enum *se;
-	int ret = 0;
 	int i;
 
 	swidget = dobj->private;
@@ -1454,7 +1480,7 @@ out:
 	list_del(&swidget->list);
 	kfree(swidget);
 
-	return ret;
+	return 0;
 }
 
 /*
@@ -1713,6 +1739,10 @@ static int sof_link_load(struct snd_soc_component *scomp, int index, struct snd_
 		token_id = SOF_AFE_TOKENS;
 		num_tuples += token_list[SOF_AFE_TOKENS].count;
 		break;
+	case SOF_DAI_AMD_DMIC:
+		token_id = SOF_ACPDMIC_TOKENS;
+		num_tuples += token_list[SOF_ACPDMIC_TOKENS].count;
+		break;
 	default:
 		break;
 	}
@@ -1725,14 +1755,16 @@ static int sof_link_load(struct snd_soc_component *scomp, int index, struct snd_
 		return -ENOMEM;
 	}
 
-	/* parse one set of DAI link tokens */
-	ret = sof_copy_tuples(sdev, private->array, le32_to_cpu(private->size),
-			      SOF_DAI_LINK_TOKENS, 1, slink->tuples,
-			      num_tuples, &slink->num_tuples);
-	if (ret < 0) {
-		dev_err(scomp->dev, "failed to parse %s for dai link %s\n",
-			token_list[SOF_DAI_LINK_TOKENS].name, link->name);
-		goto err;
+	if (token_list[SOF_DAI_LINK_TOKENS].tokens) {
+		/* parse one set of DAI link tokens */
+		ret = sof_copy_tuples(sdev, private->array, le32_to_cpu(private->size),
+				      SOF_DAI_LINK_TOKENS, 1, slink->tuples,
+				      num_tuples, &slink->num_tuples);
+		if (ret < 0) {
+			dev_err(scomp->dev, "failed to parse %s for dai link %s\n",
+				token_list[SOF_DAI_LINK_TOKENS].name, link->name);
+			goto err;
+		}
 	}
 
 	/* nothing more to do if there are no DAI type-specific tokens defined */
@@ -1989,45 +2021,11 @@ static int sof_complete(struct snd_soc_component *scomp)
 static int sof_manifest(struct snd_soc_component *scomp, int index,
 			struct snd_soc_tplg_manifest *man)
 {
-	u32 size;
-	u32 abi_version;
+	struct snd_sof_dev *sdev = snd_soc_component_get_drvdata(scomp);
+	const struct sof_ipc_tplg_ops *ipc_tplg_ops = sdev->ipc->ops->tplg;
 
-	size = le32_to_cpu(man->priv.size);
-
-	/* backward compatible with tplg without ABI info */
-	if (!size) {
-		dev_dbg(scomp->dev, "No topology ABI info\n");
-		return 0;
-	}
-
-	if (size != SOF_TPLG_ABI_SIZE) {
-		dev_err(scomp->dev, "error: invalid topology ABI size\n");
-		return -EINVAL;
-	}
-
-	dev_info(scomp->dev,
-		 "Topology: ABI %d:%d:%d Kernel ABI %d:%d:%d\n",
-		 man->priv.data[0], man->priv.data[1],
-		 man->priv.data[2], SOF_ABI_MAJOR, SOF_ABI_MINOR,
-		 SOF_ABI_PATCH);
-
-	abi_version = SOF_ABI_VER(man->priv.data[0],
-				  man->priv.data[1],
-				  man->priv.data[2]);
-
-	if (SOF_ABI_VERSION_INCOMPATIBLE(SOF_ABI_VERSION, abi_version)) {
-		dev_err(scomp->dev, "error: incompatible topology ABI version\n");
-		return -EINVAL;
-	}
-
-	if (SOF_ABI_VERSION_MINOR(abi_version) > SOF_ABI_MINOR) {
-		if (!IS_ENABLED(CONFIG_SND_SOC_SOF_STRICT_ABI_CHECKS)) {
-			dev_warn(scomp->dev, "warn: topology ABI is more recent than kernel\n");
-		} else {
-			dev_err(scomp->dev, "error: topology ABI is more recent than kernel\n");
-			return -EINVAL;
-		}
-	}
+	if (ipc_tplg_ops->parse_manifest)
+		return ipc_tplg_ops->parse_manifest(scomp, index, man);
 
 	return 0;
 }

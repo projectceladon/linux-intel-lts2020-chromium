@@ -9,6 +9,8 @@
  * Hardware interface for audio DSP on Tigerlake.
  */
 
+#include <sound/sof/ext_manifest4.h>
+#include "../ipc4-priv.h"
 #include "../ops.h"
 #include "hda.h"
 #include "hda-ipc.h"
@@ -22,40 +24,30 @@ static const struct snd_sof_debugfs_map tgl_dsp_debugfs[] = {
 
 static int tgl_dsp_core_get(struct snd_sof_dev *sdev, int core)
 {
-	struct sof_ipc_pm_core_config pm_core_config = {
-		.hdr = {
-			.cmd = SOF_IPC_GLB_PM_MSG | SOF_IPC_PM_CORE_ENABLE,
-			.size = sizeof(pm_core_config),
-		},
-		.enable_mask = sdev->enabled_cores_mask | BIT(core),
-	};
+	const struct sof_ipc_pm_ops *pm_ops = sdev->ipc->ops->pm;
 
 	/* power up primary core if not already powered up and return */
 	if (core == SOF_DSP_PRIMARY_CORE)
 		return hda_dsp_enable_core(sdev, BIT(core));
 
-	/* notify DSP for secondary cores */
-	return sof_ipc_tx_message(sdev->ipc, &pm_core_config, sizeof(pm_core_config),
-				 &pm_core_config, sizeof(pm_core_config));
+	if (pm_ops->set_core_state)
+		return pm_ops->set_core_state(sdev, core, true);
+
+	return 0;
 }
 
 static int tgl_dsp_core_put(struct snd_sof_dev *sdev, int core)
 {
-	struct sof_ipc_pm_core_config pm_core_config = {
-		.hdr = {
-			.cmd = SOF_IPC_GLB_PM_MSG | SOF_IPC_PM_CORE_ENABLE,
-			.size = sizeof(pm_core_config),
-		},
-		.enable_mask = sdev->enabled_cores_mask & ~BIT(core),
-	};
+	const struct sof_ipc_pm_ops *pm_ops = sdev->ipc->ops->pm;
 
 	/* power down primary core and return */
 	if (core == SOF_DSP_PRIMARY_CORE)
 		return hda_dsp_core_reset_power_down(sdev, BIT(core));
 
-	/* notify DSP for secondary cores */
-	return sof_ipc_tx_message(sdev->ipc, &pm_core_config, sizeof(pm_core_config),
-				 &pm_core_config, sizeof(pm_core_config));
+	if (pm_ops->set_core_state)
+		return pm_ops->set_core_state(sdev, core, false);
+
+	return 0;
 }
 
 /* Tigerlake ops */
@@ -70,11 +62,30 @@ int sof_tgl_ops_init(struct snd_sof_dev *sdev)
 	/* probe/remove/shutdown */
 	sof_tgl_ops.shutdown	= hda_dsp_shutdown;
 
-	/* doorbell */
-	sof_tgl_ops.irq_thread	= cnl_ipc_irq_thread;
+	if (sdev->pdata->ipc_type == SOF_IPC) {
+		/* doorbell */
+		sof_tgl_ops.irq_thread	= cnl_ipc_irq_thread;
 
-	/* ipc */
-	sof_tgl_ops.send_msg	= cnl_ipc_send_msg;
+		/* ipc */
+		sof_tgl_ops.send_msg	= cnl_ipc_send_msg;
+	}
+
+	if (sdev->pdata->ipc_type == SOF_INTEL_IPC4) {
+		struct sof_ipc4_fw_data *ipc4_data;
+
+		sdev->private = devm_kzalloc(sdev->dev, sizeof(*ipc4_data), GFP_KERNEL);
+		if (!sdev->private)
+			return -ENOMEM;
+
+		ipc4_data = sdev->private;
+		ipc4_data->manifest_fw_hdr_offset = SOF_MAN4_FW_HDR_OFFSET;
+
+		/* doorbell */
+		sof_tgl_ops.irq_thread	= cnl_ipc4_irq_thread;
+
+		/* ipc */
+		sof_tgl_ops.send_msg	= cnl_ipc4_send_msg;
+	}
 
 	/* set DAI driver ops */
 	hda_set_dai_drv_ops(sdev, &sof_tgl_ops);
@@ -116,6 +127,7 @@ const struct sof_intel_dsp_desc tgl_chip_info = {
 	.sdw_alh_base = SDW_ALH_BASE,
 	.check_sdw_irq	= hda_common_check_sdw_irq,
 	.check_ipc_irq	= hda_dsp_check_ipc_irq,
+	.cl_init = cl_dsp_init,
 	.hw_ip_version = SOF_INTEL_CAVS_2_5,
 };
 EXPORT_SYMBOL_NS(tgl_chip_info, SND_SOC_SOF_INTEL_HDA_COMMON);
@@ -138,6 +150,7 @@ const struct sof_intel_dsp_desc tglh_chip_info = {
 	.sdw_alh_base = SDW_ALH_BASE,
 	.check_sdw_irq	= hda_common_check_sdw_irq,
 	.check_ipc_irq	= hda_dsp_check_ipc_irq,
+	.cl_init = cl_dsp_init,
 	.hw_ip_version = SOF_INTEL_CAVS_2_5,
 };
 EXPORT_SYMBOL_NS(tglh_chip_info, SND_SOC_SOF_INTEL_HDA_COMMON);
@@ -160,6 +173,7 @@ const struct sof_intel_dsp_desc ehl_chip_info = {
 	.sdw_alh_base = SDW_ALH_BASE,
 	.check_sdw_irq	= hda_common_check_sdw_irq,
 	.check_ipc_irq	= hda_dsp_check_ipc_irq,
+	.cl_init = cl_dsp_init,
 	.hw_ip_version = SOF_INTEL_CAVS_2_5,
 };
 EXPORT_SYMBOL_NS(ehl_chip_info, SND_SOC_SOF_INTEL_HDA_COMMON);
@@ -182,6 +196,7 @@ const struct sof_intel_dsp_desc adls_chip_info = {
 	.sdw_alh_base = SDW_ALH_BASE,
 	.check_sdw_irq	= hda_common_check_sdw_irq,
 	.check_ipc_irq	= hda_dsp_check_ipc_irq,
+	.cl_init = cl_dsp_init,
 	.hw_ip_version = SOF_INTEL_CAVS_2_5,
 };
 EXPORT_SYMBOL_NS(adls_chip_info, SND_SOC_SOF_INTEL_HDA_COMMON);

@@ -613,9 +613,6 @@ static struct snd_sof_dsp_ops sof_bdw_ops = {
 	.pcm_open	= sof_stream_pcm_open,
 	.pcm_close	= sof_stream_pcm_close,
 
-	/* Module loading */
-	.load_module    = snd_sof_parse_module_memcpy,
-
 	/*Firmware loading */
 	.load_firmware	= snd_sof_load_firmware_memcpy,
 
@@ -684,11 +681,8 @@ static int sof_broadwell_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	desc = device_get_match_data(dev);
-	if (!desc)
-		return -ENODEV;
-
-	return sof_acpi_probe(pdev, device_get_match_data(dev));
+	desc = (const struct sof_dev_desc *)id->driver_data;
+	return sof_acpi_probe(pdev, desc);
 }
 
 /* acpi_driver definition */

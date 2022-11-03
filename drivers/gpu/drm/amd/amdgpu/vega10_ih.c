@@ -289,6 +289,10 @@ static int vega10_ih_irq_init(struct amdgpu_device *adev)
 		}
 	}
 
+	if (!amdgpu_sriov_vf(adev))
+		adev->nbio.funcs->ih_doorbell_range(adev, adev->irq.ih.use_doorbell,
+						    adev->irq.ih.doorbell_index);
+
 	pci_set_master(adev->pdev);
 
 	/* enable interrupts */
@@ -521,14 +525,9 @@ static int vega10_ih_sw_fini(void *handle)
 
 static int vega10_ih_hw_init(void *handle)
 {
-	int r;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
-	r = vega10_ih_irq_init(adev);
-	if (r)
-		return r;
-
-	return 0;
+	return vega10_ih_irq_init(adev);
 }
 
 static int vega10_ih_hw_fini(void *handle)
