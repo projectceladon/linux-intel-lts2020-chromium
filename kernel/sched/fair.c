@@ -24,6 +24,8 @@
 
 #include <trace/hooks/sched.h>
 
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_runtime);
+
 /*
  * Targeted preemption latency for CPU-bound tasks:
  *
@@ -3807,6 +3809,8 @@ static void attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	else
 		se->avg.load_sum = 1;
 
+	trace_android_rvh_attach_entity_load_avg(cfs_rq, se);
+
 	enqueue_load_avg(cfs_rq, se);
 	cfs_rq->avg.util_avg += se->avg.util_avg;
 	cfs_rq->avg.util_sum += se->avg.util_sum;
@@ -3835,6 +3839,8 @@ static void detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 	 * See ___update_load_avg() for details.
 	 */
 	u32 divider = get_pelt_divider(&cfs_rq->avg);
+
+	trace_android_rvh_detach_entity_load_avg(cfs_rq, se);
 
 	dequeue_load_avg(cfs_rq, se);
 	sub_positive(&cfs_rq->avg.util_avg, se->avg.util_avg);
@@ -3871,6 +3877,8 @@ static inline void update_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *s
 
 	decayed  = update_cfs_rq_load_avg(now, cfs_rq);
 	decayed |= propagate_entity_load_avg(se);
+
+	trace_android_rvh_update_load_avg(now, cfs_rq, se);
 
 	if (!se->avg.last_update_time && (flags & DO_ATTACH)) {
 
@@ -3942,6 +3950,8 @@ static void remove_entity_load_avg(struct sched_entity *se)
 	 */
 
 	sync_entity_load_avg(se);
+
+	trace_android_rvh_remove_entity_load_avg(cfs_rq, se);
 
 	raw_spin_lock_irqsave(&cfs_rq->removed.lock, flags);
 	++cfs_rq->removed.nr;
@@ -6318,7 +6328,6 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool 
 {
 	struct cpumask *cpus = this_cpu_cpumask_var_ptr(select_idle_mask);
 	int i, cpu, idle_cpu = -1, nr = INT_MAX;
-	struct sched_domain_shared *sd_share;
 	struct rq *this_rq = this_rq();
 	int this = smp_processor_id();
 	struct sched_domain *this_sd;
@@ -6356,17 +6365,6 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, bool 
 			nr = 4;
 
 		time = cpu_clock(this);
-	}
-
-	if (sched_feat(SIS_UTIL)) {
-		sd_share = rcu_dereference(per_cpu(sd_llc_shared, target));
-		if (sd_share) {
-			/* because !--nr is the condition to stop scan */
-			nr = READ_ONCE(sd_share->nr_idle_scan) + 1;
-			/* overloaded LLC is unlikely to have idle cpu/core */
-			if (nr == 1)
-				return -1;
-		}
 	}
 
 	for_each_cpu_wrap(cpu, cpus, target + 1) {
@@ -8344,6 +8342,8 @@ static bool __update_blocked_fair(struct rq *rq, bool *done)
 	bool decayed = false;
 	int cpu = cpu_of(rq);
 
+	trace_android_rvh_update_blocked_fair(rq);
+
 	/*
 	 * Iterates the task_group tree in a bottom up fashion, see
 	 * list_add_leaf_cfs_rq() for details.
@@ -9408,77 +9408,6 @@ find_idlest_group(struct sched_domain *sd, struct task_struct *p, int this_cpu)
 	return idlest;
 }
 
-static void update_idle_cpu_scan(struct lb_env *env,
-				 unsigned long sum_util)
-{
-	struct sched_domain_shared *sd_share;
-	int llc_weight, pct;
-	u64 x, y, tmp;
-	/*
-	 * Update the number of CPUs to scan in LLC domain, which could
-	 * be used as a hint in select_idle_cpu(). The update of sd_share
-	 * could be expensive because it is within a shared cache line.
-	 * So the write of this hint only occurs during periodic load
-	 * balancing, rather than CPU_NEWLY_IDLE, because the latter
-	 * can fire way more frequently than the former.
-	 */
-	if (!sched_feat(SIS_UTIL) || env->idle == CPU_NEWLY_IDLE)
-		return;
-
-	llc_weight = per_cpu(sd_llc_size, env->dst_cpu);
-	if (env->sd->span_weight != llc_weight)
-		return;
-
-	sd_share = rcu_dereference(per_cpu(sd_llc_shared, env->dst_cpu));
-	if (!sd_share)
-		return;
-
-	/*
-	 * The number of CPUs to search drops as sum_util increases, when
-	 * sum_util hits 85% or above, the scan stops.
-	 * The reason to choose 85% as the threshold is because this is the
-	 * imbalance_pct(117) when a LLC sched group is overloaded.
-	 *
-	 * let y = SCHED_CAPACITY_SCALE - p * x^2                       [1]
-	 * and y'= y / SCHED_CAPACITY_SCALE
-	 *
-	 * x is the ratio of sum_util compared to the CPU capacity:
-	 * x = sum_util / (llc_weight * SCHED_CAPACITY_SCALE)
-	 * y' is the ratio of CPUs to be scanned in the LLC domain,
-	 * and the number of CPUs to scan is calculated by:
-	 *
-	 * nr_scan = llc_weight * y'                                    [2]
-	 *
-	 * When x hits the threshold of overloaded, AKA, when
-	 * x = 100 / pct, y drops to 0. According to [1],
-	 * p should be SCHED_CAPACITY_SCALE * pct^2 / 10000
-	 *
-	 * Scale x by SCHED_CAPACITY_SCALE:
-	 * x' = sum_util / llc_weight;                                  [3]
-	 *
-	 * and finally [1] becomes:
-	 * y = SCHED_CAPACITY_SCALE -
-	 *     x'^2 * pct^2 / (10000 * SCHED_CAPACITY_SCALE)            [4]
-	 *
-	 */
-	/* equation [3] */
-	x = sum_util;
-	do_div(x, llc_weight);
-
-	/* equation [4] */
-	pct = env->sd->imbalance_pct;
-	tmp = x * x * pct * pct;
-	do_div(tmp, 10000 * SCHED_CAPACITY_SCALE);
-	tmp = min_t(long, tmp, SCHED_CAPACITY_SCALE);
-	y = SCHED_CAPACITY_SCALE - tmp;
-
-	/* equation [2] */
-	y *= llc_weight;
-	do_div(y, SCHED_CAPACITY_SCALE);
-	if ((int)y != sd_share->nr_idle_scan)
-		WRITE_ONCE(sd_share->nr_idle_scan, (int)y);
-}
-
 /**
  * update_sd_lb_stats - Update sched_domain's statistics for load balancing.
  * @env: The load balancing environment.
@@ -9491,7 +9420,6 @@ static inline void update_sd_lb_stats(struct lb_env *env, struct sd_lb_stats *sd
 	struct sched_group *sg = env->sd->groups;
 	struct sg_lb_stats *local = &sds->local_stat;
 	struct sg_lb_stats tmp_sgs;
-	unsigned long sum_util = 0;
 	int sg_status = 0;
 
 	do {
@@ -9524,7 +9452,6 @@ next_group:
 		sds->total_load += sgs->group_load;
 		sds->total_capacity += sgs->group_capacity;
 
-		sum_util += sgs->group_util;
 		sg = sg->next;
 	} while (sg != env->sd->groups);
 
@@ -9550,8 +9477,6 @@ next_group:
 		WRITE_ONCE(rd->overutilized, SG_OVERUTILIZED);
 		trace_sched_overutilized_tp(rd, SG_OVERUTILIZED);
 	}
-
-	update_idle_cpu_scan(env, sum_util);
 }
 
 #define NUMA_IMBALANCE_MIN 2

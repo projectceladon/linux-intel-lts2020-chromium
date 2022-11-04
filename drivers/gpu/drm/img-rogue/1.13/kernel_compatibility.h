@@ -479,7 +479,7 @@ __pvr_access_ok_compat(int type, const void __user * addr, unsigned long size)
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0))
 
-struct dma_buf_map {
+struct iosys_map {
 	void *vaddr;
 };
 

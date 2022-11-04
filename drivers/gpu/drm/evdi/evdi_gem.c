@@ -295,7 +295,7 @@ int evdi_gem_vmap(struct evdi_gem_object *obj)
 #if KERNEL_VERSION(5, 15, 0) <= LINUX_VERSION_CODE
 		struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
 #elif KERNEL_VERSION(5, 11, 0) <= LINUX_VERSION_CODE || defined(EL8)
-		struct dma_buf_map map = DMA_BUF_MAP_INIT_VADDR(NULL);
+		struct iosys_map map = DMA_BUF_MAP_INIT_VADDR(NULL);
 #endif
 
 #if KERNEL_VERSION(5, 11, 0) <= LINUX_VERSION_CODE || defined(EL8)
@@ -336,7 +336,7 @@ void evdi_gem_vunmap(struct evdi_gem_object *obj)
 		dma_buf_vunmap(obj->base.import_attach->dmabuf, &map);
 
 #elif KERNEL_VERSION(5, 11, 0) <= LINUX_VERSION_CODE || defined(EL8)
-		struct dma_buf_map map;
+		struct iosys_map map;
 
 		if (obj->vmap_is_iomem)
 			dma_buf_map_set_vaddr_iomem(&map, obj->vmapping);

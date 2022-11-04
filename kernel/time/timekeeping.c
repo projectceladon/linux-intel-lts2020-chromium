@@ -23,8 +23,8 @@
 #include <linux/pvclock_gtod.h>
 #include <linux/compiler.h>
 #include <linux/audit.h>
-#include <trace/hooks/timekeeping.h>
 #include <linux/random.h>
+#include <trace/hooks/timekeeping.h>
 
 #include "tick-internal.h"
 #include "ntp_internal.h"

@@ -172,7 +172,7 @@ typedef struct _PMR_DMA_BUF_DATA_
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
 	struct iosys_map sMap;
 #else
-	struct dma_buf_map sMap;
+	struct iosys_map sMap;
 #endif
 
 	/* Modified by PMR lock/unlock */
@@ -202,7 +202,7 @@ DmaBufSetValue(struct dma_buf *psDmaBuf, int iValue, const char *szFunc)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
 	struct iosys_map sMap;
 #else
-	struct dma_buf_map sMap;
+	struct iosys_map sMap;
 #endif
 	int err, err_end_access;
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0))
