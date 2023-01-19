@@ -939,6 +939,24 @@
 			clock-names = "spi", "wrap";
 		};
 
+		spmi: spmi@10015000 {
+			compatible = "mediatek,mt8195-spmi";
+			reg = <0 0x10015000 0 0x000e00>,
+			      <0 0x1001B000 0 0x000100>;
+			reg-names = "pmif", "spmimst";
+			interrupts = <GIC_SPI 237 IRQ_TYPE_LEVEL_HIGH 0>,
+				     <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH 0>;
+			clocks = <&infracfg_ao CLK_INFRA_AO_PMIC_AP>,
+				 <&infracfg_ao CLK_INFRA_AO_PMIC_TMR>,
+				 <&topckgen CLK_TOP_SPMI_MST>;
+			clock-names = "pmif_sys_ck",
+				      "pmif_tmr_ck",
+				      "spmimst_clk_mux";
+			assigned-clocks = <&topckgen CLK_TOP_SPMI_MST>;
+			assigned-clock-parents = <&topckgen CLK_TOP_ULPOSC1_D10>;
+			status = "disabled";
+		};
+
 		systimer: timer@10017000 {
 			compatible = "mediatek,mt8186-timer",
 				     "mediatek,mt6765-timer";
@@ -1868,12 +1886,14 @@
 
 		jpgenc: jpgenc@17030000 {
 			compatible = "mediatek,mt8186-jpgenc", "mediatek,mtk-jpgenc";
+			#address-cells = <2>;
+			#size-cells = <2>;
 			reg = <0 0x17030000 0 0x10000>;
 			interrupts = <GIC_SPI 245 IRQ_TYPE_LEVEL_HIGH 0>;
 			clocks = <&vencsys CLK_VENC_CKE2_JPGENC>;
 			clock-names = "jpgenc";
 			power-domains = <&spm MT8186_POWER_DOMAIN_VENC>;
-			dma-ranges = <0x1 0x0 0x1 0x0 0x1>;
+			dma-ranges = <0x1 0x0 0x1 0x0 0x1 0x0>;
 			iommus = <&iommu_mm IOMMU_PORT_L7_JPGENC_Y_RDMA>,
 				 <&iommu_mm IOMMU_PORT_L7_JPGENC_C_RDMA>,
 				 <&iommu_mm IOMMU_PORT_L7_JPGENC_Q_TABLE>,

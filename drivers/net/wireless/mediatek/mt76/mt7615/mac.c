@@ -717,7 +717,8 @@ mt7615_mac_tx_rate_val(struct mt7615_dev *dev,
 int mt7615_mac_write_txwi(struct mt7615_dev *dev, __le32 *txwi,
 			  struct sk_buff *skb, struct mt76_wcid *wcid,
 			  struct ieee80211_sta *sta, int pid,
-			  struct ieee80211_key_conf *key, bool beacon)
+			  struct ieee80211_key_conf *key,
+			  enum mt76_txq_id qid, bool beacon)
 {
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 	u8 fc_type, fc_stype, p_fmt, q_idx, omac_idx = 0, wmm_idx = 0;
@@ -755,7 +756,7 @@ int mt7615_mac_write_txwi(struct mt7615_dev *dev, __le32 *txwi,
 	if (beacon) {
 		p_fmt = MT_TX_TYPE_FW;
 		q_idx = ext_phy ? MT_LMAC_BCN1 : MT_LMAC_BCN0;
-	} else if (skb_get_queue_mapping(skb) >= MT_TXQ_PSD) {
+	} else if (qid >= MT_TXQ_PSD) {
 		p_fmt = is_mmio ? MT_TX_TYPE_CT : MT_TX_TYPE_SF;
 		q_idx = ext_phy ? MT_LMAC_ALTX1 : MT_LMAC_ALTX0;
 	} else {
@@ -875,60 +876,6 @@ int mt7615_mac_write_txwi(struct mt7615_dev *dev, __le32 *txwi,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mt7615_mac_write_txwi);
-
-static void
-mt7615_txp_skb_unmap_fw(struct mt76_dev *dev, struct mt7615_fw_txp *txp)
-{
-	int i;
-
-	for (i = 0; i < txp->nbuf; i++)
-		dma_unmap_single(dev->dev, le32_to_cpu(txp->buf[i]),
-				 le16_to_cpu(txp->len[i]), DMA_TO_DEVICE);
-}
-
-static void
-mt7615_txp_skb_unmap_hw(struct mt76_dev *dev, struct mt7615_hw_txp *txp)
-{
-	u32 last_mask;
-	int i;
-
-	last_mask = is_mt7663(dev) ? MT_TXD_LEN_LAST : MT_TXD_LEN_MSDU_LAST;
-
-	for (i = 0; i < ARRAY_SIZE(txp->ptr); i++) {
-		struct mt7615_txp_ptr *ptr = &txp->ptr[i];
-		bool last;
-		u16 len;
-
-		len = le16_to_cpu(ptr->len0);
-		last = len & last_mask;
-		len &= MT_TXD_LEN_MASK;
-		dma_unmap_single(dev->dev, le32_to_cpu(ptr->buf0), len,
-				 DMA_TO_DEVICE);
-		if (last)
-			break;
-
-		len = le16_to_cpu(ptr->len1);
-		last = len & last_mask;
-		len &= MT_TXD_LEN_MASK;
-		dma_unmap_single(dev->dev, le32_to_cpu(ptr->buf1), len,
-				 DMA_TO_DEVICE);
-		if (last)
-			break;
-	}
-}
-
-void mt7615_txp_skb_unmap(struct mt76_dev *dev,
-			  struct mt76_txwi_cache *t)
-{
-	struct mt7615_txp_common *txp;
-
-	txp = mt7615_txwi_to_txp(dev, t);
-	if (is_mt7615(dev))
-		mt7615_txp_skb_unmap_fw(dev, &txp->fw);
-	else
-		mt7615_txp_skb_unmap_hw(dev, &txp->hw);
-}
-EXPORT_SYMBOL_GPL(mt7615_txp_skb_unmap);
 
 bool mt7615_mac_wtbl_update(struct mt7615_dev *dev, int idx, u32 mask)
 {
@@ -1608,7 +1555,7 @@ mt7615_txwi_free(struct mt7615_dev *dev, struct mt76_txwi_cache *txwi)
 	u32 val;
 	u8 wcid;
 
-	mt7615_txp_skb_unmap(mdev, txwi);
+	mt76_connac_txp_skb_unmap(mdev, txwi);
 	if (!txwi->skb)
 		goto out;
 
@@ -1638,7 +1585,8 @@ mt7615_mac_tx_free_token(struct mt7615_dev *dev, u16 token)
 
 static void mt7615_mac_tx_free(struct mt7615_dev *dev, void *data, int len)
 {
-	struct mt7615_tx_free *free = (struct mt7615_tx_free *)data;
+	struct mt76_connac_tx_free *free = data;
+	void *tx_token = data + sizeof(*free);
 	void *end = data + len;
 	u8 i, count;
 
@@ -1652,7 +1600,7 @@ static void mt7615_mac_tx_free(struct mt7615_dev *dev, void *data, int len)
 
 	count = le16_get_bits(free->ctrl, MT_TX_FREE_MSDU_ID_CNT);
 	if (is_mt7615(&dev->mt76)) {
-		__le16 *token = &free->token[0];
+		__le16 *token = tx_token;
 
 		if (WARN_ON_ONCE((void *)&token[count] > end))
 			return;
@@ -1660,7 +1608,7 @@ static void mt7615_mac_tx_free(struct mt7615_dev *dev, void *data, int len)
 		for (i = 0; i < count; i++)
 			mt7615_mac_tx_free_token(dev, le16_to_cpu(token[i]));
 	} else {
-		__le32 *token = (__le32 *)&free->token[0];
+		__le32 *token = tx_token;
 
 		if (WARN_ON_ONCE((void *)&token[count] > end))
 			return;
@@ -2094,8 +2042,10 @@ void mt7615_pm_wake_work(struct work_struct *work)
 			mt76_connac_pm_dequeue_skbs(mphy, &dev->pm);
 			mt76_worker_schedule(&mdev->sdio.txrx_worker);
 		} else {
+			local_bh_disable();
 			mt76_for_each_q_rx(mdev, i)
 				napi_schedule(&mdev->napi[i]);
+			local_bh_enable();
 			mt76_connac_pm_dequeue_skbs(mphy, &dev->pm);
 			mt76_queue_tx_cleanup(dev, mdev->q_mcu[MT_MCUQ_WM],
 					      false);
@@ -2282,6 +2232,7 @@ mt7615_dfs_init_radar_specs(struct mt7615_phy *phy)
 
 int mt7615_dfs_init_radar_detector(struct mt7615_phy *phy)
 {
+	struct cfg80211_chan_def *chandef = &phy->mt76->chandef;
 	struct mt7615_dev *dev = phy->dev;
 	bool ext_phy = phy != &dev->phy;
 	enum mt76_dfs_state dfs_state, prev_state;
@@ -2292,12 +2243,12 @@ int mt7615_dfs_init_radar_detector(struct mt7615_phy *phy)
 
 	prev_state = phy->mt76->dfs_state;
 	dfs_state = mt76_phy_dfs_state(phy->mt76);
+	if ((chandef->chan->flags & IEEE80211_CHAN_RADAR) &&
+	    dfs_state < MT_DFS_STATE_CAC)
+		dfs_state = MT_DFS_STATE_ACTIVE;
 
 	if (prev_state == dfs_state)
 		return 0;
-
-	if (prev_state == MT_DFS_STATE_UNKNOWN)
-		mt7615_dfs_stop_radar_detector(phy);
 
 	if (dfs_state == MT_DFS_STATE_DISABLED)
 		goto stop;

@@ -242,7 +242,10 @@ const struct htt_rx_ring_tlv_filter ath11k_mac_mon_status_filter_default = {
 #define ath11k_a_rates (ath11k_legacy_rates + 4)
 #define ath11k_a_rates_size (ARRAY_SIZE(ath11k_legacy_rates) - 4)
 
-#define ATH11K_MAC_SCAN_TIMEOUT_MSECS 200 /* in msecs */
+#define ATH11K_MAC_SCAN_CMD_EVT_OVERHEAD		200 /* in msecs */
+
+/* Overhead due to the processing of channel switch events from FW */
+#define ATH11K_SCAN_CHANNEL_SWITCH_WMI_EVT_OVERHEAD	10 /* in msecs */
 
 static const u32 ath11k_smps_map[] = {
 	[WLAN_HT_CAP_SM_PS_STATIC] = WMI_PEER_SMPS_STATIC,
@@ -2078,7 +2081,7 @@ static void ath11k_peer_assoc_h_he(struct ath11k *ar,
 	struct cfg80211_chan_def def;
 	const struct ieee80211_sta_he_cap *he_cap = &sta->he_cap;
 	enum nl80211_band band;
-	u16 *he_mcs_mask;
+	u16 he_mcs_mask[NL80211_HE_NSS_MAX];
 	u8 max_nss, he_mcs;
 	u16 he_tx_mcs = 0, v = 0;
 	int i, he_nss, nss_idx;
@@ -2095,7 +2098,8 @@ static void ath11k_peer_assoc_h_he(struct ath11k *ar,
 		return;
 
 	band = def.chan->band;
-	he_mcs_mask = arvif->bitrate_mask.control[band].he_mcs;
+	memcpy(he_mcs_mask, arvif->bitrate_mask.control[band].he_mcs,
+	       sizeof(he_mcs_mask));
 
 	if (ath11k_peer_assoc_h_he_masked(he_mcs_mask))
 		return;
@@ -3608,6 +3612,7 @@ static int ath11k_mac_op_hw_scan(struct ieee80211_hw *hw,
 	struct scan_req_params arg;
 	int ret = 0;
 	int i;
+	u32 scan_timeout;
 
 	mutex_lock(&ar->conf_mutex);
 
@@ -3677,6 +3682,26 @@ static int ath11k_mac_op_hw_scan(struct ieee80211_hw *hw,
 		ether_addr_copy(arg.mac_mask.addr, req->mac_addr_mask);
 	}
 
+	/* if duration is set, default dwell times will be overwritten */
+	if (req->duration) {
+		arg.dwell_time_active = req->duration;
+		arg.dwell_time_active_2g = req->duration;
+		arg.dwell_time_active_6g = req->duration;
+		arg.dwell_time_passive = req->duration;
+		arg.dwell_time_passive_6g = req->duration;
+		arg.burst_duration = req->duration;
+
+		scan_timeout = min_t(u32, arg.max_rest_time *
+				(arg.num_chan - 1) + (req->duration +
+				ATH11K_SCAN_CHANNEL_SWITCH_WMI_EVT_OVERHEAD) *
+				arg.num_chan, arg.max_scan_time);
+	} else {
+		scan_timeout = arg.max_scan_time;
+	}
+
+	/* Add a margin to account for event/command processing */
+	scan_timeout += ATH11K_MAC_SCAN_CMD_EVT_OVERHEAD;
+
 	ret = ath11k_start_scan(ar, &arg);
 	if (ret) {
 		ath11k_warn(ar->ab, "failed to start hw scan: %d\n", ret);
@@ -3685,10 +3710,8 @@ static int ath11k_mac_op_hw_scan(struct ieee80211_hw *hw,
 		spin_unlock_bh(&ar->data_lock);
 	}
 
-	/* Add a 200ms margin to account for event/command processing */
 	ieee80211_queue_delayed_work(ar->hw, &ar->scan.timeout,
-				     msecs_to_jiffies(arg.max_scan_time +
-						      ATH11K_MAC_SCAN_TIMEOUT_MSECS));
+				     msecs_to_jiffies(scan_timeout));
 
 exit:
 	kfree(arg.chan_list);
@@ -4932,6 +4955,8 @@ static int ath11k_mac_set_txbf_conf(struct ath11k_vif *arvif)
 	if (vht_cap & (IEEE80211_VHT_CAP_SU_BEAMFORMEE_CAPABLE)) {
 		nsts = vht_cap & IEEE80211_VHT_CAP_BEAMFORMEE_STS_MASK;
 		nsts >>= IEEE80211_VHT_CAP_BEAMFORMEE_STS_SHIFT;
+		if (nsts > (ar->num_rx_chains - 1))
+			nsts = ar->num_rx_chains - 1;
 		value |= SM(nsts, WMI_TXBF_STS_CAP_OFFSET);
 	}
 
@@ -4972,7 +4997,7 @@ static int ath11k_mac_set_txbf_conf(struct ath11k_vif *arvif)
 static void ath11k_set_vht_txbf_cap(struct ath11k *ar, u32 *vht_cap)
 {
 	bool subfer, subfee;
-	int sound_dim = 0;
+	int sound_dim = 0, nsts = 0;
 
 	subfer = !!(*vht_cap & (IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE));
 	subfee = !!(*vht_cap & (IEEE80211_VHT_CAP_SU_BEAMFORMEE_CAPABLE));
@@ -4980,6 +5005,11 @@ static void ath11k_set_vht_txbf_cap(struct ath11k *ar, u32 *vht_cap)
 	if (ar->num_tx_chains < 2) {
 		*vht_cap &= ~(IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE);
 		subfer = false;
+	}
+
+	if (ar->num_rx_chains < 2) {
+		*vht_cap &= ~(IEEE80211_VHT_CAP_SU_BEAMFORMEE_CAPABLE);
+		subfee = false;
 	}
 
 	/* If SU Beaformer is not set, then disable MU Beamformer Capability */
@@ -4994,7 +5024,9 @@ static void ath11k_set_vht_txbf_cap(struct ath11k *ar, u32 *vht_cap)
 	sound_dim >>= IEEE80211_VHT_CAP_SOUNDING_DIMENSIONS_SHIFT;
 	*vht_cap &= ~IEEE80211_VHT_CAP_SOUNDING_DIMENSIONS_MASK;
 
-	/* TODO: Need to check invalid STS and Sound_dim values set by FW? */
+	nsts = (*vht_cap & IEEE80211_VHT_CAP_BEAMFORMEE_STS_MASK);
+	nsts >>= IEEE80211_VHT_CAP_BEAMFORMEE_STS_SHIFT;
+	*vht_cap &= ~IEEE80211_VHT_CAP_BEAMFORMEE_STS_MASK;
 
 	/* Enable Sounding Dimension Field only if SU BF is enabled */
 	if (subfer) {
@@ -5006,9 +5038,15 @@ static void ath11k_set_vht_txbf_cap(struct ath11k *ar, u32 *vht_cap)
 		*vht_cap |= sound_dim;
 	}
 
-	/* Use the STS advertised by FW unless SU Beamformee is not supported*/
-	if (!subfee)
-		*vht_cap &= ~(IEEE80211_VHT_CAP_BEAMFORMEE_STS_MASK);
+	/* Enable Beamformee STS Field only if SU BF is enabled */
+	if (subfee) {
+		if (nsts > (ar->num_rx_chains - 1))
+			nsts = ar->num_rx_chains - 1;
+
+		nsts <<= IEEE80211_VHT_CAP_BEAMFORMEE_STS_SHIFT;
+		nsts &=  IEEE80211_VHT_CAP_BEAMFORMEE_STS_MASK;
+		*vht_cap |= nsts;
+	}
 }
 
 static struct ieee80211_sta_vht_cap
@@ -8902,6 +8940,9 @@ static int __ath11k_mac_register(struct ath11k *ar)
 		wiphy_ext_feature_set(ar->hw->wiphy,
 				      NL80211_EXT_FEATURE_UNSOL_BCAST_PROBE_RESP);
 	}
+
+	wiphy_ext_feature_set(ar->hw->wiphy,
+			      NL80211_EXT_FEATURE_SET_SCAN_DWELL);
 
 	ath11k_reg_init(ar);
 

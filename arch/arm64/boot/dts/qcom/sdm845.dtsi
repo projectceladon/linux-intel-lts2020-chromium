@@ -12,6 +12,7 @@
 #include <dt-bindings/clock/qcom,lpass-sdm845.h>
 #include <dt-bindings/clock/qcom,rpmh.h>
 #include <dt-bindings/clock/qcom,videocc-sdm845.h>
+#include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/interconnect/qcom,osm-l3.h>
 #include <dt-bindings/interconnect/qcom,sdm845.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
@@ -1970,7 +1971,7 @@
 			};
 		};
 
-		system-cache-controller@1100000 {
+		llcc: system-cache-controller@1100000 {
 			compatible = "qcom,sdm845-llcc";
 			reg = <0 0x01100000 0 0x200000>, <0 0x01300000 0 0x50000>;
 			reg-names = "llcc_base", "llcc_broadcast_base";
@@ -3004,6 +3005,8 @@
 					<&rpmhpd SDM845_MSS>;
 			power-domain-names = "cx", "mx", "mss";
 
+			status = "disabled";
+
 			mba {
 				memory-region = <&mba_region>;
 			};
@@ -3879,6 +3882,8 @@
 					<&gladiator_noc MASTER_APPSS_PROC 0 &config_noc SLAVE_VENUS_CFG 0>;
 			interconnect-names = "video-mem", "cpu-cfg";
 
+			status = "disabled";
+
 			video-core0 {
 				compatible = "venus-decoder";
 			};
@@ -4413,6 +4418,8 @@
 			interconnects = <&mem_noc MASTER_GFX3D 0 &mem_noc SLAVE_EBI1 0>;
 			interconnect-names = "gfx-mem";
 
+			status = "disabled";
+
 			gpu_opp_table: opp-table {
 				compatible = "operating-points-v2";
 
@@ -4507,6 +4514,8 @@
 			iommus = <&adreno_smmu 5>;
 
 			operating-points-v2 = <&gmu_opp_table>;
+
+			status = "disabled";
 
 			gmu_opp_table: opp-table {
 				compatible = "operating-points-v2";

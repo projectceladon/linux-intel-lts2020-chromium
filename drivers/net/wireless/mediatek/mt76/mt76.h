@@ -169,7 +169,6 @@ struct mt76_queue {
 
 	u8 buf_offset;
 	u8 hw_idx;
-	u8 qid;
 
 	dma_addr_t desc_dma;
 	struct sk_buff *rx_head;
@@ -204,8 +203,8 @@ struct mt76_queue_ops {
 		     u32 ring_base);
 
 	int (*tx_queue_skb)(struct mt76_dev *dev, struct mt76_queue *q,
-			    struct sk_buff *skb, struct mt76_wcid *wcid,
-			    struct ieee80211_sta *sta);
+			    enum mt76_txq_id qid, struct sk_buff *skb,
+			    struct mt76_wcid *wcid, struct ieee80211_sta *sta);
 
 	int (*tx_queue_skb_raw)(struct mt76_dev *dev, struct mt76_queue *q,
 				struct sk_buff *skb, u32 tx_info);
@@ -698,6 +697,7 @@ struct mt76_dev {
 	const struct mt76_driver_ops *drv;
 	const struct mt76_mcu_ops *mcu_ops;
 	struct device *dev;
+	struct device *dma_dev;
 
 	struct mt76_mcu mcu;
 
@@ -718,7 +718,8 @@ struct mt76_dev {
 
 	spinlock_t token_lock;
 	struct idr token;
-	int token_count;
+	u16 token_count;
+	u16 token_size;
 
 	wait_queue_head_t tx_wait;
 	/* spinclock used to protect wcid pktid linked list */
@@ -953,7 +954,6 @@ static inline int mt76_init_tx_queue(struct mt76_phy *phy, int qid, int idx,
 	if (IS_ERR(q))
 		return PTR_ERR(q);
 
-	q->qid = qid;
 	phy->q_tx[qid] = q;
 
 	return 0;
@@ -968,7 +968,6 @@ static inline int mt76_init_mcu_queue(struct mt76_dev *dev, int qid, int idx,
 	if (IS_ERR(q))
 		return PTR_ERR(q);
 
-	q->qid = __MT_TXQ_MAX + qid;
 	dev->q_mcu[qid] = q;
 
 	return 0;
@@ -1321,8 +1320,15 @@ int mt76s_rd_rp(struct mt76_dev *dev, u32 base,
 		struct mt76_reg_pair *data, int len);
 
 struct sk_buff *
+__mt76_mcu_msg_alloc(struct mt76_dev *dev, const void *data,
+		     int len, int data_len, gfp_t gfp);
+static inline struct sk_buff *
 mt76_mcu_msg_alloc(struct mt76_dev *dev, const void *data,
-		   int data_len);
+		   int data_len)
+{
+	return __mt76_mcu_msg_alloc(dev, data, data_len, data_len, GFP_KERNEL);
+}
+
 void mt76_mcu_rx_event(struct mt76_dev *dev, struct sk_buff *skb);
 struct sk_buff *mt76_mcu_get_response(struct mt76_dev *dev,
 				      unsigned long expires);
@@ -1380,8 +1386,7 @@ mt76_token_get(struct mt76_dev *dev, struct mt76_txwi_cache **ptxwi)
 	int token;
 
 	spin_lock_bh(&dev->token_lock);
-	token = idr_alloc(&dev->token, *ptxwi, 0, dev->drv->token_size,
-			  GFP_ATOMIC);
+	token = idr_alloc(&dev->token, *ptxwi, 0, dev->token_size, GFP_ATOMIC);
 	spin_unlock_bh(&dev->token_lock);
 
 	return token;

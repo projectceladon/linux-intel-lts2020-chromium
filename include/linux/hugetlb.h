@@ -285,6 +285,7 @@ static inline struct page *follow_huge_pd(struct vm_area_struct *vma,
 {
 	return NULL;
 }
+
 static inline struct page *follow_huge_pmd_pte(struct vm_area_struct *vma,
 				unsigned long address, int flags)
 {

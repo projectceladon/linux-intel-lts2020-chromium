@@ -285,7 +285,7 @@ __mt76_tx_queue_skb(struct mt76_phy *phy, int qid, struct sk_buff *skb,
 	int idx;
 
 	non_aql = !info->tx_time_est;
-	idx = dev->queue_ops->tx_queue_skb(dev, q, skb, wcid, sta);
+	idx = dev->queue_ops->tx_queue_skb(dev, q, qid, skb, wcid, sta);
 	if (idx < 0 || !sta)
 		return idx;
 
@@ -328,7 +328,6 @@ mt76_tx(struct mt76_phy *phy, struct ieee80211_sta *sta,
 	    !ieee80211_is_data(hdr->frame_control) &&
 	    !ieee80211_is_bufferable_mmpdu(hdr->frame_control)) {
 		qid = MT_TXQ_PSD;
-		skb_set_queue_mapping(skb, qid);
 	}
 
 	if (wcid && !(wcid->tx_info & MT_WCID_TX_INFO_SET))
@@ -722,12 +721,11 @@ int mt76_token_consume(struct mt76_dev *dev, struct mt76_txwi_cache **ptxwi)
 
 	spin_lock_bh(&dev->token_lock);
 
-	token = idr_alloc(&dev->token, *ptxwi, 0, dev->drv->token_size,
-			  GFP_ATOMIC);
+	token = idr_alloc(&dev->token, *ptxwi, 0, dev->token_size, GFP_ATOMIC);
 	if (token >= 0)
 		dev->token_count++;
 
-	if (dev->token_count >= dev->drv->token_size - MT76_TOKEN_FREE_THR)
+	if (dev->token_count >= dev->token_size - MT76_TOKEN_FREE_THR)
 		__mt76_set_tx_blocked(dev, true);
 
 	spin_unlock_bh(&dev->token_lock);
@@ -747,7 +745,7 @@ mt76_token_release(struct mt76_dev *dev, int token, bool *wake)
 	if (txwi)
 		dev->token_count--;
 
-	if (dev->token_count < dev->drv->token_size - MT76_TOKEN_FREE_THR &&
+	if (dev->token_count < dev->token_size - MT76_TOKEN_FREE_THR &&
 	    dev->phy.q_tx[0]->blocked)
 		*wake = true;
 
