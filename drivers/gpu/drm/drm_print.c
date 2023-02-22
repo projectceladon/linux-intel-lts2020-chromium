@@ -313,10 +313,10 @@ void drm_dev_dbg(const struct device *dev, enum drm_debug_category category,
 		vaf.va = &args;
 
 		if (dev)
-			dev_printk(KERN_DEBUG, dev, "[" DRM_NAME ":%ps] %pV",
+			printk("[" DRM_NAME ":%ps] %pV",
 				__builtin_return_address(0), &vaf);
 		else
-			printk(KERN_DEBUG "[" DRM_NAME ":%ps] %pV",
+			printk("[" DRM_NAME ":%ps] %pV",
 			__builtin_return_address(0), &vaf);
 
 		va_end(args);
