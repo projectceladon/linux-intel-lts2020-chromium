@@ -1036,7 +1036,6 @@ struct cfg80211_crypto_settings {
 	const u8 *sae_pwd;
 	u8 sae_pwd_len;
 	enum nl80211_sae_pwe_mechanism sae_pwe;
-
 	ANDROID_KABI_RESERVE(1);
 };
 

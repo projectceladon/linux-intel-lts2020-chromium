@@ -9,7 +9,7 @@
  *
  * Contributors:
  *  Amir Hanania <amir.hanania@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  */
 
 #ifndef __T7XX_MHCCIF_H__
@@ -25,8 +25,8 @@
 			 D2H_INT_EXCEPTION_CLEARQ_DONE |	\
 			 D2H_INT_EXCEPTION_ALLQ_RESET |		\
 			 D2H_INT_PORT_ENUM |			\
-			 D2H_INT_ASYNC_MD_HK |			\
-			 D2H_INT_ASYNC_SAP_HK)
+			 D2H_INT_ASYNC_AP_HK |			\
+			 D2H_INT_ASYNC_MD_HK)
 
 void t7xx_mhccif_mask_set(struct t7xx_pci_dev *t7xx_dev, u32 val);
 void t7xx_mhccif_mask_clr(struct t7xx_pci_dev *t7xx_dev, u32 val);

@@ -853,11 +853,36 @@ static int ath10k_peer_delete(struct ath10k *ar, u32 vdev_id, const u8 *addr)
 	return 0;
 }
 
+static void ath10k_peer_map_cleanup(struct ath10k *ar, struct ath10k_peer *peer)
+{
+	int peer_id, i;
+
+	lockdep_assert_held(&ar->conf_mutex);
+
+	for_each_set_bit(peer_id, peer->peer_ids,
+			 ATH10K_MAX_NUM_PEER_IDS) {
+		ar->peer_map[peer_id] = NULL;
+	}
+
+	/* Double check that peer is properly un-referenced from
+	 * the peer_map
+	 */
+	for (i = 0; i < ARRAY_SIZE(ar->peer_map); i++) {
+		if (ar->peer_map[i] == peer) {
+			ath10k_warn(ar, "removing stale peer_map entry for %pM (ptr %pK idx %d)\n",
+				    peer->addr, peer, i);
+			ar->peer_map[i] = NULL;
+		}
+	}
+
+	list_del(&peer->list);
+	kfree(peer);
+	ar->num_peers--;
+}
+
 static void ath10k_peer_cleanup(struct ath10k *ar, u32 vdev_id)
 {
 	struct ath10k_peer *peer, *tmp;
-	int peer_id;
-	int i;
 
 	lockdep_assert_held(&ar->conf_mutex);
 
@@ -869,25 +894,7 @@ static void ath10k_peer_cleanup(struct ath10k *ar, u32 vdev_id)
 		ath10k_warn(ar, "removing stale peer %pM from vdev_id %d\n",
 			    peer->addr, vdev_id);
 
-		for_each_set_bit(peer_id, peer->peer_ids,
-				 ATH10K_MAX_NUM_PEER_IDS) {
-			ar->peer_map[peer_id] = NULL;
-		}
-
-		/* Double check that peer is properly un-referenced from
-		 * the peer_map
-		 */
-		for (i = 0; i < ARRAY_SIZE(ar->peer_map); i++) {
-			if (ar->peer_map[i] == peer) {
-				ath10k_warn(ar, "removing stale peer_map entry for %pM (ptr %pK idx %d)\n",
-					    peer->addr, peer, i);
-				ar->peer_map[i] = NULL;
-			}
-		}
-
-		list_del(&peer->list);
-		kfree(peer);
-		ar->num_peers--;
+		ath10k_peer_map_cleanup(ar, peer);
 	}
 	spin_unlock_bh(&ar->data_lock);
 }
@@ -4951,7 +4958,7 @@ int ath10k_mac_rfkill_enable_radio(struct ath10k *ar, bool enable)
 	return 0;
 }
 
-static int __ath10k_start(struct ieee80211_hw *hw)
+static int ath10k_start(struct ieee80211_hw *hw)
 {
 	struct ath10k *ar = hw->priv;
 	u32 param;
@@ -5168,34 +5175,10 @@ err:
 	return ret;
 }
 
-static int ath10k_start(struct ieee80211_hw *hw)
-{
-	struct ath10k *ar = hw->priv;
-	int ret, loop = ar->hw_params.start_retry + 1;
-	enum ath10k_state state = ar->state;
-
-	while (loop != 0) {
-
-		mutex_lock(&ar->conf_mutex);
-		ar->state = state;
-		mutex_unlock(&ar->conf_mutex);
-
-		ret = __ath10k_start(hw);
-		loop--;
-
-		if (ret)
-			ath10k_warn(ar, "failed to start, loops: %d, ret: %d\n",
-				    loop, ret);
-		else
-			break;
-	}
-
-	return ret;
-}
-
 static void ath10k_stop(struct ieee80211_hw *hw)
 {
 	struct ath10k *ar = hw->priv;
+	u32 opt;
 
 	ath10k_drain_tx(ar);
 
@@ -5204,18 +5187,19 @@ static void ath10k_stop(struct ieee80211_hw *hw)
 		if (!ar->hw_rfkill_on) {
 			/* If the current driver state is RESTARTING but not yet
 			 * fully RESTARTED because of incoming suspend event,
-			 * then ath10k_halt is already called via
-			 * ath10k_core_restart and should not be called here.
+			 * then ath10k_halt() is already called via
+			 * ath10k_core_restart() and should not be called here.
 			 */
-			if (ar->state != ATH10K_STATE_RESTARTING)
+			if (ar->state != ATH10K_STATE_RESTARTING) {
 				ath10k_halt(ar);
-			else
+			} else {
 				/* Suspending here, because when in RESTARTING
-				 * state, ath10k_core_stop skips
-				 * ath10k_wait_for_suspend.
+				 * state, ath10k_core_stop() skips
+				 * ath10k_wait_for_suspend().
 				 */
-				ath10k_wait_for_suspend(ar,
-							WMI_PDEV_SUSPEND_AND_DISABLE_INTR);
+				opt = WMI_PDEV_SUSPEND_AND_DISABLE_INTR;
+				ath10k_wait_for_suspend(ar, opt);
+			}
 		}
 		ar->state = ATH10K_STATE_OFF;
 	}
@@ -7495,10 +7479,7 @@ static int ath10k_sta_state(struct ieee80211_hw *hw,
 				/* Clean up the peer object as well since we
 				 * must have failed to do this above.
 				 */
-				list_del(&peer->list);
-				ar->peer_map[i] = NULL;
-				kfree(peer);
-				ar->num_peers--;
+				ath10k_peer_map_cleanup(ar, peer);
 			}
 		}
 		spin_unlock_bh(&ar->data_lock);
@@ -10134,7 +10115,8 @@ int ath10k_mac_register(struct ath10k *ar)
 		ar->hw->wiphy->software_iftypes |= BIT(NL80211_IFTYPE_AP_VLAN);
 	}
 
-	if (!ath_is_world_regd(&ar->ath_common.regulatory)) {
+	if (!ath_is_world_regd(&ar->ath_common.reg_world_copy) &&
+	    !ath_is_world_regd(&ar->ath_common.regulatory)) {
 		ret = regulatory_hint(ar->hw->wiphy,
 				      ar->ath_common.regulatory.alpha2);
 		if (ret)

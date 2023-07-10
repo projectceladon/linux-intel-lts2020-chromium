@@ -116,7 +116,6 @@ static void mt7921e_unregister_device(struct mt7921_dev *dev)
 	mt7921_mcu_exit(dev);
 
 	tasklet_disable(&dev->irq_tasklet);
-	mt76_free_device(&dev->mt76);
 }
 
 static u32 __mt7921_reg_addr(struct mt7921_dev *dev, u32 addr)
@@ -286,6 +285,8 @@ static int mt7921_pci_probe(struct pci_dev *pdev,
 		goto err_free_pci_vec;
 	}
 
+	pci_set_drvdata(pdev, mdev);
+
 	dev = container_of(mdev, struct mt7921_dev, mt76);
 	dev->hif_ops = &mt7921_pcie_ops;
 
@@ -350,6 +351,7 @@ static void mt7921_pci_remove(struct pci_dev *pdev)
 
 	mt7921e_unregister_device(dev);
 	devm_free_irq(&pdev->dev, pdev->irq, dev);
+	mt76_free_device(&dev->mt76);
 	pci_free_irq_vectors(pdev);
 }
 
@@ -362,6 +364,7 @@ static int mt7921_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	int i, err;
 
 	pm->suspended = true;
+	flush_work(&dev->reset_work);
 	cancel_delayed_work_sync(&pm->ps_work);
 	cancel_work_sync(&pm->wake_work);
 
@@ -427,6 +430,9 @@ restore_napi:
 restore_suspend:
 	pm->suspended = false;
 
+	if (err < 0)
+		mt7921_reset(&dev->mt76);
+
 	return err;
 }
 
@@ -445,7 +451,7 @@ static int mt7921_pci_resume(struct pci_dev *pdev)
 
 	err = mt7921_mcu_drv_pmctrl(dev);
 	if (err < 0)
-		return err;
+		goto failed;
 
 	mt7921_wpdma_reinit_cond(dev);
 
@@ -475,14 +481,20 @@ static int mt7921_pci_resume(struct pci_dev *pdev)
 		mt76_connac_mcu_set_deep_sleep(&dev->mt76, false);
 
 	err = mt76_connac_mcu_set_hif_suspend(mdev, false);
-	if (err)
-		return err;
-
+failed:
 	pm->suspended = false;
+
+	if (err < 0)
+		mt7921_reset(&dev->mt76);
 
 	return err;
 }
 #endif /* CONFIG_PM */
+
+static void mt7921_pci_shutdown(struct pci_dev *pdev)
+{
+	mt7921_pci_remove(pdev);
+}
 
 struct pci_driver mt7921_pci_driver = {
 	.name		= KBUILD_MODNAME,
@@ -493,6 +505,7 @@ struct pci_driver mt7921_pci_driver = {
 	.suspend	= mt7921_pci_suspend,
 	.resume		= mt7921_pci_resume,
 #endif /* CONFIG_PM */
+	.shutdown	= mt7921_pci_shutdown,
 };
 
 module_pci_driver(mt7921_pci_driver);

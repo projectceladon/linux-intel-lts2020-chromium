@@ -351,7 +351,7 @@ static int soc_tplg_add_kcontrol(struct soc_tplg *tplg,
 	struct snd_soc_component *comp = tplg->comp;
 
 	return soc_tplg_add_dcontrol(comp->card->snd_card,
-				comp->dev, k, comp->name_prefix, comp, kcontrol);
+				tplg->dev, k, comp->name_prefix, comp, kcontrol);
 }
 
 /* remove a mixer kcontrol */
@@ -628,6 +628,14 @@ static int soc_tplg_init_kcontrol(struct soc_tplg *tplg,
 	return 0;
 }
 
+static int soc_tplg_control_ready(struct soc_tplg *tplg, struct snd_kcontrol *k,
+				  struct snd_soc_tplg_ctl_hdr *hdr)
+{
+	if (tplg->ops && tplg->ops->control_ready)
+		return tplg->ops->control_ready(tplg->comp, tplg->index, k, hdr);
+
+	return 0;
+}
 
 static int soc_tplg_create_tlv_db_scale(struct soc_tplg *tplg,
 	struct snd_kcontrol_new *kc, struct snd_soc_tplg_tlv_dbscale *scale)
@@ -749,7 +757,13 @@ static int soc_tplg_dbytes_create(struct soc_tplg *tplg, unsigned int count,
 		}
 
 		list_add(&sbe->dobj.list, &tplg->comp->dobj_list);
+		err = soc_tplg_control_ready(tplg, sbe->dobj.control.kcontrol, (struct snd_soc_tplg_ctl_hdr *)be);
+		if (err < 0) {
+			dev_err(tplg->dev, "ASoC: failed to ready %s\n", be->hdr.name);
+			break;
+		}
 	}
+
 	return err;
 
 }
@@ -1038,7 +1052,6 @@ err_denum:
 static int soc_tplg_kcontrol_elems_load(struct soc_tplg *tplg,
 	struct snd_soc_tplg_hdr *hdr)
 {
-	struct snd_soc_tplg_ctl_hdr *control_hdr;
 	int ret;
 	int i;
 
@@ -1046,8 +1059,7 @@ static int soc_tplg_kcontrol_elems_load(struct soc_tplg *tplg,
 		soc_tplg_get_offset(tplg));
 
 	for (i = 0; i < le32_to_cpu(hdr->count); i++) {
-
-		control_hdr = (struct snd_soc_tplg_ctl_hdr *)tplg->pos;
+		struct snd_soc_tplg_ctl_hdr *control_hdr = (struct snd_soc_tplg_ctl_hdr *)tplg->pos;
 
 		if (le32_to_cpu(control_hdr->size) != sizeof(*control_hdr)) {
 			dev_err(tplg->dev, "ASoC: invalid control size\n");
@@ -1456,13 +1468,17 @@ static int soc_tplg_dapm_widget_create(struct soc_tplg *tplg,
 
 	template.num_kcontrols = le32_to_cpu(w->num_kcontrols);
 	kc = devm_kcalloc(tplg->dev, le32_to_cpu(w->num_kcontrols), sizeof(*kc), GFP_KERNEL);
-	if (!kc)
+	if (!kc) {
+		ret = -ENOMEM;
 		goto hdr_err;
+	}
 
 	kcontrol_type = devm_kcalloc(tplg->dev, le32_to_cpu(w->num_kcontrols), sizeof(unsigned int),
 				     GFP_KERNEL);
-	if (!kcontrol_type)
+	if (!kcontrol_type) {
+		ret = -ENOMEM;
 		goto hdr_err;
+	}
 
 	for (i = 0; i < w->num_kcontrols; i++) {
 		control_hdr = (struct snd_soc_tplg_ctl_hdr *)tplg->pos;
@@ -1558,17 +1574,35 @@ err:
 static int soc_tplg_dapm_widget_elems_load(struct soc_tplg *tplg,
 	struct snd_soc_tplg_hdr *hdr)
 {
-	struct snd_soc_tplg_dapm_widget *widget;
-	int ret, count, i;
+	int count, i;
 
 	count = le32_to_cpu(hdr->count);
 
 	dev_dbg(tplg->dev, "ASoC: adding %d DAPM widgets\n", count);
 
 	for (i = 0; i < count; i++) {
-		widget = (struct snd_soc_tplg_dapm_widget *) tplg->pos;
+		struct snd_soc_tplg_dapm_widget *widget = (struct snd_soc_tplg_dapm_widget *) tplg->pos;
+		int ret;
+
+		/*
+		 * check if widget itself fits within topology file
+		 * use sizeof instead of widget->size, as we can't be sure
+		 * it is set properly yet (file may end before it is present)
+		 */
+		if (soc_tplg_get_offset(tplg) + sizeof(*widget) >= tplg->fw->size) {
+			dev_err(tplg->dev, "ASoC: invalid widget data size\n");
+			return -EINVAL;
+		}
+
+		/* check if widget has proper size */
 		if (le32_to_cpu(widget->size) != sizeof(*widget)) {
 			dev_err(tplg->dev, "ASoC: invalid widget size\n");
+			return -EINVAL;
+		}
+
+		/* check if widget private data fits within topology file */
+		if (soc_tplg_get_offset(tplg) + le32_to_cpu(widget->priv.size) >= tplg->fw->size) {
+			dev_err(tplg->dev, "ASoC: invalid widget private data size\n");
 			return -EINVAL;
 		}
 
@@ -2100,10 +2134,9 @@ static struct snd_soc_dai_link *snd_soc_find_dai_link(struct snd_soc_card *card,
 						      const char *stream_name)
 {
 	struct snd_soc_pcm_runtime *rtd;
-	struct snd_soc_dai_link *link;
 
 	for_each_card_rtds(card, rtd) {
-		link = rtd->dai_link;
+		struct snd_soc_dai_link *link = rtd->dai_link;
 
 		if (link->id != id)
 			continue;
@@ -2321,15 +2354,16 @@ err:
 static int soc_tplg_dai_elems_load(struct soc_tplg *tplg,
 				   struct snd_soc_tplg_hdr *hdr)
 {
-	struct snd_soc_tplg_dai *dai;
 	int count;
-	int i, ret;
+	int i;
 
 	count = le32_to_cpu(hdr->count);
 
 	/* config the existing BE DAIs */
 	for (i = 0; i < count; i++) {
-		dai = (struct snd_soc_tplg_dai *)tplg->pos;
+		struct snd_soc_tplg_dai *dai = (struct snd_soc_tplg_dai *)tplg->pos;
+		int ret;
+
 		if (le32_to_cpu(dai->size) != sizeof(*dai)) {
 			dev_err(tplg->dev, "ASoC: invalid physical DAI size\n");
 			return -EINVAL;
@@ -2414,6 +2448,7 @@ static int soc_tplg_manifest_load(struct soc_tplg *tplg,
 		_manifest = manifest;
 	} else {
 		abi_match = false;
+
 		ret = manifest_new_ver(tplg, manifest, &_manifest);
 		if (ret < 0)
 			return ret;
@@ -2441,6 +2476,14 @@ static int soc_valid_header(struct soc_tplg *tplg,
 			"ASoC: invalid header size for type %d at offset 0x%lx size 0x%zx.\n",
 			le32_to_cpu(hdr->type), soc_tplg_get_hdr_offset(tplg),
 			tplg->fw->size);
+		return -EINVAL;
+	}
+
+	if (soc_tplg_get_hdr_offset(tplg) + hdr->payload_size >= tplg->fw->size) {
+		dev_err(tplg->dev,
+			"ASoC: invalid header of type %d at offset %ld payload_size %d\n",
+			le32_to_cpu(hdr->type), soc_tplg_get_hdr_offset(tplg),
+			hdr->payload_size);
 		return -EINVAL;
 	}
 
@@ -2547,13 +2590,13 @@ static int soc_tplg_load_header(struct soc_tplg *tplg,
 /* process the topology file headers */
 static int soc_tplg_process_headers(struct soc_tplg *tplg)
 {
-	struct snd_soc_tplg_hdr *hdr;
 	int ret;
 
 	tplg->pass = SOC_TPLG_PASS_START;
 
 	/* process the header types from start to end */
 	while (tplg->pass <= SOC_TPLG_PASS_END) {
+		struct snd_soc_tplg_hdr *hdr;
 
 		tplg->hdr_pos = tplg->fw->data;
 		hdr = (struct snd_soc_tplg_hdr *)tplg->hdr_pos;

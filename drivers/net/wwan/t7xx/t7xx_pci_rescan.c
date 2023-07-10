@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2020, MediaTek Inc.
- * Copyright (c) 2021, Intel Corporation.
+ * Copyright (c) 2021, MediaTek Inc.
+ * Copyright (c) 2021-2022, Intel Corporation.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ":pcie:%s: " fmt, __func__
-#define dev_fmt(fmt) "pcie: " fmt
+#define pr_fmt(fmt) KBUILD_MODNAME ":t7xx:%s: " fmt, __func__
+#define dev_fmt(fmt) "t7xx: " fmt
 
-#include <linux/spinlock.h>
-#include <linux/pci.h>
+#include <linux/acpi.h>
 #include <linux/delay.h>
+#include <linux/pci.h>
+#include <linux/spinlock.h>
 #include <linux/workqueue.h>
 
 #include "t7xx_pci.h"
@@ -17,110 +18,126 @@
 
 static struct remove_rescan_context g_mtk_rescan_context;
 
-/* reference to bus rescan function */
-void mtk_pci_dev_rescan(void)
+void t7xx_pci_dev_rescan(void)
 {
 	struct pci_bus *b = NULL;
 
 	pci_lock_rescan_remove();
-	while ((b = pci_find_next_bus(b)) != NULL)
+	while ((b = pci_find_next_bus(b)))
 		pci_rescan_bus(b);
 
 	pci_unlock_rescan_remove();
 }
 
-void mtk_rescan_done(void)
+void t7xx_rescan_done(void)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&g_mtk_rescan_context.dev_lock, flags);
 	if (g_mtk_rescan_context.rescan_done == 0) {
-		pr_info("this is a rescan probe\n");
+		pr_debug("this is a rescan probe\n");
 		g_mtk_rescan_context.rescan_done = 1;
 	} else {
-		pr_info("this is a init probe\n");
+		pr_debug("this is a init probe\n");
 	}
 	spin_unlock_irqrestore(&g_mtk_rescan_context.dev_lock, flags);
 }
 
-static void mtk_remove_rescan(struct work_struct *work)
+static void t7xx_remove_rescan(struct work_struct *work)
 {
 	struct pci_dev *pdev;
+	int num_retries = RESCAN_RETRIES;
 	unsigned long flags;
-	int retry;
+#ifdef CONFIG_ACPI
+	acpi_status status;
+	acpi_handle handle;
+	bool cold_reboot;
+#endif
 
 	spin_lock_irqsave(&g_mtk_rescan_context.dev_lock, flags);
 	g_mtk_rescan_context.rescan_done = 0;
+#ifdef CONFIG_ACPI
+	cold_reboot = g_mtk_rescan_context.cold_reboot;
+#endif
 	pdev = g_mtk_rescan_context.dev;
 	spin_unlock_irqrestore(&g_mtk_rescan_context.dev_lock, flags);
+
 	if (pdev) {
-		/* bus provided remove function */
+#ifdef CONFIG_ACPI
+		handle = ACPI_HANDLE(&pdev->dev);
+#endif
+		pr_debug("start remove and rescan flow\n");
 		pci_stop_and_remove_bus_device_locked(pdev);
-		pr_info("start mtk remove and rescan flow\n");
+#ifdef CONFIG_ACPI
+		if (cold_reboot) {
+			pr_info("Performing cold modem reboot\n");
+			status = acpi_execute_simple_method(handle, "FHRF", 1);
+			if (ACPI_FAILURE(status)) {
+				dev_err(&pdev->dev, "Failed to call _FHRF: %d\n",
+					status);
+			}
+			status = acpi_evaluate_object(handle, "SHRF", NULL, NULL);
+			if (ACPI_FAILURE(status)) {
+				dev_err(&pdev->dev, "Failed to call _SHRF: %d\n",
+					status);
+			}
+		}
+#endif
 	}
 
-	for (retry = 35; retry > 0; retry--) {
-		msleep(DELAY_RESCAN_MTIME);
-		mtk_pci_dev_rescan();
+	do {
+		t7xx_pci_dev_rescan();
 		spin_lock_irqsave(&g_mtk_rescan_context.dev_lock, flags);
-		if (g_mtk_rescan_context.rescan_done == 1) {
+		if (g_mtk_rescan_context.rescan_done) {
 			spin_unlock_irqrestore(&g_mtk_rescan_context.dev_lock, flags);
 			break;
 		}
+
 		spin_unlock_irqrestore(&g_mtk_rescan_context.dev_lock, flags);
-	}
-	pr_info("rescan try times left %d\n", retry);
+		msleep(DELAY_RESCAN_MTIME);
+	} while (num_retries--);
 }
 
-void mtk_queue_rescan_work(struct pci_dev *pdev)
+void t7xx_rescan_queue_work(struct pci_dev *pdev, bool cold_reboot)
 {
 	unsigned long flags;
 
 	dev_info(&pdev->dev, "start queue_mtk_rescan_work\n");
 	spin_lock_irqsave(&g_mtk_rescan_context.dev_lock, flags);
-	if (g_mtk_rescan_context.rescan_done == 0) {
-		dev_err(&pdev->dev, "mtk rescan failed because last rescan undone\n");
-		goto fail_unlock;
+	if (!g_mtk_rescan_context.rescan_done) {
+		dev_err(&pdev->dev, "rescan failed because last rescan undone\n");
+		spin_unlock_irqrestore(&g_mtk_rescan_context.dev_lock, flags);
+		return;
 	}
-	g_mtk_rescan_context.dev = pdev;
-	dev_dbg(&pdev->dev, "get lock and start to queue\n");
-	spin_unlock_irqrestore(&g_mtk_rescan_context.dev_lock, flags);
-	queue_work(g_mtk_rescan_context.pcie_rescan_wq,
-		   &g_mtk_rescan_context.service_task);
-	return;
 
-fail_unlock:
+	g_mtk_rescan_context.dev = pdev;
+	g_mtk_rescan_context.cold_reboot = cold_reboot;
 	spin_unlock_irqrestore(&g_mtk_rescan_context.dev_lock, flags);
+	queue_work(g_mtk_rescan_context.pcie_rescan_wq, &g_mtk_rescan_context.service_task);
 }
 
-int mtk_rescan_init(void)
+int t7xx_rescan_init(void)
 {
-	pr_info("%s: Enter\n", __func__);
 	spin_lock_init(&g_mtk_rescan_context.dev_lock);
 	g_mtk_rescan_context.rescan_done = 1;
 	g_mtk_rescan_context.dev = NULL;
-	g_mtk_rescan_context.pcie_rescan_wq =
-		create_singlethread_workqueue(MTK_RESCAN_WQ);
+	g_mtk_rescan_context.pcie_rescan_wq = create_singlethread_workqueue(MTK_RESCAN_WQ);
 	if (!g_mtk_rescan_context.pcie_rescan_wq) {
 		pr_err("Failed to create workqueue: %s\n", MTK_RESCAN_WQ);
-		goto fail;
+		return -ENOMEM;
 	}
-	INIT_WORK(&g_mtk_rescan_context.service_task, mtk_remove_rescan);
+
+	INIT_WORK(&g_mtk_rescan_context.service_task, t7xx_remove_rescan);
 
 	return 0;
-
-fail:
-	destroy_workqueue(g_mtk_rescan_context.pcie_rescan_wq);
-	return -1;
 }
 
-void mtk_rescan_deinit(void)
+void t7xx_rescan_deinit(void)
 {
 	unsigned long flags;
 
-	pr_debug("Enter\n");
 	spin_lock_irqsave(&g_mtk_rescan_context.dev_lock, flags);
-	g_mtk_rescan_context.rescan_done = 1;
+	g_mtk_rescan_context.rescan_done = 0;
 	g_mtk_rescan_context.dev = NULL;
 	spin_unlock_irqrestore(&g_mtk_rescan_context.dev_lock, flags);
 	cancel_work_sync(&g_mtk_rescan_context.service_task);

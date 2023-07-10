@@ -102,6 +102,8 @@
 #define CSR_LTR_LONG_VAL_AD_SNOOP_VAL		0x000003ff
 #define CSR_LTR_LONG_VAL_AD_SCALE_USEC		2
 
+#define CSR_LTR_LAST_MSG			(CSR_BASE + 0x0DC)
+
 /* GIO Chicken Bits (PCI Express bus link power management) */
 #define CSR_GIO_CHICKEN_BITS    (CSR_BASE+0x100)
 
@@ -109,7 +111,7 @@
 #define CSR_IPC_SLEEP_CONTROL_SUSPEND	0x3
 #define CSR_IPC_SLEEP_CONTROL_RESUME	0
 
-/* Doorbell NMI (since Bz)
+/* Doorbell - since Bz
  * connected to UREG_DOORBELL_TO_ISR6 (lower 16 bits only)
  */
 #define CSR_DOORBELL_VECTOR	(CSR_BASE + 0x130)
@@ -309,6 +311,8 @@ enum {
 	SILICON_A_STEP = 0,
 	SILICON_B_STEP,
 	SILICON_C_STEP,
+	SILICON_D_STEP,
+	SILICON_E_STEP,
 	SILICON_Z_STEP = 0xf,
 };
 
@@ -348,6 +352,7 @@ enum {
 #define CSR_HW_RF_ID_TYPE_HRCDB		(0x00109F00)
 #define CSR_HW_RF_ID_TYPE_GF		(0x0010D000)
 #define CSR_HW_RF_ID_TYPE_GF4		(0x0010E000)
+#define CSR_HW_RF_ID_TYPE_MS		(0x00111000)
 
 /* HW_RF CHIP STEP  */
 #define CSR_HW_RF_STEP(_val) (((_val) >> 8) & 0xF)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
- * Copyright(c) 2021 Intel Corporation
+ * Copyright(c) 2021-2022 Intel Corporation
  */
 
 #include "iwl-drv.h"
@@ -25,20 +25,14 @@
 
 void *iwl_uefi_get_pnvm(struct iwl_trans *trans, size_t *len)
 {
-	struct efivar_entry *pnvm_efivar;
 	void *data;
 	unsigned long package_size;
-	int err;
+	efi_status_t status;
 
 	*len = 0;
 
-	pnvm_efivar = kzalloc(sizeof(*pnvm_efivar), GFP_KERNEL);
-	if (!pnvm_efivar)
-		return ERR_PTR(-ENOMEM);
-
-	memcpy(&pnvm_efivar->var.VariableName, IWL_UEFI_OEM_PNVM_NAME,
-	       sizeof(IWL_UEFI_OEM_PNVM_NAME));
-	pnvm_efivar->var.VendorGuid = IWL_EFI_VAR_GUID;
+	if (!efi_rt_services_supported(EFI_RT_SUPPORTED_GET_VARIABLE))
+		return ERR_PTR(-ENODEV);
 
 	/*
 	 * TODO: we hardcode a maximum length here, because reading
@@ -48,38 +42,33 @@ void *iwl_uefi_get_pnvm(struct iwl_trans *trans, size_t *len)
 	package_size = IWL_HARDCODED_PNVM_SIZE;
 
 	data = kmalloc(package_size, GFP_KERNEL);
-	if (!data) {
-		data = ERR_PTR(-ENOMEM);
-		goto out;
-	}
+	if (!data)
+		return ERR_PTR(-ENOMEM);
 
-	err = efivar_entry_get(pnvm_efivar, NULL, &package_size, data);
-	if (err) {
+	status = efi.get_variable(IWL_UEFI_OEM_PNVM_NAME, &IWL_EFI_VAR_GUID,
+				  NULL, &package_size, data);
+	if (status != EFI_SUCCESS) {
 		IWL_DEBUG_FW(trans,
-			     "PNVM UEFI variable not found %d (len %lu)\n",
-			     err, package_size);
+			     "PNVM UEFI variable not found 0x%lx (len %lu)\n",
+			     status, package_size);
 		kfree(data);
-		data = ERR_PTR(err);
-		goto out;
+		return ERR_PTR(-ENOENT);
 	}
 
 	IWL_DEBUG_FW(trans, "Read PNVM from UEFI with size %lu\n", package_size);
 	*len = package_size;
 
-out:
-	kfree(pnvm_efivar);
-
 	return data;
 }
 
-static void *iwl_uefi_reduce_power_section(struct iwl_trans *trans,
-					   const u8 *data, size_t len)
+static int iwl_uefi_reduce_power_section(struct iwl_trans *trans,
+					 const u8 *data, size_t len,
+					 struct iwl_pnvm_image *pnvm_data)
 {
 	const struct iwl_ucode_tlv *tlv;
-	u8 *reduce_power_data = NULL, *tmp;
-	u32 size = 0;
 
 	IWL_DEBUG_FW(trans, "Handling REDUCE_POWER section\n");
+	memset(pnvm_data, 0, sizeof(*pnvm_data));
 
 	while (len >= sizeof(*tlv)) {
 		u32 tlv_len, tlv_type;
@@ -93,9 +82,7 @@ static void *iwl_uefi_reduce_power_section(struct iwl_trans *trans,
 		if (len < tlv_len) {
 			IWL_ERR(trans, "invalid TLV len: %zd/%u\n",
 				len, tlv_len);
-			kfree(reduce_power_data);
-			reduce_power_data = ERR_PTR(-EINVAL);
-			goto out;
+			return -EINVAL;
 		}
 
 		data += sizeof(*tlv);
@@ -106,23 +93,17 @@ static void *iwl_uefi_reduce_power_section(struct iwl_trans *trans,
 				     "Got IWL_UCODE_TLV_MEM_DESC len %d\n",
 				     tlv_len);
 
-			IWL_DEBUG_FW(trans, "Adding data (size %d)\n", tlv_len);
-
-			tmp = krealloc(reduce_power_data, size + tlv_len, GFP_KERNEL);
-			if (!tmp) {
+			if (pnvm_data->n_chunks == IPC_DRAM_MAP_ENTRY_NUM_MAX) {
 				IWL_DEBUG_FW(trans,
-					     "Couldn't allocate (more) reduce_power_data\n");
-
-				kfree(reduce_power_data);
-				reduce_power_data = ERR_PTR(-ENOMEM);
-				goto out;
+				"too many payloads to allocate in DRAM.\n");
+				return -EINVAL;
 			}
 
-			reduce_power_data = tmp;
+			IWL_DEBUG_FW(trans, "Adding data (size %d)\n", tlv_len);
 
-			memcpy(reduce_power_data + size, data, tlv_len);
-
-			size += tlv_len;
+			pnvm_data->chunks[pnvm_data->n_chunks].data = data;
+			pnvm_data->chunks[pnvm_data->n_chunks].len = tlv_len;
+			pnvm_data->n_chunks++;
 
 			break;
 		}
@@ -141,27 +122,18 @@ static void *iwl_uefi_reduce_power_section(struct iwl_trans *trans,
 	}
 
 done:
-	if (!size) {
+	if (!pnvm_data->n_chunks) {
 		IWL_DEBUG_FW(trans, "Empty REDUCE_POWER, skipping.\n");
-		/* Better safe than sorry, but 'reduce_power_data' should
-		 * always be NULL if !size.
-		 */
-		kfree(reduce_power_data);
-		reduce_power_data = ERR_PTR(-ENOENT);
-		goto out;
+		return -ENOENT;
 	}
-
-	IWL_INFO(trans, "loaded REDUCE_POWER\n");
-
-out:
-	return reduce_power_data;
+	return 0;
 }
 
-static void *iwl_uefi_reduce_power_parse(struct iwl_trans *trans,
-					 const u8 *data, size_t len)
+static int iwl_uefi_reduce_power_parse(struct iwl_trans *trans,
+				       const u8 *data, size_t len,
+				       struct iwl_pnvm_image *pnvm_data)
 {
 	const struct iwl_ucode_tlv *tlv;
-	void *sec_data;
 
 	IWL_DEBUG_FW(trans, "Parsing REDUCE_POWER data\n");
 
@@ -177,7 +149,7 @@ static void *iwl_uefi_reduce_power_parse(struct iwl_trans *trans,
 		if (len < tlv_len) {
 			IWL_ERR(trans, "invalid TLV len: %zd/%u\n",
 				len, tlv_len);
-			return ERR_PTR(-EINVAL);
+			return -EINVAL;
 		}
 
 		if (tlv_type == IWL_UCODE_TLV_PNVM_SKU) {
@@ -198,11 +170,11 @@ static void *iwl_uefi_reduce_power_parse(struct iwl_trans *trans,
 			if (trans->sku_id[0] == le32_to_cpu(sku_id->data[0]) &&
 			    trans->sku_id[1] == le32_to_cpu(sku_id->data[1]) &&
 			    trans->sku_id[2] == le32_to_cpu(sku_id->data[2])) {
-				sec_data = iwl_uefi_reduce_power_section(trans,
-									 data,
-									 len);
-				if (!IS_ERR(sec_data))
-					return sec_data;
+				int ret = iwl_uefi_reduce_power_section(trans,
+								    data, len,
+								    pnvm_data);
+				if (!ret)
+					return 0;
 			} else {
 				IWL_DEBUG_FW(trans, "SKU ID didn't match!\n");
 			}
@@ -212,26 +184,20 @@ static void *iwl_uefi_reduce_power_parse(struct iwl_trans *trans,
 		}
 	}
 
-	return ERR_PTR(-ENOENT);
+	return -ENOENT;
 }
 
-void *iwl_uefi_get_reduced_power(struct iwl_trans *trans, size_t *len)
+int iwl_uefi_get_reduced_power(struct iwl_trans *trans,
+			       struct iwl_pnvm_image *pnvm_data)
 {
-	struct efivar_entry *reduce_power_efivar;
 	struct pnvm_sku_package *package;
-	void *data = NULL;
 	unsigned long package_size;
-	int err;
+	efi_status_t status;
+	int ret;
+	size_t len = 0;
 
-	*len = 0;
-
-	reduce_power_efivar = kzalloc(sizeof(*reduce_power_efivar), GFP_KERNEL);
-	if (!reduce_power_efivar)
-		return ERR_PTR(-ENOMEM);
-
-	memcpy(&reduce_power_efivar->var.VariableName, IWL_UEFI_REDUCED_POWER_NAME,
-	       sizeof(IWL_UEFI_REDUCED_POWER_NAME));
-	reduce_power_efivar->var.VendorGuid = IWL_EFI_VAR_GUID;
+	if (!efi_rt_services_supported(EFI_RT_SUPPORTED_GET_VARIABLE))
+		return -ENODEV;
 
 	/*
 	 * TODO: we hardcode a maximum length here, because reading
@@ -241,38 +207,91 @@ void *iwl_uefi_get_reduced_power(struct iwl_trans *trans, size_t *len)
 	package_size = IWL_HARDCODED_REDUCE_POWER_SIZE;
 
 	package = kmalloc(package_size, GFP_KERNEL);
-	if (!package) {
-		package = ERR_PTR(-ENOMEM);
-		goto out;
-	}
+	if (!package)
+		return -ENOMEM;
 
-	err = efivar_entry_get(reduce_power_efivar, NULL, &package_size, package);
-	if (err) {
+	status = efi.get_variable(IWL_UEFI_REDUCED_POWER_NAME, &IWL_EFI_VAR_GUID,
+				  NULL, &package_size, package);
+	if (status != EFI_SUCCESS) {
 		IWL_DEBUG_FW(trans,
-			     "Reduced Power UEFI variable not found %d (len %lu)\n",
-			     err, package_size);
+			     "Reduced Power UEFI variable not found 0x%lx (len %lu)\n",
+			     status, package_size);
 		kfree(package);
-		data = ERR_PTR(err);
-		goto out;
+		return -ENOENT;
 	}
 
 	IWL_DEBUG_FW(trans, "Read reduced power from UEFI with size %lu\n",
 		     package_size);
-	*len = package_size;
+	len = package_size;
 
 	IWL_DEBUG_FW(trans, "rev %d, total_size %d, n_skus %d\n",
 		     package->rev, package->total_size, package->n_skus);
 
-	data = iwl_uefi_reduce_power_parse(trans, package->data,
-					   *len - sizeof(*package));
+	ret = iwl_uefi_reduce_power_parse(trans, package->data,
+					  len - sizeof(*package),
+					  pnvm_data);
 
 	kfree(package);
 
-out:
-	kfree(reduce_power_efivar);
-
-	return data;
+	return ret;
 }
+
+static int iwl_uefi_step_parse(struct uefi_cnv_common_step_data *common_step_data,
+			       struct iwl_trans *trans)
+{
+	if (common_step_data->revision != 1)
+		return -EINVAL;
+
+	trans->mbx_addr_0_step = (u32)common_step_data->revision |
+		(u32)common_step_data->cnvi_eq_channel << 8 |
+		(u32)common_step_data->cnvr_eq_channel << 16 |
+		(u32)common_step_data->radio1 << 24;
+	trans->mbx_addr_1_step = (u32)common_step_data->radio2;
+	return 0;
+}
+
+void iwl_uefi_get_step_table(struct iwl_trans *trans)
+{
+	struct uefi_cnv_common_step_data *data;
+	unsigned long package_size;
+	efi_status_t status;
+	int ret;
+
+	if (trans->trans_cfg->device_family < IWL_DEVICE_FAMILY_AX210)
+		return;
+
+	if (!efi_rt_services_supported(EFI_RT_SUPPORTED_GET_VARIABLE))
+		return;
+
+	/* TODO: we hardcode a maximum length here, because reading
+	 * from the UEFI is not working.  To implement this properly,
+	 * we have to call efivar_entry_size().
+	 */
+	package_size = IWL_HARDCODED_STEP_SIZE;
+
+	data = kmalloc(package_size, GFP_KERNEL);
+	if (!data)
+		return;
+
+	status = efi.get_variable(IWL_UEFI_STEP_NAME, &IWL_EFI_VAR_GUID,
+				  NULL, &package_size, data);
+	if (status != EFI_SUCCESS) {
+		IWL_DEBUG_FW(trans,
+			     "STEP UEFI variable not found 0x%lx\n", status);
+		goto out_free;
+	}
+
+	IWL_DEBUG_FW(trans, "Read STEP from UEFI with size %lu\n",
+		     package_size);
+
+	ret = iwl_uefi_step_parse(data, trans);
+	if (ret < 0)
+		IWL_DEBUG_FW(trans, "Cannot read STEP tables. rev is invalid\n");
+
+out_free:
+	kfree(data);
+}
+IWL_EXPORT_SYMBOL(iwl_uefi_get_step_table);
 
 #ifdef CONFIG_ACPI
 static int iwl_uefi_sgom_parse(struct uefi_cnv_wlan_sgom_data *sgom_data,
@@ -310,21 +329,14 @@ static int iwl_uefi_sgom_parse(struct uefi_cnv_wlan_sgom_data *sgom_data,
 void iwl_uefi_get_sgom_table(struct iwl_trans *trans,
 			     struct iwl_fw_runtime *fwrt)
 {
-	struct efivar_entry *sgom_efivar;
 	struct uefi_cnv_wlan_sgom_data *data;
 	unsigned long package_size;
-	int err, ret;
+	efi_status_t status;
+	int ret;
 
-	if (!fwrt->geo_enabled)
+	if (!fwrt->geo_enabled ||
+	    !efi_rt_services_supported(EFI_RT_SUPPORTED_GET_VARIABLE))
 		return;
-
-	sgom_efivar = kzalloc(sizeof(*sgom_efivar), GFP_KERNEL);
-	if (!sgom_efivar)
-		return;
-
-	memcpy(&sgom_efivar->var.VariableName, IWL_UEFI_SGOM_NAME,
-	       sizeof(IWL_UEFI_SGOM_NAME));
-	sgom_efivar->var.VendorGuid = IWL_EFI_VAR_GUID;
 
 	/* TODO: we hardcode a maximum length here, because reading
 	 * from the UEFI is not working.  To implement this properly,
@@ -333,15 +345,14 @@ void iwl_uefi_get_sgom_table(struct iwl_trans *trans,
 	package_size = IWL_HARDCODED_SGOM_SIZE;
 
 	data = kmalloc(package_size, GFP_KERNEL);
-	if (!data) {
-		data = ERR_PTR(-ENOMEM);
-		goto out;
-	}
+	if (!data)
+		return;
 
-	err = efivar_entry_get(sgom_efivar, NULL, &package_size, data);
-	if (err) {
+	status = efi.get_variable(IWL_UEFI_SGOM_NAME, &IWL_EFI_VAR_GUID,
+				  NULL, &package_size, data);
+	if (status != EFI_SUCCESS) {
 		IWL_DEBUG_FW(trans,
-			     "SGOM UEFI variable not found %d\n", err);
+			     "SGOM UEFI variable not found 0x%lx\n", status);
 		goto out_free;
 	}
 
@@ -355,8 +366,6 @@ void iwl_uefi_get_sgom_table(struct iwl_trans *trans,
 out_free:
 	kfree(data);
 
-out:
-	kfree(sgom_efivar);
 }
 IWL_EXPORT_SYMBOL(iwl_uefi_get_sgom_table);
 #endif /* CONFIG_ACPI */

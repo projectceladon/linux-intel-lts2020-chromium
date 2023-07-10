@@ -111,6 +111,11 @@ struct virtwl_info {
 	struct idr vfds;
 
 	bool use_send_vfd_v2;
+
+	// Base value to use when deriving pfn values from vfd pfn offsets
+	u64 pfn_base;
+	// Pfn value sent by the device to indicate the vfd has no pfn.
+	u64 invalid_pfn;
 };
 
 static struct virtwl_vfd *virtwl_vfd_alloc(struct virtwl_info *vi);
@@ -210,6 +215,14 @@ clear_queue:
 	return ret;
 }
 
+static uint64_t decode_pfn(struct virtwl_info *vi,
+			   struct virtio_wl_ctrl_vfd_new *new)
+{
+	if (new->pfn == vi->invalid_pfn)
+		return 0;
+	return new->pfn + vi->pfn_base;
+}
+
 static bool vq_handle_new(struct virtwl_info *vi,
 			  struct virtio_wl_ctrl_vfd_new *new, unsigned int len)
 {
@@ -241,7 +254,7 @@ static bool vq_handle_new(struct virtwl_info *vi,
 
 	vfd->id = id;
 	vfd->size = new->size;
-	vfd->pfn = new->pfn;
+	vfd->pfn = decode_pfn(vi, new);
 	vfd->flags = new->flags;
 
 	return true; /* return the inbuf to vq */
@@ -887,10 +900,10 @@ static int virtwl_vfd_send(struct file *filp, const char __user *buffer,
 	ctrl_send_size = sizeof(*ctrl_send) + vfd_ids_size + len;
 	vmalloced = false;
 	if (ctrl_send_size < PAGE_SIZE)
-		ctrl_send = kzalloc(ctrl_send_size, GFP_KERNEL);
+		ctrl_send = kmalloc(ctrl_send_size, GFP_KERNEL);
 	else {
 		vmalloced = true;
-		ctrl_send = vzalloc(ctrl_send_size);
+		ctrl_send = vmalloc(ctrl_send_size);
 	}
 	if (!ctrl_send) {
 		ret = -ENOMEM;
@@ -901,6 +914,7 @@ static int virtwl_vfd_send(struct file *filp, const char __user *buffer,
 	out_buffer = (u8 *)ctrl_send + ctrl_send_size - len;
 
 	ctrl_send->hdr.type = VIRTIO_WL_CMD_VFD_SEND;
+	ctrl_send->hdr.flags = 0;
 #ifdef SEND_VIRTGPU_RESOURCES
 	if (foreign_id) {
 		struct virtio_wl_ctrl_vfd_send_vfd *v1 = NULL;
@@ -1216,7 +1230,7 @@ static struct virtwl_vfd *do_new(struct virtwl_info *vi,
 		goto remove_vfd;
 
 	vfd->size = ctrl_new->size;
-	vfd->pfn = ctrl_new->pfn;
+	vfd->pfn = decode_pfn(vi, ctrl_new);
 	vfd->flags = ctrl_new->flags;
 
 	mutex_unlock(&vfd->lock);
@@ -1513,6 +1527,17 @@ static int probe_common(struct virtio_device *vdev)
 	idr_init(&vi->vfds);
 
 	vi->use_send_vfd_v2 = virtio_has_feature(vdev, VIRTIO_WL_F_SEND_FENCES);
+	if (virtio_has_feature(vdev, VIRTIO_WL_F_USE_SHMEM)) {
+		struct virtio_shm_region region;
+
+		if (!virtio_get_shm_region(vdev, &region, 0)) {
+			pr_warn("virtwl: failed to find shm region");
+			goto del_cdev;
+		}
+
+		vi->pfn_base = region.addr >> PAGE_SHIFT;
+		vi->invalid_pfn = region.len >> PAGE_SHIFT;
+	}
 
 	/* lock is unneeded as we have unique ownership */
 	ret = vq_fill_locked(vi->vqs[VIRTWL_VQ_IN]);
@@ -1577,6 +1602,7 @@ static unsigned int features_legacy[] = {
 static unsigned int features[] = {
 	VIRTIO_WL_F_TRANS_FLAGS,
 	VIRTIO_WL_F_SEND_FENCES,
+	VIRTIO_WL_F_USE_SHMEM,
 };
 
 static struct virtio_driver virtio_wl_driver = {

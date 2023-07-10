@@ -64,17 +64,10 @@ enum drm_panel_orientation;
  * the panel. This is the job of the .unprepare() function.
  *
  * Backlight can be handled automatically if configured using
- * drm_panel_of_backlight(). Then the driver does not need to implement the
- * functionality to enable/disable backlight.
+ * drm_panel_of_backlight() or drm_panel_dp_aux_backlight(). Then the driver
+ * does not need to implement the functionality to enable/disable backlight.
  */
 struct drm_panel_funcs {
-	/**
-	 * @prepare_power:
-	 *
-	 * Turn on panel power.
-	 */
-	int (*prepare_power)(struct drm_panel *panel);
-
 	/**
 	 * @prepare:
 	 *
@@ -123,13 +116,6 @@ struct drm_panel_funcs {
 			 struct drm_connector *connector);
 
 	/**
-	 * @unprepare_power:
-	 *
-	 * Turn off panel_power.
-	 */
-	int (*unprepare_power)(struct drm_panel *panel);
-
-	/**
 	 * @get_timings:
 	 *
 	 * Copy display timings into the provided array and return
@@ -158,8 +144,8 @@ struct drm_panel {
 	 * Backlight device, used to turn on backlight after the call
 	 * to enable(), and to turn off backlight before the call to
 	 * disable().
-	 * backlight is set by drm_panel_of_backlight() and drivers
-	 * shall not assign it.
+	 * backlight is set by drm_panel_of_backlight() or
+	 * drm_panel_dp_aux_backlight() and drivers shall not assign it.
 	 */
 	struct backlight_device *backlight;
 
@@ -193,9 +179,6 @@ void drm_panel_init(struct drm_panel *panel, struct device *dev,
 
 void drm_panel_add(struct drm_panel *panel);
 void drm_panel_remove(struct drm_panel *panel);
-
-int drm_panel_prepare_power(struct drm_panel *panel);
-int drm_panel_unprepare_power(struct drm_panel *panel);
 
 int drm_panel_prepare(struct drm_panel *panel);
 int drm_panel_unprepare(struct drm_panel *panel);

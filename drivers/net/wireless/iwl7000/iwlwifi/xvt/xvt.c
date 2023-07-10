@@ -153,6 +153,25 @@ static const struct iwl_hcmd_arr iwl_xvt_cmd_groups[] = {
 	[DEBUG_GROUP] = HCMD_ARR(iwl_xvt_debug_names),
 };
 
+static void iwl_xvt_fwrt_dump_start(void *ctx)
+{
+	struct iwl_xvt *xvt = ctx;
+
+	mutex_lock(&xvt->mutex);
+}
+
+static void iwl_xvt_fwrt_dump_end(void *ctx)
+{
+	struct iwl_xvt *xvt = ctx;
+
+	mutex_unlock(&xvt->mutex);
+}
+
+static const struct iwl_fw_runtime_ops iwl_xvt_fwrt_ops = {
+	.dump_start = iwl_xvt_fwrt_dump_start,
+	.dump_end = iwl_xvt_fwrt_dump_end,
+};
+
 static int iwl_xvt_tm_send_hcmd(void *op_mode, struct iwl_host_cmd *host_cmd)
 {
 	struct iwl_xvt *xvt = (struct iwl_xvt *)op_mode;
@@ -190,7 +209,7 @@ static struct iwl_op_mode *iwl_xvt_start(struct iwl_trans *trans,
 	xvt->trans = trans;
 	xvt->dev = trans->dev;
 
-	iwl_fw_runtime_init(&xvt->fwrt, trans, fw, NULL, NULL,
+	iwl_fw_runtime_init(&xvt->fwrt, trans, fw, &iwl_xvt_fwrt_ops, xvt,
 			    NULL, NULL, dbgfs_dir);
 
 	mutex_init(&xvt->mutex);
@@ -313,14 +332,9 @@ static void iwl_xvt_stop(struct iwl_op_mode *op_mode)
 
 	iwl_fw_cancel_timestamp(&xvt->fwrt);
 
-	if (xvt->state != IWL_XVT_STATE_UNINITIALIZED) {
-		if (xvt->fw_running) {
-			iwl_xvt_txq_disable(xvt);
-			xvt->fw_running = false;
-		}
-		iwl_fw_dbg_stop_sync(&xvt->fwrt);
-		iwl_trans_stop_device(xvt->trans);
-	}
+	mutex_lock(&xvt->mutex);
+	iwl_xvt_stop_op_mode(xvt);
+	mutex_unlock(&xvt->mutex);
 
 	for (i = 0; i < ARRAY_SIZE(xvt->reorder_bufs); i++) {
 		struct iwl_xvt_reorder_buffer *buffer;
@@ -584,6 +598,12 @@ static void iwl_xvt_nic_config(struct iwl_op_mode *op_mode)
 	radio_cfg_dash = (xvt->fw->phy_config & FW_PHY_CFG_RADIO_DASH) >>
 			 FW_PHY_CFG_RADIO_DASH_POS;
 
+	IWL_DEBUG_INFO(xvt, "Radio type=0x%x-0x%x-0x%x\n", radio_cfg_type,
+		       radio_cfg_step, radio_cfg_dash);
+
+	if (xvt->trans->trans_cfg->device_family >= IWL_DEVICE_FAMILY_AX210)
+		return;
+
 	reg_val = CSR_HW_REV_STEP_DASH(xvt->trans->hw_rev);
 
 	/* radio configuration */
@@ -613,9 +633,6 @@ static void iwl_xvt_nic_config(struct iwl_op_mode *op_mode)
 				CSR_HW_IF_CONFIG_REG_BIT_RADIO_SI |
 				CSR_HW_IF_CONFIG_REG_BIT_MAC_SI,
 				reg_val);
-
-	IWL_DEBUG_INFO(xvt, "Radio type=0x%x-0x%x-0x%x\n", radio_cfg_type,
-		       radio_cfg_step, radio_cfg_dash);
 
 	/*
 	 * W/A : NIC is stuck in a reset state after Early PCIe power off
@@ -769,25 +786,46 @@ static const struct iwl_op_mode_ops iwl_xvt_ops = {
 
 void iwl_xvt_free_tx_queue(struct iwl_xvt *xvt, u8 lmac_id)
 {
+	int ret = 0;
+	u32 new_cmd_id = WIDE_ID(DATA_PATH_GROUP, SCD_QUEUE_CONFIG_CMD);
+
 	if (xvt->tx_meta_data[lmac_id].queue == -1)
 		return;
+
+	if (iwl_fw_lookup_cmd_ver(xvt->fw, new_cmd_id, 0) >= 3) {
+		struct iwl_scd_queue_cfg_cmd remove_cmd = {
+			.operation = cpu_to_le32(IWL_SCD_QUEUE_REMOVE),
+			.u.remove.sta_mask = cpu_to_le32(xvt->tx_meta_data[lmac_id].sta_msk),
+			.u.remove.tid = cpu_to_le32(TX_QUEUE_CFG_TID),
+		};
+		ret = iwl_xvt_send_cmd_pdu(xvt, new_cmd_id, 0, sizeof(remove_cmd), &remove_cmd);
+		if (ret)
+			IWL_ERR(xvt, "Failed to remove queue %d with %d error\n",
+				xvt->tx_meta_data[lmac_id].queue, ret);
+	}
 
 	iwl_trans_txq_free(xvt->trans, xvt->tx_meta_data[lmac_id].queue);
 
 	xvt->tx_meta_data[lmac_id].queue = -1;
+	xvt->tx_meta_data[lmac_id].sta_msk = 0;
 }
 
 int iwl_xvt_allocate_tx_queue(struct iwl_xvt *xvt, u8 sta_id,
 			      u8 lmac_id)
 {
-	int ret, size = max_t(u32, IWL_DEFAULT_QUEUE_SIZE,
-			      xvt->trans->cfg->min_ba_txq_size);
+	int ret = 0;
+	int size = max_t(u32, IWL_DEFAULT_QUEUE_SIZE,
+			 xvt->trans->cfg->min_ba_txq_size);
+
+	if (xvt->tx_meta_data[lmac_id].sta_msk & BIT(sta_id))
+		return ret;
 
 	ret = iwl_trans_txq_alloc(xvt->trans, 0,
 				  BIT(sta_id), TX_QUEUE_CFG_TID, size, 0);
 	/* ret is positive when func returns the allocated the queue number */
 	if (ret > 0) {
 		xvt->tx_meta_data[lmac_id].queue = ret;
+		xvt->tx_meta_data[lmac_id].sta_msk |= BIT(sta_id);
 		ret = 0;
 	} else {
 		IWL_ERR(xvt, "failed to allocate queue\n");
@@ -898,6 +936,11 @@ static int iwl_xvt_sar_geo_init(struct iwl_xvt *xvt)
 {
 	return 0;
 }
+
+void iwl_xvt_lari_cfg(struct iwl_xvt *xvt)
+{
+}
+
 #endif /* CONFIG_ACPI */
 
 int iwl_xvt_sar_select_profile(struct iwl_xvt *xvt, int prof_a, int prof_b)
@@ -1051,4 +1094,95 @@ int iwl_xvt_init_ppag_tables(struct iwl_xvt *xvt)
 		return 0;
 
 	return iwl_xvt_ppag_send_cmd(xvt);
+}
+
+void iwl_xvt_txpath_flush_send_cmd(struct iwl_xvt *xvt, u32 sta_id, u16 tids)
+{
+	int ret;
+	struct iwl_tx_path_flush_cmd flush_cmd = {
+		.sta_id = cpu_to_le32(sta_id),
+		.tid_mask = cpu_to_le16(tids),
+	};
+
+	struct iwl_host_cmd cmd = {
+		.id = TXPATH_FLUSH,
+		.len = { sizeof(flush_cmd), },
+		.data = { &flush_cmd, },
+		.flags = CMD_WANT_SKB,
+	};
+
+	IWL_DEBUG_TX_QUEUES(xvt, "flush for sta id %d tid mask 0x%x\n", sta_id, tids);
+
+	ret = iwl_xvt_send_cmd(xvt, &cmd);
+
+	if (ret) {
+		IWL_ERR(xvt, "Failed to send flush command (%d)\n", ret);
+		return;
+	}
+
+	iwl_xvt_txpath_flush(xvt, cmd.resp_pkt);
+}
+
+void iwl_xvt_lari_cfg(struct iwl_xvt *xvt)
+{
+	int ret;
+	u32 value;
+	struct iwl_lari_config_change_cmd_v6 cmd = {};
+
+	cmd.config_bitmap = iwl_acpi_get_lari_config_bitmap(&xvt->fwrt);
+
+	ret = iwl_acpi_get_dsm_u32(xvt->fwrt.dev, 0,
+				   DSM_FUNC_ENABLE_UNII4_CHAN,
+				   &iwl_guid, &value);
+	if (!ret)
+		cmd.oem_unii4_allow_bitmap = cpu_to_le32(value);
+
+	if (cmd.config_bitmap ||
+	    cmd.oem_uhb_allow_bitmap ||
+	    cmd.oem_unii4_allow_bitmap) {
+		size_t cmd_size;
+		u8 cmd_ver = iwl_fw_lookup_cmd_ver(xvt->fw,
+						   WIDE_ID(REGULATORY_AND_NVM_GROUP,
+							   LARI_CONFIG_CHANGE), 1);
+
+		switch (cmd_ver) {
+		case 6:
+			cmd_size = sizeof(struct iwl_lari_config_change_cmd_v6);
+			break;
+		case 5:
+			cmd_size = sizeof(struct iwl_lari_config_change_cmd_v5);
+			break;
+		case 4:
+			cmd_size = sizeof(struct iwl_lari_config_change_cmd_v4);
+			break;
+		case 3:
+			cmd_size = sizeof(struct iwl_lari_config_change_cmd_v3);
+			break;
+		case 2:
+			cmd_size = sizeof(struct iwl_lari_config_change_cmd_v2);
+			break;
+		default:
+			cmd_size = sizeof(struct iwl_lari_config_change_cmd_v1);
+			break;
+		}
+
+		IWL_DEBUG_RADIO(xvt,
+				"sending LARI_CONFIG_CHANGE, config_bitmap=0x%x, oem_11ax_allow_bitmap=0x%x\n",
+				le32_to_cpu(cmd.config_bitmap),
+				le32_to_cpu(cmd.oem_11ax_allow_bitmap));
+		IWL_DEBUG_RADIO(xvt,
+				"sending LARI_CONFIG_CHANGE, oem_unii4_allow_bitmap=0x%x, chan_state_active_bitmap=0x%x, cmd_ver=%d\n",
+				le32_to_cpu(cmd.oem_unii4_allow_bitmap),
+				le32_to_cpu(cmd.chan_state_active_bitmap),
+				cmd_ver);
+
+		ret = iwl_xvt_send_cmd_pdu(xvt,
+					   WIDE_ID(REGULATORY_AND_NVM_GROUP,
+						   LARI_CONFIG_CHANGE),
+					0, cmd_size, &cmd);
+
+		if (ret < 0)
+			IWL_DEBUG_RADIO(xvt, "Failed to send LARI_CONFIG_CHANGE (%d)\n",
+					ret);
+	}
 }

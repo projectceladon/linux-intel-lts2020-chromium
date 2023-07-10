@@ -12,7 +12,7 @@
  *  Andy Shevchenko <andriy.shevchenko@linux.intel.com>
  *  Eliot Lee <eliot.lee@intel.com>
  *  Moises Veleta <moises.veleta@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  *  Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
@@ -56,7 +56,7 @@
 #define D2H_INT_RESUME_ACK			BIT(12)
 #define D2H_INT_SUSPEND_ACK_AP			BIT(13)
 #define D2H_INT_RESUME_ACK_AP			BIT(14)
-#define D2H_INT_ASYNC_SAP_HK			BIT(15)
+#define D2H_INT_ASYNC_AP_HK			BIT(15)
 #define D2H_INT_ASYNC_MD_HK			BIT(16)
 
 /* Register base */
@@ -101,31 +101,43 @@ enum t7xx_pm_resume_state {
 	PM_RESUME_REG_STATE_L2_EXP,
 };
 
+enum host_event_e {
+	HOST_EVENT_INIT = 0,
+	FASTBOOT_DL_NOTY = 0x3,
+};
+
 #define T7XX_PCIE_MISC_DEV_STATUS		0x0d1c
-#define MISC_DEV_STATUS_MASK			GENMASK(15, 0)
-#define MISC_STAGE_MASK				GENMASK(2, 0)
-#define BROM_EVENT_MASK				0x00000070
-#define LK_EVENT_MASK 				0x00000700
-#define MISC_RESET_TYPE_PLDR			BIT(26)
 #define MISC_RESET_TYPE_FLDR			BIT(27)
-#define INIT_STAGE				0
-#define LINUX_STAGE				4
-#define BROM_STAGE_PRE				1
-#define BROM_STAGE_POST				2
-#define BROM_STAGE_PRE				1
-#define BROM_STAGE_POST				2
-#define LK_STAGE				3
+#define MISC_RESET_TYPE_PLDR			BIT(26)
+#define MISC_DEV_STATUS_MASK			GENMASK(15, 0)
+#define LK_EVENT_MASK				GENMASK(11, 8)
+#define HOST_EVENT_MASK			GENMASK(31, 28)
+
+enum lk_event_id {
+	LK_EVENT_NORMAL = 0,
+	LK_EVENT_CREATE_PD_PORT = 1,
+	LK_EVENT_CREATE_POST_DL_PORT = 2,
+	LK_EVENT_RESET = 7,
+};
+
+#define MISC_STAGE_MASK				GENMASK(2, 0)
+
+enum t7xx_device_stage {
+	INIT_STAGE = 0,
+	PRE_BROM_STAGE = 1,
+	POST_BROM_STAGE = 2,
+	LK_STAGE = 3,
+	LINUX_STAGE = 4,
+};
 
 #define T7XX_PCIE_RESOURCE_STATUS		0x0d28
 #define T7XX_PCIE_RESOURCE_STS_MSK		GENMASK(4, 0)
 
-#define DIS_ASPM_LOWPWR_SET_0			0x0e50
-#define DIS_ASPM_LOWPWR_CLR_0			0x0e54
-#define DIS_ASPM_LOWPWR_SET_1			0x0e58
-#define DIS_ASPM_LOWPWR_CLR_1			0x0e5c
-#define L1_DISABLE_BIT(i)			BIT((i) * 4 + 1)
-#define L1_1_DISABLE_BIT(i)			BIT((i) * 4 + 2)
-#define L1_2_DISABLE_BIT(i)			BIT((i) * 4 + 3)
+#define DISABLE_ASPM_LOWPWR			0x0e50
+#define ENABLE_ASPM_LOWPWR			0x0e54
+#define T7XX_L1_BIT(i)				BIT((i) * 4 + 1)
+#define T7XX_L1_1_BIT(i)			BIT((i) * 4 + 2)
+#define T7XX_L1_2_BIT(i)			BIT((i) * 4 + 3)
 
 #define MSIX_ISTAT_HST_GRP0_0			0x0f00
 #define IMASK_HOST_MSIX_SET_GRP0_0		0x3000
@@ -143,22 +155,6 @@ enum t7xx_int {
 	DPMAIF2_INT,
 	SAP_RGU_INT,
 	CLDMA3_INT,
-};
-
-enum brom_event_id_e {
-	BROM_EVENT_NORMAL = 0,
-	BROM_EVENT_JUMP_BL = 1,
-	BROM_EVENT_TIME_OUT = 2,
-	BROM_EVENT_JUMP_DA = 3,
-	BROM_EVENT_CREATE_DL_PORT = 4,
-	BROM_EVENT_RESET = 7,
-};
-
-enum lk_event_id_e {
-	LK_EVENT_NORMAL = 0,
-	LK_EVENT_CREATE_PD_PORT = 1,
-	LK_EVENT_CREATE_POST_DL_PORT = 2,
-	LK_EVENT_RESET = 7,
 };
 
 /* DPMA definitions */

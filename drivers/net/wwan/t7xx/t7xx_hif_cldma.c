@@ -7,7 +7,7 @@
  *  Amir Hanania <amir.hanania@intel.com>
  *  Haijun Liu <haijun.liu@mediatek.com>
  *  Moises Veleta <moises.veleta@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  *  Sreehari Kancharla <sreehari.kancharla@intel.com>
  *
  * Contributors:
@@ -43,11 +43,11 @@
 #include <linux/workqueue.h>
 
 #include "t7xx_cldma.h"
-#include "t7xx_common.h"
 #include "t7xx_hif_cldma.h"
 #include "t7xx_mhccif.h"
 #include "t7xx_pci.h"
 #include "t7xx_pcie_mac.h"
+#include "t7xx_port_proxy.h"
 #include "t7xx_reg.h"
 #include "t7xx_state_monitor.h"
 
@@ -57,14 +57,13 @@
 #define CHECK_Q_STOP_TIMEOUT_US		1000000
 #define CHECK_Q_STOP_STEP_US		10000
 
-#define CLDMA_JUMBO_BUFFER		64528	/* 63kB + CCCI header */
+#define CLDMA_MTU 3584 /* 3.5kB */
 
 static void md_cd_queue_struct_reset(struct cldma_queue *queue, struct cldma_ctrl *md_ctrl,
-				     enum mtk_txrx tx_rx, unsigned char index)
+				     enum mtk_txrx tx_rx, unsigned int index)
 {
 	queue->dir = tx_rx;
 	queue->index = index;
-	queue->hif_id = md_ctrl->hif_id;
 	queue->md_ctrl = md_ctrl;
 	queue->tr_ring = NULL;
 	queue->tr_done = NULL;
@@ -72,46 +71,33 @@ static void md_cd_queue_struct_reset(struct cldma_queue *queue, struct cldma_ctr
 }
 
 static void md_cd_queue_struct_init(struct cldma_queue *queue, struct cldma_ctrl *md_ctrl,
-				    enum mtk_txrx tx_rx, unsigned char index)
+				    enum mtk_txrx tx_rx, unsigned int index)
 {
 	md_cd_queue_struct_reset(queue, md_ctrl, tx_rx, index);
 	init_waitqueue_head(&queue->req_wq);
 	spin_lock_init(&queue->ring_lock);
 }
 
-static void t7xx_cldma_tgpd_set_data_ptr(struct cldma_tgpd *tgpd, dma_addr_t data_ptr)
+static void t7xx_cldma_gpd_set_data_ptr(struct cldma_gpd *gpd, dma_addr_t data_ptr)
 {
-	tgpd->data_buff_bd_ptr_h = cpu_to_le32(upper_32_bits(data_ptr));
-	tgpd->data_buff_bd_ptr_l = cpu_to_le32(lower_32_bits(data_ptr));
+	gpd->data_buff_bd_ptr_h = cpu_to_le32(upper_32_bits(data_ptr));
+	gpd->data_buff_bd_ptr_l = cpu_to_le32(lower_32_bits(data_ptr));
 }
 
-static void t7xx_cldma_tgpd_set_next_ptr(struct cldma_tgpd *tgpd, dma_addr_t next_ptr)
+static void t7xx_cldma_gpd_set_next_ptr(struct cldma_gpd *gpd, dma_addr_t next_ptr)
 {
-	tgpd->next_gpd_ptr_h = cpu_to_le32(upper_32_bits(next_ptr));
-	tgpd->next_gpd_ptr_l = cpu_to_le32(lower_32_bits(next_ptr));
-}
-
-static void t7xx_cldma_rgpd_set_data_ptr(struct cldma_rgpd *rgpd, dma_addr_t data_ptr)
-{
-	rgpd->data_buff_bd_ptr_h = cpu_to_le32(upper_32_bits(data_ptr));
-	rgpd->data_buff_bd_ptr_l = cpu_to_le32(lower_32_bits(data_ptr));
-}
-
-static void t7xx_cldma_rgpd_set_next_ptr(struct cldma_rgpd *rgpd, dma_addr_t next_ptr)
-{
-	rgpd->next_gpd_ptr_h = cpu_to_le32(upper_32_bits(next_ptr));
-	rgpd->next_gpd_ptr_l = cpu_to_le32(lower_32_bits(next_ptr));
+	gpd->next_gpd_ptr_h = cpu_to_le32(upper_32_bits(next_ptr));
+	gpd->next_gpd_ptr_l = cpu_to_le32(lower_32_bits(next_ptr));
 }
 
 static int t7xx_cldma_alloc_and_map_skb(struct cldma_ctrl *md_ctrl, struct cldma_request *req,
-					size_t size)
+					size_t size, gfp_t gfp_mask)
 {
-	req->skb = __dev_alloc_skb(size, GFP_KERNEL);
+	req->skb = __dev_alloc_skb(size, gfp_mask);
 	if (!req->skb)
 		return -ENOMEM;
 
-	req->mapped_buff = dma_map_single(md_ctrl->dev, req->skb->data,
-					  t7xx_skb_data_area_size(req->skb), DMA_FROM_DEVICE);
+	req->mapped_buff = dma_map_single(md_ctrl->dev, req->skb->data, size, DMA_FROM_DEVICE);
 	if (dma_mapping_error(md_ctrl->dev, req->mapped_buff)) {
 		dev_kfree_skb_any(req->skb);
 		req->skb = NULL;
@@ -126,7 +112,7 @@ static int t7xx_cldma_alloc_and_map_skb(struct cldma_ctrl *md_ctrl, struct cldma
 static int t7xx_cldma_gpd_rx_from_q(struct cldma_queue *queue, int budget, bool *over_budget)
 {
 	struct cldma_ctrl *md_ctrl = queue->md_ctrl;
-	unsigned char hwo_polling_count = 0;
+	unsigned int hwo_polling_count = 0;
 	struct t7xx_cldma_hw *hw_info;
 	bool rx_not_done = true;
 	unsigned long flags;
@@ -136,7 +122,7 @@ static int t7xx_cldma_gpd_rx_from_q(struct cldma_queue *queue, int budget, bool 
 
 	do {
 		struct cldma_request *req;
-		struct cldma_rgpd *rgpd;
+		struct cldma_gpd *gpd;
 		struct sk_buff *skb;
 		int ret;
 
@@ -144,8 +130,8 @@ static int t7xx_cldma_gpd_rx_from_q(struct cldma_queue *queue, int budget, bool 
 		if (!req)
 			return -ENODATA;
 
-		rgpd = req->gpd;
-		if ((rgpd->gpd_flags & GPD_FLAGS_HWO) || !req->skb) {
+		gpd = req->gpd;
+		if ((gpd->flags & GPD_FLAGS_HWO) || !req->skb) {
 			dma_addr_t gpd_addr;
 
 			if (!pci_device_is_present(to_pci_dev(md_ctrl->dev))) {
@@ -167,34 +153,35 @@ static int t7xx_cldma_gpd_rx_from_q(struct cldma_queue *queue, int budget, bool 
 
 		if (req->mapped_buff) {
 			dma_unmap_single(md_ctrl->dev, req->mapped_buff,
-					 t7xx_skb_data_area_size(skb), DMA_FROM_DEVICE);
+					 queue->tr_ring->pkt_size, DMA_FROM_DEVICE);
 			req->mapped_buff = 0;
 		}
 
 		skb->len = 0;
 		skb_reset_tail_pointer(skb);
-		skb_put(skb, le16_to_cpu(rgpd->data_buff_len));
+		skb_put(skb, le16_to_cpu(gpd->data_buff_len));
 
 		ret = md_ctrl->recv_skb(queue, skb);
+		/* Break processing, will try again later */
 		if (ret < 0)
 			return ret;
 
 		req->skb = NULL;
-		t7xx_cldma_rgpd_set_data_ptr(rgpd, 0);
+		t7xx_cldma_gpd_set_data_ptr(gpd, 0);
 
 		spin_lock_irqsave(&queue->ring_lock, flags);
 		queue->tr_done = list_next_entry_circular(req, &queue->tr_ring->gpd_ring, entry);
 		spin_unlock_irqrestore(&queue->ring_lock, flags);
 		req = queue->rx_refill;
 
-		ret = t7xx_cldma_alloc_and_map_skb(md_ctrl, req, queue->tr_ring->pkt_size);
+		ret = t7xx_cldma_alloc_and_map_skb(md_ctrl, req, queue->tr_ring->pkt_size, GFP_KERNEL);
 		if (ret)
 			return ret;
 
-		rgpd = req->gpd;
-		t7xx_cldma_rgpd_set_data_ptr(rgpd, req->mapped_buff);
-		rgpd->data_buff_len = 0;
-		rgpd->gpd_flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
+		gpd = req->gpd;
+		t7xx_cldma_gpd_set_data_ptr(gpd, req->mapped_buff);
+		gpd->data_buff_len = 0;
+		gpd->flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
 
 		spin_lock_irqsave(&queue->ring_lock, flags);
 		queue->rx_refill = list_next_entry_circular(req, &queue->tr_ring->gpd_ring, entry);
@@ -273,7 +260,7 @@ static int t7xx_cldma_gpd_tx_collect(struct cldma_queue *queue)
 	struct cldma_ctrl *md_ctrl = queue->md_ctrl;
 	unsigned int dma_len, count = 0;
 	struct cldma_request *req;
-	struct cldma_tgpd *tgpd;
+	struct cldma_gpd *gpd;
 	unsigned long flags;
 	dma_addr_t dma_free;
 	struct sk_buff *skb;
@@ -285,14 +272,14 @@ static int t7xx_cldma_gpd_tx_collect(struct cldma_queue *queue)
 			spin_unlock_irqrestore(&queue->ring_lock, flags);
 			break;
 		}
-		tgpd = req->gpd;
-		if ((tgpd->gpd_flags & GPD_FLAGS_HWO) || !req->skb) {
+		gpd = req->gpd;
+		if ((gpd->flags & GPD_FLAGS_HWO) || !req->skb) {
 			spin_unlock_irqrestore(&queue->ring_lock, flags);
 			break;
 		}
 		queue->budget++;
 		dma_free = req->mapped_buff;
-		dma_len = le16_to_cpu(tgpd->data_buff_len);
+		dma_len = le16_to_cpu(gpd->data_buff_len);
 		skb = req->skb;
 		req->skb = NULL;
 		queue->tr_done = list_next_entry_circular(req, &queue->tr_ring->gpd_ring, entry);
@@ -313,7 +300,6 @@ static void t7xx_cldma_txq_empty_hndl(struct cldma_queue *queue)
 {
 	struct cldma_ctrl *md_ctrl = queue->md_ctrl;
 	struct cldma_request *req;
-	struct cldma_tgpd *tgpd;
 	dma_addr_t ul_curr_addr;
 	unsigned long flags;
 	bool pending_gpd;
@@ -325,8 +311,7 @@ static void t7xx_cldma_txq_empty_hndl(struct cldma_queue *queue)
 	req = list_prev_entry_circular(queue->tx_next, &queue->tr_ring->gpd_ring, entry);
 	spin_unlock_irqrestore(&queue->ring_lock, flags);
 
-	tgpd = req->gpd;
-	pending_gpd = (tgpd->gpd_flags & GPD_FLAGS_HWO) && req->skb;
+	pending_gpd = (req->gpd->flags & GPD_FLAGS_HWO) && req->skb;
 
 	spin_lock_irqsave(&md_ctrl->cldma_lock, flags);
 	if (pending_gpd) {
@@ -390,7 +375,7 @@ static void t7xx_cldma_ring_free(struct cldma_ctrl *md_ctrl,
 	list_for_each_entry_safe(req_cur, req_next, &ring->gpd_ring, entry) {
 		if (req_cur->mapped_buff && req_cur->skb) {
 			dma_unmap_single(md_ctrl->dev, req_cur->mapped_buff,
-					 t7xx_skb_data_area_size(req_cur->skb), tx_rx);
+					 ring->pkt_size, tx_rx);
 			req_cur->mapped_buff = 0;
 		}
 
@@ -417,7 +402,7 @@ static struct cldma_request *t7xx_alloc_rx_request(struct cldma_ctrl *md_ctrl, s
 	if (!req->gpd)
 		goto err_free_req;
 
-	val = t7xx_cldma_alloc_and_map_skb(md_ctrl, req, pkt_size);
+	val = t7xx_cldma_alloc_and_map_skb(md_ctrl, req, pkt_size, GFP_KERNEL);
 	if (val)
 		goto err_free_pool;
 
@@ -435,7 +420,7 @@ err_free_req:
 static int t7xx_cldma_rx_ring_init(struct cldma_ctrl *md_ctrl, struct cldma_ring *ring)
 {
 	struct cldma_request *req;
-	struct cldma_rgpd *gpd;
+	struct cldma_gpd *gpd;
 	int i;
 
 	INIT_LIST_HEAD(&ring->gpd_ring);
@@ -449,15 +434,16 @@ static int t7xx_cldma_rx_ring_init(struct cldma_ctrl *md_ctrl, struct cldma_ring
 		}
 
 		gpd = req->gpd;
-		t7xx_cldma_rgpd_set_data_ptr(gpd, req->mapped_buff);
-		gpd->data_allow_len = cpu_to_le16(ring->pkt_size);
-		gpd->gpd_flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
+		t7xx_cldma_gpd_set_data_ptr(gpd, req->mapped_buff);
+		gpd->rx_data_allow_len = cpu_to_le16(ring->pkt_size);
+		gpd->flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
 		INIT_LIST_HEAD(&req->entry);
 		list_add_tail(&req->entry, &ring->gpd_ring);
 	}
 
+	/* Link previous GPD to next GPD, circular */
 	list_for_each_entry(req, &ring->gpd_ring, entry) {
-		t7xx_cldma_rgpd_set_next_ptr(gpd, req->gpd_addr);
+		t7xx_cldma_gpd_set_next_ptr(gpd, req->gpd_addr);
 		gpd = req->gpd;
 	}
 
@@ -484,7 +470,7 @@ static struct cldma_request *t7xx_alloc_tx_request(struct cldma_ctrl *md_ctrl)
 static int t7xx_cldma_tx_ring_init(struct cldma_ctrl *md_ctrl, struct cldma_ring *ring)
 {
 	struct cldma_request *req;
-	struct cldma_tgpd *gpd;
+	struct cldma_gpd *gpd;
 	int i;
 
 	INIT_LIST_HEAD(&ring->gpd_ring);
@@ -498,13 +484,14 @@ static int t7xx_cldma_tx_ring_init(struct cldma_ctrl *md_ctrl, struct cldma_ring
 		}
 
 		gpd = req->gpd;
-		gpd->gpd_flags = GPD_FLAGS_IOC;
+		gpd->flags = GPD_FLAGS_IOC;
 		INIT_LIST_HEAD(&req->entry);
 		list_add_tail(&req->entry, &ring->gpd_ring);
 	}
 
+	/* Link previous GPD to next GPD, circular */
 	list_for_each_entry(req, &ring->gpd_ring, entry) {
-		t7xx_cldma_tgpd_set_next_ptr(gpd, req->gpd_addr);
+		t7xx_cldma_gpd_set_next_ptr(gpd, req->gpd_addr);
 		gpd = req->gpd;
 	}
 
@@ -537,7 +524,6 @@ static void t7xx_cldma_rxq_init(struct cldma_queue *queue)
 
 	queue->dir = MTK_RX;
 	queue->tr_ring = &md_ctrl->rx_ring[queue->index];
-	queue->q_type = md_ctrl->rxq_type[queue->index];
 	t7xx_cldma_q_reset(queue);
 }
 
@@ -547,7 +533,6 @@ static void t7xx_cldma_txq_init(struct cldma_queue *queue)
 
 	queue->dir = MTK_TX;
 	queue->tr_ring = &md_ctrl->tx_ring[queue->index];
-	queue->q_type = md_ctrl->txq_type[queue->index];
 	t7xx_cldma_q_reset(queue);
 }
 
@@ -563,7 +548,7 @@ static void t7xx_cldma_disable_irq(struct cldma_ctrl *md_ctrl)
 
 static void t7xx_cldma_irq_work_cb(struct cldma_ctrl *md_ctrl)
 {
-	u32 l2_tx_int_msk, l2_rx_int_msk, l2_tx_int, l2_rx_int, val;
+	unsigned long l2_tx_int_msk, l2_rx_int_msk, l2_tx_int, l2_rx_int, val;
 	struct t7xx_cldma_hw *hw_info = &md_ctrl->hw_info;
 	int i;
 
@@ -586,7 +571,7 @@ static void t7xx_cldma_irq_work_cb(struct cldma_ctrl *md_ctrl)
 
 		t7xx_cldma_hw_tx_done(hw_info, l2_tx_int);
 		if (l2_tx_int & (TXRX_STATUS_BITMASK | EMPTY_STATUS_BITMASK)) {
-			for_each_set_bit(i, (unsigned long *)&l2_tx_int, L2_INT_BIT_COUNT) {
+			for_each_set_bit(i, &l2_tx_int, L2_INT_BIT_COUNT) {
 				if (i < CLDMA_TXQ_NUM) {
 					pm_runtime_get(md_ctrl->dev);
 					t7xx_cldma_hw_irq_dis_eq(hw_info, i, MTK_TX);
@@ -612,7 +597,7 @@ static void t7xx_cldma_irq_work_cb(struct cldma_ctrl *md_ctrl)
 		t7xx_cldma_hw_rx_done(hw_info, l2_rx_int);
 		if (l2_rx_int & (TXRX_STATUS_BITMASK | EMPTY_STATUS_BITMASK)) {
 			l2_rx_int |= l2_rx_int >> CLDMA_RXQ_NUM;
-			for_each_set_bit(i, (unsigned long *)&l2_rx_int, CLDMA_RXQ_NUM) {
+			for_each_set_bit(i, &l2_rx_int, CLDMA_RXQ_NUM) {
 				pm_runtime_get(md_ctrl->dev);
 				t7xx_cldma_hw_irq_dis_eq(hw_info, i, MTK_RX);
 				t7xx_cldma_hw_irq_dis_txrx(hw_info, i, MTK_RX);
@@ -775,16 +760,16 @@ static void t7xx_cldma_clear_txq(struct cldma_ctrl *md_ctrl, int qnum)
 {
 	struct cldma_queue *txq = &md_ctrl->txq[qnum];
 	struct cldma_request *req;
-	struct cldma_tgpd *tgpd;
+	struct cldma_gpd *gpd;
 	unsigned long flags;
 
 	spin_lock_irqsave(&txq->ring_lock, flags);
 	t7xx_cldma_q_reset(txq);
 	list_for_each_entry(req, &txq->tr_ring->gpd_ring, entry) {
-		tgpd = req->gpd;
-		tgpd->gpd_flags &= ~GPD_FLAGS_HWO;
-		t7xx_cldma_tgpd_set_data_ptr(tgpd, 0);
-		tgpd->data_buff_len = 0;
+		gpd = req->gpd;
+		gpd->flags &= ~GPD_FLAGS_HWO;
+		t7xx_cldma_gpd_set_data_ptr(gpd, 0);
+		gpd->data_buff_len = 0;
 		dev_kfree_skb_any(req->skb);
 		req->skb = NULL;
 	}
@@ -795,16 +780,16 @@ static int t7xx_cldma_clear_rxq(struct cldma_ctrl *md_ctrl, int qnum)
 {
 	struct cldma_queue *rxq = &md_ctrl->rxq[qnum];
 	struct cldma_request *req;
-	struct cldma_rgpd *rgpd;
+	struct cldma_gpd *gpd;
 	unsigned long flags;
 	int ret = 0;
 
 	spin_lock_irqsave(&rxq->ring_lock, flags);
 	t7xx_cldma_q_reset(rxq);
 	list_for_each_entry(req, &rxq->tr_ring->gpd_ring, entry) {
-		rgpd = req->gpd;
-		rgpd->gpd_flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
-		rgpd->data_buff_len = 0;
+		gpd = req->gpd;
+		gpd->flags = GPD_FLAGS_IOC | GPD_FLAGS_HWO;
+		gpd->data_buff_len = 0;
 
 		if (req->skb) {
 			req->skb->len = 0;
@@ -816,11 +801,11 @@ static int t7xx_cldma_clear_rxq(struct cldma_ctrl *md_ctrl, int qnum)
 		if (req->skb)
 			continue;
 
-		ret = t7xx_cldma_alloc_and_map_skb(md_ctrl, req, rxq->tr_ring->pkt_size);
+		ret = t7xx_cldma_alloc_and_map_skb(md_ctrl, req, rxq->tr_ring->pkt_size, GFP_ATOMIC);
 		if (ret)
 			break;
 
-		t7xx_cldma_rgpd_set_data_ptr(req->gpd, req->mapped_buff);
+		t7xx_cldma_gpd_set_data_ptr(req->gpd, req->mapped_buff);
 	}
 	spin_unlock_irqrestore(&rxq->ring_lock, flags);
 
@@ -860,7 +845,7 @@ static int t7xx_cldma_gpd_handle_tx_request(struct cldma_queue *queue, struct cl
 					    struct sk_buff *skb)
 {
 	struct cldma_ctrl *md_ctrl = queue->md_ctrl;
-	struct cldma_tgpd *tgpd = tx_req->gpd;
+	struct cldma_gpd *gpd = tx_req->gpd;
 	unsigned long flags;
 
 	/* Update GPD */
@@ -871,15 +856,15 @@ static int t7xx_cldma_gpd_handle_tx_request(struct cldma_queue *queue, struct cl
 		return -ENOMEM;
 	}
 
-	t7xx_cldma_tgpd_set_data_ptr(tgpd, tx_req->mapped_buff);
-	tgpd->data_buff_len = cpu_to_le16(skb->len);
+	t7xx_cldma_gpd_set_data_ptr(gpd, tx_req->mapped_buff);
+	gpd->data_buff_len = cpu_to_le16(skb->len);
 
 	/* This lock must cover TGPD setting, as even without a resume operation,
 	 * CLDMA can send next HWO=1 if last TGPD just finished.
 	 */
 	spin_lock_irqsave(&md_ctrl->cldma_lock, flags);
 	if (md_ctrl->txq_active & BIT(queue->index))
-		tgpd->gpd_flags |= GPD_FLAGS_HWO;
+		gpd->flags |= GPD_FLAGS_HWO;
 
 	spin_unlock_irqrestore(&md_ctrl->cldma_lock, flags);
 
@@ -888,7 +873,7 @@ static int t7xx_cldma_gpd_handle_tx_request(struct cldma_queue *queue, struct cl
 }
 
 /* Called with cldma_lock */
-static void t7xx_cldma_hw_start_send(struct cldma_ctrl *md_ctrl, u8 qno,
+static void t7xx_cldma_hw_start_send(struct cldma_ctrl *md_ctrl, int qno,
 				     struct cldma_request *prev_req)
 {
 	struct t7xx_cldma_hw *hw_info = &md_ctrl->hw_info;
@@ -908,19 +893,6 @@ static void t7xx_cldma_hw_start_send(struct cldma_ctrl *md_ctrl, u8 qno,
 
 		md_ctrl->txq_started |= BIT(qno);
 	}
-}
-
-int t7xx_cldma_write_room(struct cldma_ctrl *md_ctrl, unsigned char qno)
-{
-	struct cldma_queue *queue = &md_ctrl->txq[qno];
-
-	if (!queue)
-		return -EINVAL;
-
-	if (queue->budget >= MAX_TX_BUDGET)
-		return queue->budget;
-
-	return 0;
 }
 
 /**
@@ -945,7 +917,7 @@ void t7xx_cldma_set_recv_skb(struct cldma_ctrl *md_ctrl,
  * * -ENOMEM	- Allocation failure.
  * * -EINVAL	- Invalid queue request.
  * * -EIO	- Queue is not active.
- * * -EBUSY	- Resource lock failure.
+ * * -ETIMEDOUT	- Timeout waiting for the device to wake up.
  */
 int t7xx_cldma_send_skb(struct cldma_ctrl *md_ctrl, int qno, struct sk_buff *skb)
 {
@@ -984,7 +956,7 @@ int t7xx_cldma_send_skb(struct cldma_ctrl *md_ctrl, int qno, struct sk_buff *skb
 			spin_unlock_irqrestore(&queue->ring_lock, flags);
 
 			if (!t7xx_pci_sleep_disable_complete(md_ctrl->t7xx_dev)) {
-				ret = -EBUSY;
+				ret = -ETIMEDOUT;
 				break;
 			}
 
@@ -1001,7 +973,7 @@ int t7xx_cldma_send_skb(struct cldma_ctrl *md_ctrl, int qno, struct sk_buff *skb
 		spin_unlock_irqrestore(&queue->ring_lock, flags);
 
 		if (!t7xx_pci_sleep_disable_complete(md_ctrl->t7xx_dev)) {
-			ret = -EBUSY;
+			ret = -ETIMEDOUT;
 			break;
 		}
 
@@ -1021,55 +993,35 @@ allow_sleep:
 	return ret;
 }
 
-int cldma_txq_mtu(struct cldma_ctrl *md_ctrl, unsigned char qno)
-{
-	if (qno >= CLDMA_TXQ_NUM)
-		return -EINVAL;
-
-	return md_ctrl->txq_buff_size[qno];
-}
-
-static void ccci_cldma_adjust_config(struct cldma_ctrl *md_ctrl, unsigned char cfg_id)
+static void t7xx_cldma_adjust_config(struct cldma_ctrl *md_ctrl, enum cldma_cfg cfg_id)
 {
 	int qno;
 
-	/* set default config */
 	for (qno = 0; qno < CLDMA_RXQ_NUM; qno++) {
-		md_ctrl->rxq_buff_size[qno] = MTK_SKB_4K;
-		md_ctrl->rxq_type[qno] = CLDMA_SHARED_Q;
+		md_ctrl->rx_ring[qno].pkt_size = CLDMA_SHARED_Q_BUFF_SZ;
+		md_ctrl->rxq[qno].q_type = CLDMA_SHARED_Q;
 	}
 
-	md_ctrl->rxq_buff_size[CLDMA_RXQ_NUM - 1] = MTK_SKB_64K;
+	md_ctrl->rx_ring[CLDMA_RXQ_NUM - 1].pkt_size = CLDMA_JUMBO_BUFF_SZ;
 
 	for (qno = 0; qno < CLDMA_TXQ_NUM; qno++) {
-		md_ctrl->txq_buff_size[qno] = MTK_SKB_4K;
-		md_ctrl->txq_type[qno] = CLDMA_SHARED_Q;
+		md_ctrl->tx_ring[qno].pkt_size = CLDMA_SHARED_Q_BUFF_SZ;
+		md_ctrl->txq[qno].q_type = CLDMA_SHARED_Q;
 	}
 
-	switch (cfg_id) {
-	case HIF_CFG_DEF:
-		break;
-	case HIF_CFG1:
-		md_ctrl->rxq_buff_size[7] = MTK_SKB_64K;
-		break;
-	case HIF_CFG2:
-		/*Download Port Configuration*/
-		md_ctrl->rxq_type[0] = CLDMA_DEDICATED_Q;
-		md_ctrl->txq_type[0] = CLDMA_DEDICATED_Q;
-		md_ctrl->txq_buff_size[0] = MTK_SKB_2K;
-		md_ctrl->rxq_buff_size[0] = MTK_SKB_2K;
-		/*Postdump Port Configuration*/
-		md_ctrl->rxq_type[1] = CLDMA_DEDICATED_Q;
-		md_ctrl->txq_type[1] = CLDMA_DEDICATED_Q;
-		md_ctrl->txq_buff_size[1] = MTK_SKB_2K;
-		md_ctrl->rxq_buff_size[1] = MTK_SKB_2K;
-		break;
-	default:
-		break;
+	if (cfg_id == CLDMA_DEDICATED_Q_CFG) {
+		md_ctrl->rxq[DOWNLOAD_PORT_ID].q_type = CLDMA_DEDICATED_Q;
+		md_ctrl->txq[DOWNLOAD_PORT_ID].q_type = CLDMA_DEDICATED_Q;
+		md_ctrl->tx_ring[DOWNLOAD_PORT_ID].pkt_size = CLDMA_DEDICATED_Q_BUFF_SZ;
+		md_ctrl->rx_ring[DOWNLOAD_PORT_ID].pkt_size = CLDMA_DEDICATED_Q_BUFF_SZ;
+		md_ctrl->rxq[DUMP_PORT_ID].q_type = CLDMA_DEDICATED_Q;
+		md_ctrl->txq[DUMP_PORT_ID].q_type = CLDMA_DEDICATED_Q;
+		md_ctrl->tx_ring[DUMP_PORT_ID].pkt_size = CLDMA_DEDICATED_Q_BUFF_SZ;
+		md_ctrl->rx_ring[DUMP_PORT_ID].pkt_size = CLDMA_DEDICATED_Q_BUFF_SZ;
 	}
 }
 
-static int t7xx_cldma_late_init(struct cldma_ctrl *md_ctrl, unsigned int cfg_id)
+static int t7xx_cldma_late_init(struct cldma_ctrl *md_ctrl)
 {
 	char dma_pool_name[32];
 	int i, j, ret;
@@ -1079,11 +1031,10 @@ static int t7xx_cldma_late_init(struct cldma_ctrl *md_ctrl, unsigned int cfg_id)
 		return -EALREADY;
 	}
 
-	ccci_cldma_adjust_config(md_ctrl, cfg_id);
 	snprintf(dma_pool_name, sizeof(dma_pool_name), "cldma_req_hif%d", md_ctrl->hif_id);
 
 	md_ctrl->gpd_dmapool = dma_pool_create(dma_pool_name, md_ctrl->dev,
-					       sizeof(struct cldma_tgpd), GPD_DMAPOOL_ALIGN, 0);
+					       sizeof(struct cldma_gpd), GPD_DMAPOOL_ALIGN, 0);
 	if (!md_ctrl->gpd_dmapool) {
 		dev_err(md_ctrl->dev, "DMA pool alloc fail\n");
 		return -ENOMEM;
@@ -1095,14 +1046,11 @@ static int t7xx_cldma_late_init(struct cldma_ctrl *md_ctrl, unsigned int cfg_id)
 			dev_err(md_ctrl->dev, "control TX ring init fail\n");
 			goto err_free_tx_ring;
 		}
+
+		md_ctrl->tx_ring[i].pkt_size = CLDMA_MTU;
 	}
 
 	for (j = 0; j < CLDMA_RXQ_NUM; j++) {
-		md_ctrl->rx_ring[j].pkt_size = md_ctrl->rxq_buff_size[j];
-
-		if (j == CLDMA_RXQ_NUM - 1)
-			md_ctrl->rx_ring[j].pkt_size = CLDMA_JUMBO_BUFFER;
-
 		ret = t7xx_cldma_rx_ring_init(md_ctrl, &md_ctrl->rx_ring[j]);
 		if (ret) {
 			dev_err(md_ctrl->dev, "Control RX ring init fail\n");
@@ -1406,10 +1354,11 @@ err_workqueue:
 	return -ENOMEM;
 }
 
-void t7xx_cldma_switch_cfg(struct cldma_ctrl *md_ctrl, unsigned int cfg_id)
+void t7xx_cldma_switch_cfg(struct cldma_ctrl *md_ctrl, enum cldma_cfg cfg_id)
 {
 	t7xx_cldma_late_release(md_ctrl);
-	t7xx_cldma_late_init(md_ctrl, cfg_id);
+	t7xx_cldma_adjust_config(md_ctrl, cfg_id);
+	t7xx_cldma_late_init(md_ctrl);
 }
 
 void t7xx_cldma_exit(struct cldma_ctrl *md_ctrl)

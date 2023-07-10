@@ -7,7 +7,7 @@
  *  Haijun Liu <haijun.liu@mediatek.com>
  *  Eliot Lee <eliot.lee@intel.com>
  *  Moises Veleta <moises.veleta@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  *
  * Contributors:
  *  Amir Hanania <amir.hanania@intel.com>
@@ -46,6 +46,7 @@ struct mtk_runtime_feature {
 	u8				support_info;
 	u8				reserved[2];
 	__le32				data_len;
+	__le32				data[];
 };
 
 enum md_event_id {
@@ -65,17 +66,17 @@ struct t7xx_modem {
 	struct cldma_ctrl		*md_ctrl[CLDMA_NUM];
 	struct t7xx_pci_dev		*t7xx_dev;
 	struct t7xx_sys_info		core_md;
-	struct t7xx_sys_info		core_sap;
+	struct t7xx_sys_info		core_ap;
 	bool				md_init_finish;
 	bool				rgu_irq_asserted;
 	struct workqueue_struct		*handshake_wq;
 	struct work_struct		handshake_work;
+	struct workqueue_struct		*ap_handshake_wq;
+	struct work_struct		ap_handshake_work;
 	struct t7xx_fsm_ctl		*fsm_ctl;
 	struct port_proxy		*port_prox;
 	unsigned int			exp_id;
 	spinlock_t			exp_lock; /* Protects exception events */
-	struct workqueue_struct	*sap_handshake_wq;
-	struct work_struct	sap_handshake_work;
 };
 
 void t7xx_md_exception_handshake(struct t7xx_modem *md);

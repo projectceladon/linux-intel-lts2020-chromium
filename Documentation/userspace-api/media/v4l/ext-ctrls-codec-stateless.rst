@@ -34,7 +34,11 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_ctrl_h264_sps
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{1.2cm}|p{8.6cm}|p{7.5cm}|
 
 .. flat-table:: struct v4l2_ctrl_h264_sps
     :header-rows:  0
@@ -95,6 +99,10 @@ Stateless Codec Control ID
     * - __u32
       - ``flags``
       - See :ref:`Sequence Parameter Set Flags <h264_sps_flags>`
+
+.. raw:: latex
+
+    \normalsize
 
 .. _h264_sps_constraints_set_flags:
 
@@ -171,7 +179,9 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_ctrl_h264_pps
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
 
 .. flat-table:: struct v4l2_ctrl_h264_pps
     :header-rows:  0
@@ -212,42 +222,56 @@ Stateless Codec Control ID
       - ``flags``
       - See :ref:`Picture Parameter Set Flags <h264_pps_flags>`
 
+.. raw:: latex
+
+    \normalsize
+
 .. _h264_pps_flags:
 
 ``Picture Parameter Set Flags``
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \begingroup
+    \scriptsize
+    \setlength{\tabcolsep}{2pt}
+
+.. tabularcolumns:: |p{9.8cm}|p{1.0cm}|p{6.5cm}|
 
 .. flat-table::
     :header-rows:  0
     :stub-columns: 0
-    :widths:       1 1 2
+    :widths:       10 1 4
 
     * - ``V4L2_H264_PPS_FLAG_ENTROPY_CODING_MODE``
-      - 0x00000001
+      - 0x0001
       -
     * - ``V4L2_H264_PPS_FLAG_BOTTOM_FIELD_PIC_ORDER_IN_FRAME_PRESENT``
-      - 0x00000002
+      - 0x0002
       -
     * - ``V4L2_H264_PPS_FLAG_WEIGHTED_PRED``
-      - 0x00000004
+      - 0x0004
       -
     * - ``V4L2_H264_PPS_FLAG_DEBLOCKING_FILTER_CONTROL_PRESENT``
-      - 0x00000008
+      - 0x0008
       -
     * - ``V4L2_H264_PPS_FLAG_CONSTRAINED_INTRA_PRED``
-      - 0x00000010
+      - 0x0010
       -
     * - ``V4L2_H264_PPS_FLAG_REDUNDANT_PIC_CNT_PRESENT``
-      - 0x00000020
+      - 0x0020
       -
     * - ``V4L2_H264_PPS_FLAG_TRANSFORM_8X8_MODE``
-      - 0x00000040
+      - 0x0040
       -
     * - ``V4L2_H264_PPS_FLAG_SCALING_MATRIX_PRESENT``
-      - 0x00000080
-      - Indicates that ``V4L2_CID_STATELESS_H264_SCALING_MATRIX``
+      - 0x0080
+      - ``V4L2_CID_STATELESS_H264_SCALING_MATRIX``
         must be used for this picture.
+
+.. raw:: latex
+
+    \endgroup
 
 ``V4L2_CID_STATELESS_H264_SCALING_MATRIX (struct)``
     Specifies the scaling matrix (as extracted from the bitstream) for
@@ -259,7 +283,11 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_ctrl_h264_scaling_matrix
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{0.6cm}|p{4.8cm}|p{11.9cm}|
 
 .. flat-table:: struct v4l2_ctrl_h264_scaling_matrix
     :header-rows:  0
@@ -290,7 +318,11 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_ctrl_h264_slice_params
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{4.0cm}|p{5.9cm}|p{7.4cm}|
 
 .. flat-table:: struct v4l2_ctrl_h264_slice_params
     :header-rows:  0
@@ -333,11 +365,11 @@ Stateless Codec Control ID
     * - __u8
       - ``num_ref_idx_l0_active_minus1``
       - If num_ref_idx_active_override_flag is not set, this field must be
-        set to the value of num_ref_idx_l0_default_active_minus1.
+        set to the value of num_ref_idx_l0_default_active_minus1
     * - __u8
       - ``num_ref_idx_l1_active_minus1``
       - If num_ref_idx_active_override_flag is not set, this field must be
-        set to the value of num_ref_idx_l1_default_active_minus1.
+        set to the value of num_ref_idx_l1_default_active_minus1
     * - __u8
       - ``reserved``
       - Applications and drivers must set this to zero.
@@ -350,6 +382,10 @@ Stateless Codec Control ID
     * - __u32
       - ``flags``
       - See :ref:`Slice Parameter Flags <h264_slice_flags>`
+
+.. raw:: latex
+
+    \normalsize
 
 .. _h264_slice_flags:
 
@@ -378,7 +414,11 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_ctrl_h264_pred_weights
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{4.9cm}|p{4.9cm}|p{7.5cm}|
 
 .. flat-table:: struct v4l2_ctrl_h264_pred_weights
     :header-rows:  0
@@ -396,9 +436,17 @@ Stateless Codec Control ID
       - The weight factors at index 0 are the weight factors for the reference
         list 0, the one at index 1 for the reference list 1.
 
+.. raw:: latex
+
+    \normalsize
+
 .. c:type:: v4l2_h264_weight_factors
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{1.0cm}|p{4.5cm}|p{11.8cm}|
 
 .. flat-table:: struct v4l2_h264_weight_factors
     :header-rows:  0
@@ -417,6 +465,10 @@ Stateless Codec Control ID
     * - __s16
       - ``chroma_offset[32][2]``
       -
+
+.. raw:: latex
+
+    \normalsize
 
 ``Picture Reference``
 
@@ -440,7 +492,11 @@ Stateless Codec Control ID
 
 ``Reference Fields``
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{5.4cm}|p{0.8cm}|p{11.1cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -458,6 +514,10 @@ Stateless Codec Control ID
       - The frame (or the top/bottom fields, if it's a field pair)
         is used for short-term reference.
 
+.. raw:: latex
+
+    \normalsize
+
 ``V4L2_CID_STATELESS_H264_DECODE_PARAMS (struct)``
     Specifies the decode parameters (as extracted from the bitstream)
     for the associated H264 slice data. This includes the necessary
@@ -469,7 +529,11 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_ctrl_h264_decode_params
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{4.0cm}|p{5.9cm}|p{7.4cm}|
 
 .. flat-table:: struct v4l2_ctrl_h264_decode_params
     :header-rows:  0
@@ -524,11 +588,19 @@ Stateless Codec Control ID
       - ``flags``
       - See :ref:`Decode Parameters Flags <h264_decode_params_flags>`
 
+.. raw:: latex
+
+    \normalsize
+
 .. _h264_decode_params_flags:
 
 ``Decode Parameters Flags``
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{8.3cm}|p{2.1cm}|p{6.9cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -545,9 +617,17 @@ Stateless Codec Control ID
       - 0x00000004
       -
 
+.. raw:: latex
+
+    \normalsize
+
 .. c:type:: v4l2_h264_dpb_entry
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{1.0cm}|p{4.9cm}|p{11.4cm}|
 
 .. flat-table:: struct v4l2_h264_dpb_entry
     :header-rows:  0
@@ -583,11 +663,19 @@ Stateless Codec Control ID
       - ``flags``
       - See :ref:`DPB Entry Flags <h264_dpb_flags>`
 
+.. raw:: latex
+
+    \normalsize
+
 .. _h264_dpb_flags:
 
 ``DPB Entries Flags``
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{7.7cm}|p{2.1cm}|p{7.5cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -607,6 +695,10 @@ Stateless Codec Control ID
       - 0x00000008
       - The DPB entry is a single field or a complementary field pair.
 
+.. raw:: latex
+
+    \normalsize
+
 ``V4L2_CID_STATELESS_H264_DECODE_MODE (enum)``
     Specifies the decoding mode to use. Currently exposes slice-based and
     frame-based decoding but new modes might be added later on.
@@ -619,7 +711,11 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_stateless_h264_decode_mode
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \scriptsize
+
+.. tabularcolumns:: |p{7.4cm}|p{0.3cm}|p{9.6cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -644,6 +740,10 @@ Stateless Codec Control ID
         selected, the ``V4L2_CID_STATELESS_H264_SLICE_PARAMS``
         control shall not be set.
 
+.. raw:: latex
+
+    \normalsize
+
 ``V4L2_CID_STATELESS_H264_START_CODE (enum)``
     Specifies the H264 slice start code expected for each slice.
     This control is used as a modifier for V4L2_PIX_FMT_H264_SLICE
@@ -655,23 +755,32 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_stateless_h264_start_code
 
-.. cssclass:: longtable
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{7.9cm}|p{0.4cm}|p{9.0cm}|
 
 .. flat-table::
     :header-rows:  0
     :stub-columns: 0
-    :widths:       1 1 2
+    :widths:       4 1 4
 
     * - ``V4L2_STATELESS_H264_START_CODE_NONE``
       - 0
       - Selecting this value specifies that H264 slices are passed
-        to the driver without any start code.
+        to the driver without any start code. The bitstream data should be
+        according to :ref:`h264` 7.3.1 NAL unit syntax, hence contains
+        emulation prevention bytes when required.
     * - ``V4L2_STATELESS_H264_START_CODE_ANNEX_B``
       - 1
       - Selecting this value specifies that H264 slices are expected
         to be prefixed by Annex B start codes. According to :ref:`h264`
         valid start codes can be 3-bytes 0x000001 or 4-bytes 0x00000001.
 
+.. raw:: latex
+
+    \normalsize
 
 .. _codec-stateless-fwht:
 
@@ -683,9 +792,11 @@ Stateless Codec Control ID
 
 .. c:type:: v4l2_ctrl_fwht_params
 
-.. cssclass:: longtable
+.. raw:: latex
 
-.. tabularcolumns:: |p{1.4cm}|p{4.3cm}|p{11.8cm}|
+    \small
+
+.. tabularcolumns:: |p{1.4cm}|p{3.9cm}|p{12.0cm}|
 
 .. flat-table:: struct v4l2_ctrl_fwht_params
     :header-rows:  0
@@ -724,16 +835,20 @@ Stateless Codec Control ID
       - ``quantization``
       - The quantization range, from enum :c:type:`v4l2_quantization`.
 
+.. raw:: latex
 
+    \normalsize
 
 .. _fwht-flags:
 
 FWHT Flags
 ==========
 
-.. cssclass:: longtable
+.. raw:: latex
 
-.. tabularcolumns:: |p{6.8cm}|p{2.4cm}|p{8.3cm}|
+    \small
+
+.. tabularcolumns:: |p{7.0cm}|p{2.3cm}|p{8.0cm}|
 
 .. flat-table::
     :header-rows:  0
@@ -778,7 +893,7 @@ FWHT Flags
       - Set if this is an I-frame.
     * - ``V4L2_FWHT_FL_COMPONENTS_NUM_MSK``
       - 0x00070000
-      - The number of color components - 1.
+      - The number of color components minus one.
     * - ``V4L2_FWHT_FL_PIXENC_MSK``
       - 0x00180000
       - The mask for the pixel encoding.
@@ -1129,6 +1244,220 @@ FWHT Flags
     * - __u8
       - ``padding[3]``
       - Applications and drivers must set this to zero.
+
+.. _v4l2-codec-stateless-mpeg2:
+
+``V4L2_CID_STATELESS_MPEG2_SEQUENCE (struct)``
+    Specifies the sequence parameters (as extracted from the bitstream) for the
+    associated MPEG-2 slice data. This includes fields matching the syntax
+    elements from the sequence header and sequence extension parts of the
+    bitstream as specified by :ref:`mpeg2part2`.
+
+.. c:type:: v4l2_ctrl_mpeg2_sequence
+
+.. raw:: latex
+
+    \small
+
+.. cssclass:: longtable
+
+.. tabularcolumns:: |p{1.4cm}|p{6.5cm}|p{9.4cm}|
+
+.. flat-table:: struct v4l2_ctrl_mpeg2_sequence
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u16
+      - ``horizontal_size``
+      - The width of the displayable part of the frame's luminance component.
+    * - __u16
+      - ``vertical_size``
+      - The height of the displayable part of the frame's luminance component.
+    * - __u32
+      - ``vbv_buffer_size``
+      - Used to calculate the required size of the video buffering verifier,
+	defined (in bits) as: 16 * 1024 * vbv_buffer_size.
+    * - __u16
+      - ``profile_and_level_indication``
+      - The current profile and level indication as extracted from the
+	bitstream.
+    * - __u8
+      - ``chroma_format``
+      - The chrominance sub-sampling format (1: 4:2:0, 2: 4:2:2, 3: 4:4:4).
+    * - __u8
+      - ``flags``
+      - See :ref:`MPEG-2 Sequence Flags <mpeg2_sequence_flags>`.
+
+.. _mpeg2_sequence_flags:
+
+``MPEG-2 Sequence Flags``
+
+.. cssclass:: longtable
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_MPEG2_SEQ_FLAG_PROGRESSIVE``
+      - 0x01
+      - Indication that all the frames for the sequence are progressive instead
+	of interlaced.
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_STATELESS_MPEG2_PICTURE (struct)``
+    Specifies the picture parameters (as extracted from the bitstream) for the
+    associated MPEG-2 slice data. This includes fields matching the syntax
+    elements from the picture header and picture coding extension parts of the
+    bitstream as specified by :ref:`mpeg2part2`.
+
+.. c:type:: v4l2_ctrl_mpeg2_picture
+
+.. raw:: latex
+
+    \small
+
+.. cssclass:: longtable
+
+.. tabularcolumns:: |p{1.0cm}|p{5.6cm}|p{10.7cm}|
+
+.. flat-table:: struct v4l2_ctrl_mpeg2_picture
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u64
+      - ``backward_ref_ts``
+      - Timestamp of the V4L2 capture buffer to use as backward reference, used
+        with B-coded and P-coded frames. The timestamp refers to the
+	``timestamp`` field in struct :c:type:`v4l2_buffer`. Use the
+	:c:func:`v4l2_timeval_to_ns()` function to convert the struct
+	:c:type:`timeval` in struct :c:type:`v4l2_buffer` to a __u64.
+    * - __u64
+      - ``forward_ref_ts``
+      - Timestamp for the V4L2 capture buffer to use as forward reference, used
+        with B-coded frames. The timestamp refers to the ``timestamp`` field in
+	struct :c:type:`v4l2_buffer`. Use the :c:func:`v4l2_timeval_to_ns()`
+	function to convert the struct :c:type:`timeval` in struct
+	:c:type:`v4l2_buffer` to a __u64.
+    * - __u32
+      - ``flags``
+      - See :ref:`MPEG-2 Picture Flags <mpeg2_picture_flags>`.
+    * - __u8
+      - ``f_code[2][2]``
+      - Motion vector codes.
+    * - __u8
+      - ``picture_coding_type``
+      - Picture coding type for the frame covered by the current slice
+	(V4L2_MPEG2_PIC_CODING_TYPE_I, V4L2_MPEG2_PIC_CODING_TYPE_P or
+	V4L2_MPEG2_PIC_CODING_TYPE_B).
+    * - __u8
+      - ``picture_structure``
+      - Picture structure (1: interlaced top field, 2: interlaced bottom field,
+	3: progressive frame).
+    * - __u8
+      - ``intra_dc_precision``
+      - Precision of Discrete Cosine transform (0: 8 bits precision,
+	1: 9 bits precision, 2: 10 bits precision, 3: 11 bits precision).
+    * - __u8
+      - ``reserved[5]``
+      - Applications and drivers must set this to zero.
+
+.. _mpeg2_picture_flags:
+
+``MPEG-2 Picture Flags``
+
+.. cssclass:: longtable
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_MPEG2_PIC_FLAG_TOP_FIELD_FIRST``
+      - 0x00000001
+      - If set and it's an interlaced stream, top field is output first.
+    * - ``V4L2_MPEG2_PIC_FLAG_FRAME_PRED_DCT``
+      - 0x00000002
+      - If set only frame-DCT and frame prediction are used.
+    * - ``V4L2_MPEG2_PIC_FLAG_CONCEALMENT_MV``
+      - 0x00000004
+      -  If set motion vectors are coded for intra macroblocks.
+    * - ``V4L2_MPEG2_PIC_FLAG_Q_SCALE_TYPE``
+      - 0x00000008
+      - This flag affects the inverse quantization process.
+    * - ``V4L2_MPEG2_PIC_FLAG_INTRA_VLC``
+      - 0x00000010
+      - This flag affects the decoding of transform coefficient data.
+    * - ``V4L2_MPEG2_PIC_FLAG_ALT_SCAN``
+      - 0x00000020
+      - This flag affects the decoding of transform coefficient data.
+    * - ``V4L2_MPEG2_PIC_FLAG_REPEAT_FIRST``
+      - 0x00000040
+      - This flag affects the decoding process of progressive frames.
+    * - ``V4L2_MPEG2_PIC_FLAG_PROGRESSIVE``
+      - 0x00000080
+      - Indicates whether the current frame is progressive.
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_STATELESS_MPEG2_QUANTISATION (struct)``
+    Specifies quantisation matrices, in zigzag scanning order, for the
+    associated MPEG-2 slice data. This control is initialized by the kernel
+    to the matrices default values. If a bitstream transmits a user-defined
+    quantisation matrices load, applications are expected to use this control.
+    Applications are also expected to set the control loading the default
+    values, if the quantisation matrices need to be reset, for instance on a
+    sequence header. This process is specified by section 6.3.7.
+    "Quant matrix extension" of the specification.
+
+.. c:type:: v4l2_ctrl_mpeg2_quantisation
+
+.. tabularcolumns:: |p{0.8cm}|p{8.0cm}|p{8.5cm}|
+
+.. cssclass:: longtable
+
+.. raw:: latex
+
+    \small
+
+.. flat-table:: struct v4l2_ctrl_mpeg2_quantisation
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u8
+      - ``intra_quantiser_matrix[64]``
+      - The quantisation matrix coefficients for intra-coded frames, in zigzag
+	scanning order. It is relevant for both luma and chroma components,
+	although it can be superseded by the chroma-specific matrix for
+	non-4:2:0 YUV formats.
+    * - __u8
+      - ``non_intra_quantiser_matrix[64]``
+      - The quantisation matrix coefficients for non-intra-coded frames, in
+	zigzag scanning order. It is relevant for both luma and chroma
+	components, although it can be superseded by the chroma-specific matrix
+	for non-4:2:0 YUV formats.
+    * - __u8
+      - ``chroma_intra_quantiser_matrix[64]``
+      - The quantisation matrix coefficients for the chominance component of
+	intra-coded frames, in zigzag scanning order. Only relevant for
+	non-4:2:0 YUV formats.
+    * - __u8
+      - ``chroma_non_intra_quantiser_matrix[64]``
+      - The quantisation matrix coefficients for the chrominance component of
+	non-intra-coded frames, in zigzag scanning order. Only relevant for
+	non-4:2:0 YUV formats.
+
+.. raw:: latex
+
+    \normalsize
 
 .. _v4l2-codec-stateless-vp9:
 
@@ -1703,6 +2032,907 @@ This structure contains all loop filter related parameters. See sections
       - When set, the bitstream contains additional syntax elements that
         specify which mode and reference frame deltas are to be updated.
 
+.. _v4l2-codec-stateless-hevc:
+
+``V4L2_CID_STATELESS_HEVC_SPS (struct)``
+    Specifies the Sequence Parameter Set fields (as extracted from the
+    bitstream) for the associated HEVC slice data.
+    These bitstream parameters are defined according to :ref:`hevc`.
+    They are described in section 7.4.3.2 "Sequence parameter set RBSP
+    semantics" of the specification.
+
+.. c:type:: v4l2_ctrl_hevc_sps
+
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{1.2cm}|p{9.2cm}|p{6.9cm}|
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_ctrl_hevc_sps
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u8
+      - ``video_parameter_set_id``
+      - Specifies the value of the vps_video_parameter_set_id of the active VPS
+        as described in section "7.4.3.2.1 General sequence parameter set RBSP semantics"
+        of H.265 specifications.
+    * - __u8
+      - ``seq_parameter_set_id``
+      - Provides an identifier for the SPS for reference by other syntax elements
+        as described in section "7.4.3.2.1 General sequence parameter set RBSP semantics"
+        of H.265 specifications.
+    * - __u16
+      - ``pic_width_in_luma_samples``
+      - Specifies the width of each decoded picture in units of luma samples.
+    * - __u16
+      - ``pic_height_in_luma_samples``
+      - Specifies the height of each decoded picture in units of luma samples.
+    * - __u8
+      - ``bit_depth_luma_minus8``
+      - This value plus 8 specifies the bit depth of the samples of the luma array.
+    * - __u8
+      - ``bit_depth_chroma_minus8``
+      - This value plus 8 specifies the bit depth of the samples of the chroma arrays.
+    * - __u8
+      - ``log2_max_pic_order_cnt_lsb_minus4``
+      - Specifies the value of the variable MaxPicOrderCntLsb.
+    * - __u8
+      - ``sps_max_dec_pic_buffering_minus1``
+      - This value plus 1 specifies the maximum required size of the decoded picture buffer for
+        the coded video sequence (CVS).
+    * - __u8
+      - ``sps_max_num_reorder_pics``
+      - Indicates the maximum allowed number of pictures.
+    * - __u8
+      - ``sps_max_latency_increase_plus1``
+      - Used to signal MaxLatencyPictures, which indicates the maximum number of
+        pictures that can precede any picture in output order and follow that
+        picture in decoding order.
+    * - __u8
+      - ``log2_min_luma_coding_block_size_minus3``
+      - This value plus 3 specifies the minimum luma coding block size.
+    * - __u8
+      - ``log2_diff_max_min_luma_coding_block_size``
+      - Specifies the difference between the maximum and minimum luma coding block size.
+    * - __u8
+      - ``log2_min_luma_transform_block_size_minus2``
+      - This value plus 2 specifies the minimum luma transform block size.
+    * - __u8
+      - ``log2_diff_max_min_luma_transform_block_size``
+      - Specifies the difference between the maximum and minimum luma transform block size.
+    * - __u8
+      - ``max_transform_hierarchy_depth_inter``
+      - Specifies the maximum hierarchy depth for transform units of coding units coded
+        in inter prediction mode.
+    * - __u8
+      - ``max_transform_hierarchy_depth_intra``
+      - Specifies the maximum hierarchy depth for transform units of coding units coded in
+        intra prediction mode.
+    * - __u8
+      - ``pcm_sample_bit_depth_luma_minus1``
+      - This value plus 1 specifies the number of bits used to represent each of PCM sample values of the
+        luma component.
+    * - __u8
+      - ``pcm_sample_bit_depth_chroma_minus1``
+      - Specifies the number of bits used to represent each of PCM sample values of
+        the chroma components.
+    * - __u8
+      - ``log2_min_pcm_luma_coding_block_size_minus3``
+      - Plus 3 specifies the minimum size of coding blocks.
+    * - __u8
+      - ``log2_diff_max_min_pcm_luma_coding_block_size``
+      - Specifies the difference between the maximum and minimum size of coding blocks.
+    * - __u8
+      - ``num_short_term_ref_pic_sets``
+      - Specifies the number of st_ref_pic_set() syntax structures included in the SPS.
+    * - __u8
+      - ``num_long_term_ref_pics_sps``
+      - Specifies the number of candidate long-term reference pictures that are
+        specified in the SPS.
+    * - __u8
+      - ``chroma_format_idc``
+      - Specifies the chroma sampling.
+    * - __u8
+      - ``sps_max_sub_layers_minus1``
+      - This value plus 1 specifies the maximum number of temporal sub-layers.
+    * - __u64
+      - ``flags``
+      - See :ref:`Sequence Parameter Set Flags <hevc_sps_flags>`
+
+.. raw:: latex
+
+    \normalsize
+
+.. _hevc_sps_flags:
+
+``Sequence Parameter Set Flags``
+
+.. raw:: latex
+
+    \small
+
+.. cssclass:: longtable
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_HEVC_SPS_FLAG_SEPARATE_COLOUR_PLANE``
+      - 0x00000001
+      -
+    * - ``V4L2_HEVC_SPS_FLAG_SCALING_LIST_ENABLED``
+      - 0x00000002
+      -
+    * - ``V4L2_HEVC_SPS_FLAG_AMP_ENABLED``
+      - 0x00000004
+      -
+    * - ``V4L2_HEVC_SPS_FLAG_SAMPLE_ADAPTIVE_OFFSET``
+      - 0x00000008
+      -
+    * - ``V4L2_HEVC_SPS_FLAG_PCM_ENABLED``
+      - 0x00000010
+      -
+    * - ``V4L2_HEVC_SPS_FLAG_PCM_LOOP_FILTER_DISABLED``
+      - 0x00000020
+      -
+    * - ``V4L2_HEVC_SPS_FLAG_LONG_TERM_REF_PICS_PRESENT``
+      - 0x00000040
+      -
+    * - ``V4L2_HEVC_SPS_FLAG_SPS_TEMPORAL_MVP_ENABLED``
+      - 0x00000080
+      -
+    * - ``V4L2_HEVC_SPS_FLAG_STRONG_INTRA_SMOOTHING_ENABLED``
+      - 0x00000100
+      -
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_STATELESS_HEVC_PPS (struct)``
+    Specifies the Picture Parameter Set fields (as extracted from the
+    bitstream) for the associated HEVC slice data.
+    These bitstream parameters are defined according to :ref:`hevc`.
+    They are described in section 7.4.3.3 "Picture parameter set RBSP
+    semantics" of the specification.
+
+.. c:type:: v4l2_ctrl_hevc_pps
+
+.. tabularcolumns:: |p{1.2cm}|p{8.6cm}|p{7.5cm}|
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_ctrl_hevc_pps
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u8
+      - ``pic_parameter_set_id``
+      - Identifies the PPS for reference by other syntax elements.
+    * - __u8
+      - ``num_extra_slice_header_bits``
+      - Specifies the number of extra slice header bits that are present
+        in the slice header RBSP for coded pictures referring to the PPS.
+    * - __u8
+      - ``num_ref_idx_l0_default_active_minus1``
+      - This value plus 1 specifies the inferred value of num_ref_idx_l0_active_minus1.
+    * - __u8
+      - ``num_ref_idx_l1_default_active_minus1``
+      - This value plus 1 specifies the inferred value of num_ref_idx_l1_active_minus1.
+    * - __s8
+      - ``init_qp_minus26``
+      - This value plus 26 specifies the initial value of SliceQp Y for each slice
+        referring to the PPS.
+    * - __u8
+      - ``diff_cu_qp_delta_depth``
+      - Specifies the difference between the luma coding tree block size
+        and the minimum luma coding block size of coding units that
+        convey cu_qp_delta_abs and cu_qp_delta_sign_flag.
+    * - __s8
+      - ``pps_cb_qp_offset``
+      - Specifies the offsets to the luma quantization parameter Cb.
+    * - __s8
+      - ``pps_cr_qp_offset``
+      - Specifies the offsets to the luma quantization parameter Cr.
+    * - __u8
+      - ``num_tile_columns_minus1``
+      - This value plus 1 specifies the number of tile columns partitioning the picture.
+    * - __u8
+      - ``num_tile_rows_minus1``
+      - This value plus 1 specifies the number of tile rows partitioning the picture.
+    * - __u8
+      - ``column_width_minus1[20]``
+      - This value plus 1 specifies the width of the i-th tile column in units of
+        coding tree blocks.
+    * - __u8
+      - ``row_height_minus1[22]``
+      - This value plus 1 specifies the height of the i-th tile row in units of coding
+        tree blocks.
+    * - __s8
+      - ``pps_beta_offset_div2``
+      - Specifies the default deblocking parameter offsets for beta divided by 2.
+    * - __s8
+      - ``pps_tc_offset_div2``
+      - Specifies the default deblocking parameter offsets for tC divided by 2.
+    * - __u8
+      - ``log2_parallel_merge_level_minus2``
+      - This value plus 2 specifies the value of the variable Log2ParMrgLevel.
+    * - __u8
+      - ``padding[4]``
+      - Applications and drivers must set this to zero.
+    * - __u64
+      - ``flags``
+      - See :ref:`Picture Parameter Set Flags <hevc_pps_flags>`
+
+.. _hevc_pps_flags:
+
+``Picture Parameter Set Flags``
+
+.. raw:: latex
+
+    \small
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_HEVC_PPS_FLAG_DEPENDENT_SLICE_SEGMENT_ENABLED``
+      - 0x00000001
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_OUTPUT_FLAG_PRESENT``
+      - 0x00000002
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_SIGN_DATA_HIDING_ENABLED``
+      - 0x00000004
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_CABAC_INIT_PRESENT``
+      - 0x00000008
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_CONSTRAINED_INTRA_PRED``
+      - 0x00000010
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_TRANSFORM_SKIP_ENABLED``
+      - 0x00000020
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_CU_QP_DELTA_ENABLED``
+      - 0x00000040
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_PPS_SLICE_CHROMA_QP_OFFSETS_PRESENT``
+      - 0x00000080
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_WEIGHTED_PRED``
+      - 0x00000100
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_WEIGHTED_BIPRED``
+      - 0x00000200
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_TRANSQUANT_BYPASS_ENABLED``
+      - 0x00000400
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_TILES_ENABLED``
+      - 0x00000800
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_ENTROPY_CODING_SYNC_ENABLED``
+      - 0x00001000
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_LOOP_FILTER_ACROSS_TILES_ENABLED``
+      - 0x00002000
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_PPS_LOOP_FILTER_ACROSS_SLICES_ENABLED``
+      - 0x00004000
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_DEBLOCKING_FILTER_OVERRIDE_ENABLED``
+      - 0x00008000
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_PPS_DISABLE_DEBLOCKING_FILTER``
+      - 0x00010000
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_LISTS_MODIFICATION_PRESENT``
+      - 0x00020000
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_SLICE_SEGMENT_HEADER_EXTENSION_PRESENT``
+      - 0x00040000
+      -
+    * - ``V4L2_HEVC_PPS_FLAG_DEBLOCKING_FILTER_CONTROL_PRESENT``
+      - 0x00080000
+      - Specifies the presence of deblocking filter control syntax elements in
+        the PPS
+    * - ``V4L2_HEVC_PPS_FLAG_UNIFORM_SPACING``
+      - 0x00100000
+      - Specifies that tile column boundaries and likewise tile row boundaries
+        are distributed uniformly across the picture
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_STATELESS_HEVC_SLICE_PARAMS (struct)``
+    Specifies various slice-specific parameters, especially from the NAL unit
+    header, general slice segment header and weighted prediction parameter
+    parts of the bitstream.
+    These bitstream parameters are defined according to :ref:`hevc`.
+    They are described in section 7.4.7 "General slice segment header
+    semantics" of the specification.
+    This control is a dynamically sized 1-dimensional array,
+    V4L2_CTRL_FLAG_DYNAMIC_ARRAY flag must be set when using it.
+
+.. c:type:: v4l2_ctrl_hevc_slice_params
+
+.. raw:: latex
+
+    \scriptsize
+
+.. tabularcolumns:: |p{5.4cm}|p{6.8cm}|p{5.1cm}|
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_ctrl_hevc_slice_params
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u32
+      - ``bit_size``
+      - Size (in bits) of the current slice data.
+    * - __u32
+      - ``data_byte_offset``
+      - Offset (in byte) to the video data in the current slice data.
+    * - __u32
+      - ``num_entry_point_offsets``
+      - Specifies the number of entry point offset syntax elements in the slice header.
+        When the driver supports it, the ``V4L2_CID_STATELESS_HEVC_ENTRY_POINT_OFFSETS``
+        must be set.
+    * - __u8
+      - ``nal_unit_type``
+      - Specifies the coding type of the slice (B, P or I).
+    * - __u8
+      - ``nuh_temporal_id_plus1``
+      - Minus 1 specifies a temporal identifier for the NAL unit.
+    * - __u8
+      - ``slice_type``
+      -
+	(V4L2_HEVC_SLICE_TYPE_I, V4L2_HEVC_SLICE_TYPE_P or
+	V4L2_HEVC_SLICE_TYPE_B).
+    * - __u8
+      - ``colour_plane_id``
+      - Specifies the colour plane associated with the current slice.
+    * - __s32
+      - ``slice_pic_order_cnt``
+      - Specifies the picture order count.
+    * - __u8
+      - ``num_ref_idx_l0_active_minus1``
+      - This value plus 1 specifies the maximum reference index for reference picture list 0
+        that may be used to decode the slice.
+    * - __u8
+      - ``num_ref_idx_l1_active_minus1``
+      - This value plus 1 specifies the maximum reference index for reference picture list 1
+        that may be used to decode the slice.
+    * - __u8
+      - ``collocated_ref_idx``
+      - Specifies the reference index of the collocated picture used for
+        temporal motion vector prediction.
+    * - __u8
+      - ``five_minus_max_num_merge_cand``
+      - Specifies the maximum number of merging motion vector prediction
+        candidates supported in the slice subtracted from 5.
+    * - __s8
+      - ``slice_qp_delta``
+      - Specifies the initial value of QpY to be used for the coding blocks in the slice.
+    * - __s8
+      - ``slice_cb_qp_offset``
+      - Specifies a difference to be added to the value of pps_cb_qp_offset.
+    * - __s8
+      - ``slice_cr_qp_offset``
+      - Specifies a difference to be added to the value of pps_cr_qp_offset.
+    * - __s8
+      - ``slice_act_y_qp_offset``
+      - Specifies the offset to the luma of quantization parameter qP derived in section 8.6.2
+    * - __s8
+      - ``slice_act_cb_qp_offset``
+      - Specifies the offset to the cb of quantization parameter qP derived in section 8.6.2
+    * - __s8
+      - ``slice_act_cr_qp_offset``
+      - Specifies the offset to the cr of quantization parameter qP derived in section 8.6.2
+    * - __s8
+      - ``slice_beta_offset_div2``
+      - Specifies the deblocking parameter offsets for beta divided by 2.
+    * - __s8
+      - ``slice_tc_offset_div2``
+      - Specifies the deblocking parameter offsets for tC divided by 2.
+    * - __u8
+      - ``pic_struct``
+      - Indicates whether a picture should be displayed as a frame or as one or more fields.
+    * - __u32
+      - ``slice_segment_addr``
+      - Specifies the address of the first coding tree block in the slice segment.
+    * - __u8
+      - ``ref_idx_l0[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - The list of L0 reference elements as indices in the DPB.
+    * - __u8
+      - ``ref_idx_l1[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - The list of L1 reference elements as indices in the DPB.
+    * - __u16
+      - ``short_term_ref_pic_set_size``
+      - Specifies the size, in bits, of the short-term reference picture set, described as st_ref_pic_set()
+        in the specification, included in the slice header or SPS (section 7.3.6.1).
+    * - __u16
+      - ``long_term_ref_pic_set_size``
+      - Specifies the size, in bits, of the long-term reference picture set include in the slice header
+        or SPS. It is the number of bits in the conditional block if(long_term_ref_pics_present_flag)
+        in section 7.3.6.1 of the specification.
+    * - __u8
+      - ``padding``
+      - Applications and drivers must set this to zero.
+    * - struct :c:type:`v4l2_hevc_pred_weight_table`
+      - ``pred_weight_table``
+      - The prediction weight coefficients for inter-picture prediction.
+    * - __u64
+      - ``flags``
+      - See :ref:`Slice Parameters Flags <hevc_slice_params_flags>`
+
+.. raw:: latex
+
+    \normalsize
+
+.. _hevc_slice_params_flags:
+
+``Slice Parameters Flags``
+
+.. raw:: latex
+
+    \scriptsize
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_SAO_LUMA``
+      - 0x00000001
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_SAO_CHROMA``
+      - 0x00000002
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_TEMPORAL_MVP_ENABLED``
+      - 0x00000004
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_MVD_L1_ZERO``
+      - 0x00000008
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_CABAC_INIT``
+      - 0x00000010
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_COLLOCATED_FROM_L0``
+      - 0x00000020
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_USE_INTEGER_MV``
+      - 0x00000040
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_DEBLOCKING_FILTER_DISABLED``
+      - 0x00000080
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_SLICE_LOOP_FILTER_ACROSS_SLICES_ENABLED``
+      - 0x00000100
+      -
+    * - ``V4L2_HEVC_SLICE_PARAMS_FLAG_DEPENDENT_SLICE_SEGMENT``
+      - 0x00000200
+      -
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_STATELESS_HEVC_ENTRY_POINT_OFFSETS (integer)``
+    Specifies entry point offsets in bytes.
+    This control is a dynamically sized array. The number of entry point
+    offsets is reported by the ``elems`` field.
+    This bitstream parameter is defined according to :ref:`hevc`.
+    They are described in section 7.4.7.1 "General slice segment header
+    semantics" of the specification.
+    When multiple slices are submitted in a request, the length of
+    this array must be the sum of num_entry_point_offsets of all the
+    slices in the request.
+
+``V4L2_CID_STATELESS_HEVC_SCALING_MATRIX (struct)``
+    Specifies the HEVC scaling matrix parameters used for the scaling process
+    for transform coefficients.
+    These matrix and parameters are defined according to :ref:`hevc`.
+    They are described in section 7.4.5 "Scaling list data semantics" of
+    the specification.
+
+.. c:type:: v4l2_ctrl_hevc_scaling_matrix
+
+.. raw:: latex
+
+    \scriptsize
+
+.. tabularcolumns:: |p{5.4cm}|p{6.8cm}|p{5.1cm}|
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_ctrl_hevc_scaling_matrix
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u8
+      - ``scaling_list_4x4[6][16]``
+      - Scaling list is used for the scaling process for transform
+        coefficients. The values on each scaling list are expected
+        in raster scan order.
+    * - __u8
+      - ``scaling_list_8x8[6][64]``
+      - Scaling list is used for the scaling process for transform
+        coefficients. The values on each scaling list are expected
+        in raster scan order.
+    * - __u8
+      - ``scaling_list_16x16[6][64]``
+      - Scaling list is used for the scaling process for transform
+        coefficients. The values on each scaling list are expected
+        in raster scan order.
+    * - __u8
+      - ``scaling_list_32x32[2][64]``
+      - Scaling list is used for the scaling process for transform
+        coefficients. The values on each scaling list are expected
+        in raster scan order.
+    * - __u8
+      - ``scaling_list_dc_coef_16x16[6]``
+      - Scaling list is used for the scaling process for transform
+        coefficients. The values on each scaling list are expected
+        in raster scan order.
+    * - __u8
+      - ``scaling_list_dc_coef_32x32[2]``
+      - Scaling list is used for the scaling process for transform
+        coefficients. The values on each scaling list are expected
+        in raster scan order.
+
+.. raw:: latex
+
+    \normalsize
+
+.. c:type:: v4l2_hevc_dpb_entry
+
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{1.0cm}|p{4.2cm}|p{12.1cm}|
+
+.. flat-table:: struct v4l2_hevc_dpb_entry
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u64
+      - ``timestamp``
+      - Timestamp of the V4L2 capture buffer to use as reference, used
+        with B-coded and P-coded frames. The timestamp refers to the
+	``timestamp`` field in struct :c:type:`v4l2_buffer`. Use the
+	:c:func:`v4l2_timeval_to_ns()` function to convert the struct
+	:c:type:`timeval` in struct :c:type:`v4l2_buffer` to a __u64.
+    * - __u8
+      - ``flags``
+      - Long term flag for the reference frame
+        (V4L2_HEVC_DPB_ENTRY_LONG_TERM_REFERENCE). The flag is set as
+        described in the ITU HEVC specification chapter "8.3.2 Decoding
+        process for reference picture set".
+    * - __u8
+      - ``field_pic``
+      - Whether the reference is a field picture or a frame.
+        See :ref:`HEVC dpb field pic Flags <hevc_dpb_field_pic_flags>`
+    * - __s32
+      - ``pic_order_cnt_val``
+      - The picture order count of the current picture.
+    * - __u8
+      - ``padding[2]``
+      - Applications and drivers must set this to zero.
+
+.. raw:: latex
+
+    \normalsize
+
+.. _hevc_dpb_field_pic_flags:
+
+``HEVC dpb field pic Flags``
+
+.. raw:: latex
+
+    \scriptsize
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_FRAME``
+      - 0
+      - (progressive) Frame
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_TOP_FIELD``
+      - 1
+      - Top field
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_BOTTOM_FIELD``
+      - 2
+      - Bottom field
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_TOP_BOTTOM``
+      - 3
+      - Top field, bottom field, in that order
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_BOTTOM_TOP``
+      - 4
+      - Bottom field, top field, in that order
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_TOP_BOTTOM_TOP``
+      - 5
+      - Top field, bottom field, top field repeated, in that order
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_BOTTOM_TOP_BOTTOM``
+      - 6
+      - Bottom field, top field, bottom field repeated, in that order
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_FRAME_DOUBLING``
+      - 7
+      - Frame doubling
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_FRAME_TRIPLING``
+      - 8
+      - Frame tripling
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_TOP_PAIRED_PREVIOUS_BOTTOM``
+      - 9
+      - Top field paired with previous bottom field in output order
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_BOTTOM_PAIRED_PREVIOUS_TOP``
+      - 10
+      - Bottom field paired with previous top field in output order
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_TOP_PAIRED_NEXT_BOTTOM``
+      - 11
+      - Top field paired with next bottom field in output order
+    * - ``V4L2_HEVC_SEI_PIC_STRUCT_BOTTOM_PAIRED_NEXT_TOP``
+      - 12
+      - Bottom field paired with next top field in output order
+
+.. c:type:: v4l2_hevc_pred_weight_table
+
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{0.8cm}|p{10.6cm}|p{5.9cm}|
+
+.. flat-table:: struct v4l2_hevc_pred_weight_table
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __s8
+      - ``delta_luma_weight_l0[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - The difference of the weighting factor applied to the luma
+        prediction value for list 0.
+    * - __s8
+      - ``luma_offset_l0[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - The additive offset applied to the luma prediction value for list 0.
+    * - __s8
+      - ``delta_chroma_weight_l0[V4L2_HEVC_DPB_ENTRIES_NUM_MAX][2]``
+      - The difference of the weighting factor applied to the chroma
+        prediction value for list 0.
+    * - __s8
+      - ``chroma_offset_l0[V4L2_HEVC_DPB_ENTRIES_NUM_MAX][2]``
+      - The difference of the additive offset applied to the chroma
+        prediction values for list 0.
+    * - __s8
+      - ``delta_luma_weight_l1[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - The difference of the weighting factor applied to the luma
+        prediction value for list 1.
+    * - __s8
+      - ``luma_offset_l1[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - The additive offset applied to the luma prediction value for list 1.
+    * - __s8
+      - ``delta_chroma_weight_l1[V4L2_HEVC_DPB_ENTRIES_NUM_MAX][2]``
+      - The difference of the weighting factor applied to the chroma
+        prediction value for list 1.
+    * - __s8
+      - ``chroma_offset_l1[V4L2_HEVC_DPB_ENTRIES_NUM_MAX][2]``
+      - The difference of the additive offset applied to the chroma
+        prediction values for list 1.
+    * - __u8
+      - ``luma_log2_weight_denom``
+      - The base 2 logarithm of the denominator for all luma weighting
+        factors.
+    * - __s8
+      - ``delta_chroma_log2_weight_denom``
+      - The difference of the base 2 logarithm of the denominator for
+        all chroma weighting factors.
+    * - __u8
+      - ``padding[6]``
+      - Applications and drivers must set this to zero.
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_STATELESS_HEVC_DECODE_MODE (enum)``
+    Specifies the decoding mode to use. Currently exposes slice-based and
+    frame-based decoding but new modes might be added later on.
+    This control is used as a modifier for V4L2_PIX_FMT_HEVC_SLICE
+    pixel format. Applications that support V4L2_PIX_FMT_HEVC_SLICE
+    are required to set this control in order to specify the decoding mode
+    that is expected for the buffer.
+    Drivers may expose a single or multiple decoding modes, depending
+    on what they can support.
+
+.. c:type:: v4l2_stateless_hevc_decode_mode
+
+.. raw:: latex
+
+    \small
+
+.. tabularcolumns:: |p{9.4cm}|p{0.6cm}|p{7.3cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_STATELESS_HEVC_DECODE_MODE_SLICE_BASED``
+      - 0
+      - Decoding is done at the slice granularity.
+        The OUTPUT buffer must contain a single slice.
+    * - ``V4L2_STATELESS_HEVC_DECODE_MODE_FRAME_BASED``
+      - 1
+      - Decoding is done at the frame granularity.
+        The OUTPUT buffer must contain all slices needed to decode the
+        frame.
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_STATELESS_HEVC_START_CODE (enum)``
+    Specifies the HEVC slice start code expected for each slice.
+    This control is used as a modifier for V4L2_PIX_FMT_HEVC_SLICE
+    pixel format. Applications that support V4L2_PIX_FMT_HEVC_SLICE
+    are required to set this control in order to specify the start code
+    that is expected for the buffer.
+    Drivers may expose a single or multiple start codes, depending
+    on what they can support.
+
+.. c:type:: v4l2_stateless_hevc_start_code
+
+.. tabularcolumns:: |p{9.2cm}|p{0.6cm}|p{7.5cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_STATELESS_HEVC_START_CODE_NONE``
+      - 0
+      - Selecting this value specifies that HEVC slices are passed
+        to the driver without any start code. The bitstream data should be
+        according to :ref:`hevc` 7.3.1.1 General NAL unit syntax, hence
+        contains emulation prevention bytes when required.
+    * - ``V4L2_STATELESS_HEVC_START_CODE_ANNEX_B``
+      - 1
+      - Selecting this value specifies that HEVC slices are expected
+        to be prefixed by Annex B start codes. According to :ref:`hevc`
+        valid start codes can be 3-bytes 0x000001 or 4-bytes 0x00000001.
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_MPEG_VIDEO_BASELAYER_PRIORITY_ID (integer)``
+    Specifies a priority identifier for the NAL unit, which will be applied to
+    the base layer. By default this value is set to 0 for the base layer,
+    and the next layer will have the priority ID assigned as 1, 2, 3 and so on.
+    The video encoder can't decide the priority id to be applied to a layer,
+    so this has to come from client.
+    This is applicable to H264 and valid Range is from 0 to 63.
+    Source Rec. ITU-T H.264 (06/2019); G.7.4.1.1, G.8.8.1.
+
+``V4L2_CID_MPEG_VIDEO_LTR_COUNT (integer)``
+    Specifies the maximum number of Long Term Reference (LTR) frames at any
+    given time that the encoder can keep.
+    This is applicable to the H264 and HEVC encoders.
+
+``V4L2_CID_MPEG_VIDEO_FRAME_LTR_INDEX (integer)``
+    After setting this control the frame that will be queued next
+    will be marked as a Long Term Reference (LTR) frame
+    and given this LTR index which ranges from 0 to LTR_COUNT-1.
+    This is applicable to the H264 and HEVC encoders.
+    Source Rec. ITU-T H.264 (06/2019); Table 7.9
+
+``V4L2_CID_MPEG_VIDEO_USE_LTR_FRAMES (bitmask)``
+    Specifies the Long Term Reference (LTR) frame(s) to be used for
+    encoding the next frame queued after setting this control.
+    This provides a bitmask which consists of bits [0, LTR_COUNT-1].
+    This is applicable to the H264 and HEVC encoders.
+
+``V4L2_CID_STATELESS_HEVC_DECODE_PARAMS (struct)``
+    Specifies various decode parameters, especially the references picture order
+    count (POC) for all the lists (short, long, before, current, after) and the
+    number of entries for each of them.
+    These parameters are defined according to :ref:`hevc`.
+    They are described in section 8.3 "Slice decoding process" of the
+    specification.
+
+.. c:type:: v4l2_ctrl_hevc_decode_params
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_ctrl_hevc_decode_params
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __s32
+      - ``pic_order_cnt_val``
+      - PicOrderCntVal as described in section 8.3.1 "Decoding process
+        for picture order count" of the specification.
+    * - __u16
+      - ``short_term_ref_pic_set_size``
+      - Specifies the size, in bits, of the short-term reference picture set, of the first slice
+        described as st_ref_pic_set() in the specification, included in the slice header
+        or SPS (section 7.3.6.1).
+    * - __u16
+      - ``long_term_ref_pic_set_size``
+      - Specifies the size, in bits, of the long-term reference picture set, of the first slice
+        included in the slice header or SPS. It is the number of bits in the conditional block
+        if(long_term_ref_pics_present_flag) in section 7.3.6.1 of the specification.
+    * - __u8
+      - ``num_active_dpb_entries``
+      - The number of entries in ``dpb``.
+    * - __u8
+      - ``num_poc_st_curr_before``
+      - The number of reference pictures in the short-term set that come before
+        the current frame.
+    * - __u8
+      - ``num_poc_st_curr_after``
+      - The number of reference pictures in the short-term set that come after
+        the current frame.
+    * - __u8
+      - ``num_poc_lt_curr``
+      - The number of reference pictures in the long-term set.
+    * - __u8
+      - ``poc_st_curr_before[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - PocStCurrBefore as described in section 8.3.2 "Decoding process for reference
+        picture set": provides the index of the short term before references in DPB array.
+    * - __u8
+      - ``poc_st_curr_after[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - PocStCurrAfter as described in section 8.3.2 "Decoding process for reference
+        picture set": provides the index of the short term after references in DPB array.
+    * - __u8
+      - ``poc_lt_curr[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - PocLtCurr as described in section 8.3.2 "Decoding process for reference
+        picture set": provides the index of the long term references in DPB array.
+    * - struct :c:type:`v4l2_hevc_dpb_entry`
+      - ``dpb[V4L2_HEVC_DPB_ENTRIES_NUM_MAX]``
+      - The decoded picture buffer, for meta-data about reference frames.
+    * - __u64
+      - ``flags``
+      - See :ref:`Decode Parameters Flags <hevc_decode_params_flags>`
+
+.. _hevc_decode_params_flags:
+
+``Decode Parameters Flags``
+
+.. cssclass:: longtable
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - ``V4L2_HEVC_DECODE_PARAM_FLAG_IRAP_PIC``
+      - 0x00000001
+      -
+    * - ``V4L2_HEVC_DECODE_PARAM_FLAG_IDR_PIC``
+      - 0x00000002
+      -
+    * - ``V4L2_HEVC_DECODE_PARAM_FLAG_NO_OUTPUT_OF_PRIOR``
+      - 0x00000004
+      -
 
 .. _v4l2-codec-stateless-av1:
 
@@ -1841,55 +3071,10 @@ This structure contains all loop filter related parameters. See sections
 	quantizer values. If not set, indicates that the U and V planes will share
 	the same delta quantizer value.
 
-``V4L2_CID_STATELESS_AV1_TILE_GROUP (struct)``
-    Represents a tile group as seen in an AV1 Tile Group OBU or Frame OBU. A
-    v4l2_ctrl_av1_tile_group instance will refer to tg_end - tg_start instances
-    of struct :c:type:`v4l2_ctrl_av1_tile_group_entry`. See section
-    6.10.1 "General tile group OBU semantics" in :ref:`av1` for more details.
-
-.. c:type:: v4l2_ctrl_av1_tile_group
-
-.. cssclass:: longtable
-
-.. tabularcolumns:: |p{5.8cm}|p{4.8cm}|p{6.6cm}|
-
-.. flat-table:: struct v4l2_ctrl_av1_tile_group
-    :header-rows:  0
-    :stub-columns: 0
-    :widths:       1 1 2
-
-    * - __u8
-      - ``flags``
-      - See :ref:`AV1 Tile Group Flags <av1_tile_group_flags>`.
-    * - __u8
-      - ``tg_start``
-      - Specifies the zero-based index of the first tile in the current tile
-        group.
-    * - __u8
-      - ``tg_end``
-      - Specifies the zero-based index of the last tile in the current tile
-        group.
-
-.. _av1_tile_group_flags:
-
-``AV1 Tile Group Flags``
-
-.. cssclass:: longtable
-
-.. flat-table::
-    :header-rows:  0
-    :stub-columns: 0
-    :widths:       1 1 2
-
-    * - ``V4L2_AV1_TILE_GROUP_FLAG_START_AND_END_PRESENT``
-      - 0x00000001
-      - Specifies whether tg_start and tg_end are present. If tg_start and
-	tg_end are not present, this tile group covers the entire frame.
-
 ``V4L2_CID_STATELESS_AV1_TILE_GROUP_ENTRY (struct)``
     Represents a single AV1 tile inside an AV1 Tile Group. Note that MiRowStart,
     MiRowEnd, MiColStart and MiColEnd can be retrieved from struct
-    v4l2_av1_tile_info in struct v4l2_ctrl_av1_frame_header using tile_row and
+    v4l2_av1_tile_info in struct v4l2_ctrl_av1_frame using tile_row and
     tile_col. See section 6.10.1 "General tile group OBU semantics" in
     :ref:`av1` for more details.
 
@@ -1989,9 +3174,6 @@ of :ref:`av1`.
     * - ``V4L2_AV1_REF_ALTREF_FRAME``
       - 7
       - ALTREF Frame Reference.
-    * - ``V4L2_AV1_NUM_REF_FRAMES``
-      - 8
-      - Total number of reference frames.
 
 .. c:type:: v4l2_av1_global_motion
 
@@ -2015,7 +3197,7 @@ AV1 Global Motion parameters as described in section 6.8.17
     * - enum :c:type:`v4l2_av1_warp_model`
       - ``type[V4L2_AV1_TOTAL_REFS_PER_FRAME]``
       - The type of global motion transform used.
-    * - __u32
+    * - __s32
       - ``params[V4L2_AV1_TOTAL_REFS_PER_FRAME][6]``
       - This field has the same meaning as "gm_params" in :ref:`av1`.
     * - __u8
@@ -2204,7 +3386,7 @@ semantics" of :ref:`av1`.
 
 .. tabularcolumns:: |p{1.5cm}|p{5.8cm}|p{10.0cm}|
 
-.. flat-table:: struct v4l2_av1_film_grain
+.. flat-table:: struct v4l2_ctrl_av1_film_grain
     :header-rows:  0
     :stub-columns: 0
     :widths:       1 1 2
@@ -2308,12 +3490,6 @@ AV1 Loop filter params as defined in section 6.8.10. "Loop filter semantics" of
       - ``delta_lf_res``
       - specifies the left shift which should be applied to decoded loop filter
         delta values.
-    * - __u8
-      - ``delta_lf_multi``
-      - a value equal to 1 specifies that separate loop filter
-        deltas are sent for horizontal luma edges, vertical luma edges, the U
-        edges, and the V edges. A value of delta_lf_multi equal to 0 specifies
-        that the same loop filter delta is used for all edges.
 
 .. _av1_loop_filter_flags:
 
@@ -2339,6 +3515,12 @@ AV1 Loop filter params as defined in section 6.8.10. "Loop filter semantics" of
     * - ``V4L2_AV1_LOOP_FILTER_FLAG_DELTA_LF_PRESENT``
       - 0x00000004
       - Specifies whether loop filter delta values are present
+    * - ``V4L2_AV1_LOOP_FILTER_FLAG_DELTA_LF_MULTI``
+      - 0x00000008
+      - A value equal to 1 specifies that separate loop filter
+        deltas are sent for horizontal luma edges, vertical luma edges,
+        the U edges, and the V edges. A value of delta_lf_multi equal to 0
+        specifies that the same loop filter delta is used for all edges.
 
 .. c:type:: v4l2_av1_quantization
 
@@ -2426,7 +3608,7 @@ AV1 Tile info as defined in section 6.8.14. "Tile info semantics" of ref:`av1`.
 
 .. tabularcolumns:: |p{1.5cm}|p{5.8cm}|p{10.0cm}|
 
-.. flat-table:: struct v4l2_av1_film_grain
+.. flat-table:: struct v4l2_ctrl_av1_film_grain
     :header-rows:  0
     :stub-columns: 0
     :widths:       1 1 2
@@ -2565,17 +3747,17 @@ AV1 Tx mode as described in section 6.8.21 "TX mode semantics" of :ref:`av1`.
       - 2
       - The choice of transform size is specified explicitly for each block.
 
-``V4L2_CID_STATELESS_AV1_FRAME_HEADER (struct)``
-    Represents a tile list entry as seen in an AV1 Tile List OBU. See section
-    6.11.2. "Tile list entry semantics" of :ref:`av1` for more details.
+``V4L2_CID_STATELESS_AV1_FRAME (struct)``
+    Represents a Frame Header OBU. See 6.8. "Frame Header OBU semantics" of
+    :ref:`av1` for more details.
 
-.. c:type:: v4l2_ctrl_av1_frame_header
+.. c:type:: v4l2_ctrl_av1_frame
 
 .. cssclass:: longtable
 
 .. tabularcolumns:: |p{5.8cm}|p{4.8cm}|p{6.6cm}|
 
-.. flat-table:: struct v4l2_ctrl_av1_frame_header
+.. flat-table:: struct v4l2_ctrl_av1_frame
     :header-rows:  0
     :stub-columns: 0
     :widths:       1 1 2
@@ -2607,7 +3789,7 @@ AV1 Tx mode as described in section 6.8.21 "TX mode semantics" of :ref:`av1`.
     * - __u32
       - ``flags``
       - See
-        :ref:`AV1 Tile Info flags <av1_frame_header_flags>` for more details.
+        :ref:`AV1 Frame flags <av1_frame_flags>` for more details.
     * - enum :c:type:`v4l2_av1_frame_type`
       - ``frame_type``
       - Specifies the AV1 frame type
@@ -2659,14 +3841,12 @@ AV1 Tx mode as described in section 6.8.21 "TX mode semantics" of :ref:`av1`.
       - Contains a bitmask that specifies which reference frame slots will be
         updated with the current frame after it is decoded.
     * - __u32
-      - ``ref_order_hint[V4L2_AV1_NUM_REF_FRAMES]``
+      - ``order_hints[V4L2_AV1_TOTAL_REFS_PER_FRAME]``
       - Specifies the expected output order hint for each reference frame.
-    * - __s8
-      - ``last_frame_idx``
-      - Specifies the reference frame to use for LAST_FRAME.
-    * - __s8
-      - ``gold_frame_idx``
-      - Specifies the reference frame to use for GOLDEN_FRAME.
+        This field corresponds to the OrderHints variable from the specification
+        (section 5.9.2.  Uncompressed header syntax). As such, this is only used
+        for non-intra frames and ignored otherwise. order_hints[0] is always
+        ignored.
     * - __u64
       - ``reference_frame_ts[V4L2_AV1_TOTAL_REFS_PER_FRAME]``
       - the V4L2 timestamp for each of the reference frames enumerated in
@@ -2677,7 +3857,7 @@ AV1 Tx mode as described in section 6.8.21 "TX mode semantics" of :ref:`av1`.
         to the ``timestamp`` field in struct :c:type:`v4l2_buffer`. Use the
         :c:func:`v4l2_timeval_to_ns()` function to convert the struct
         :c:type:`timeval` in struct :c:type:`v4l2_buffer` to a __u64.
-    * - __u8
+    * - __s8
       - ``ref_frame_idx[V4L2_AV1_REFS_PER_FRAME]``
       - an index into ``reference_frame_ts`` representing the ordered list of
         references used by inter-frame. Matches the bitstream syntax
@@ -2687,9 +3867,9 @@ AV1 Tx mode as described in section 6.8.21 "TX mode semantics" of :ref:`av1`.
       - Specifies the frames to use for compound prediction when skip_mode is
         equal to 1.
 
-.. _av1_frame_header_flags:
+.. _av1_frame_flags:
 
-``AV1 Frame Header Flags``
+``AV1 Frame Flags``
 
 .. cssclass:: longtable
 
@@ -2698,96 +3878,96 @@ AV1 Tx mode as described in section 6.8.21 "TX mode semantics" of :ref:`av1`.
     :stub-columns: 0
     :widths:       1 1 2
 
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_SHOW_FRAME``
+    * - ``V4L2_AV1_FRAME_FLAG_SHOW_FRAME``
       - 0x00000001
       - If set, specifies that this frame should be immediately output once
         decoded. If not set, specifies that this frame should not be immediately
         output. (It may be output later if a later uncompressed header uses
         show_existing_frame equal to 1).
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_SHOWABLE_FRAME``
+    * - ``V4L2_AV1_FRAME_FLAG_SHOWABLE_FRAME``
       - 0x00000002
       - If set, specifies that the frame may be output using the
         show_existing_frame mechanism. If not set, specifies that this frame
         will not be output using the show_existing_frame mechanism.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_ERROR_RESILIENT_MODE``
+    * - ``V4L2_AV1_FRAME_FLAG_ERROR_RESILIENT_MODE``
       - 0x00000004
       - Specifies whether error resilient mode is enabled.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_DISABLE_CDF_UPDATE``
+    * - ``V4L2_AV1_FRAME_FLAG_DISABLE_CDF_UPDATE``
       - 0x00000008
       - Specifies whether the CDF update in the symbol decoding process should
         be disabled.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_ALLOW_SCREEN_CONTENT_TOOLS``
+    * - ``V4L2_AV1_FRAME_FLAG_ALLOW_SCREEN_CONTENT_TOOLS``
       - 0x00000010
       - Specifies whether the CDF update in the symbol decoding process should
         be disabled.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_FORCE_INTEGER_MV``
+    * - ``V4L2_AV1_FRAME_FLAG_FORCE_INTEGER_MV``
       - 0x00000020
       - If set, specifies that motion vectors will always be integers. If not
         set, specifies that motion vectors can contain fractional bits.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_ALLOW_INTRABC``
+    * - ``V4L2_AV1_FRAME_FLAG_ALLOW_INTRABC``
       - 0x00000040
       - If set, indicates that intra block copy may be used in this frame. If
         not set, indicates that intra block copy is not allowed in this frame.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_USE_SUPERRES``
+    * - ``V4L2_AV1_FRAME_FLAG_USE_SUPERRES``
       - 0x00000080
       - If set, indicates that upscaling is needed.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_ALLOW_HIGH_PRECISION_MV``
+    * - ``V4L2_AV1_FRAME_FLAG_ALLOW_HIGH_PRECISION_MV``
       - 0x00000100
       - If set, specifies that motion vectors are specified to eighth pel
         precision. If not set, specifies that motion vectors are specified to
         quarter pel precision;
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_IS_MOTION_MODE_SWITCHABLE``
+    * - ``V4L2_AV1_FRAME_FLAG_IS_MOTION_MODE_SWITCHABLE``
       - 0x00000200
       - If not set, specifies that only the SIMPLE motion mode will be used.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_USE_REF_FRAME_MVS``
+    * - ``V4L2_AV1_FRAME_FLAG_USE_REF_FRAME_MVS``
       - 0x00000400
       - If set specifies that motion vector information from a previous frame
         can be used when decoding the current frame. If not set, specifies that
         this information will not be used.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_DISABLE_FRAME_END_UPDATE_CDF``
+    * - ``V4L2_AV1_FRAME_FLAG_DISABLE_FRAME_END_UPDATE_CDF``
       - 0x00000800
       - If set indicates that the end of frame CDF update is disabled. If not
         set, indicates that the end of frame CDF update is enabled
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_UNIFORM_TILE_SPACING``
+    * - ``V4L2_AV1_FRAME_FLAG_UNIFORM_TILE_SPACING``
       - 0x00001000
       - If set, means that the tiles are uniformly spaced across the frame. (In
         other words, all tiles are the same size except for the ones at the
         right and bottom edge which can be smaller). If not set, means that the
         tile sizes are coded
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_ALLOW_WARPED_MOTION``
+    * - ``V4L2_AV1_FRAME_FLAG_ALLOW_WARPED_MOTION``
       - 0x00002000
       - If set, indicates that the syntax element motion_mode may be present, if
         not set, indicates that the syntax element motion_mode will not be
         present.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_REFERENCE_SELECT``
+    * - ``V4L2_AV1_FRAME_FLAG_REFERENCE_SELECT``
       - 0x00004000
       - If set, specifies that the mode info for inter blocks contains the
         syntax element comp_mode that indicates whether to use single or
         compound reference prediction. If not set, specifies that all inter
         blocks will use single prediction.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_REDUCED_TX_SET``
+    * - ``V4L2_AV1_FRAME_FLAG_REDUCED_TX_SET``
       - 0x00008000
       - If set, specifies that the frame is restricted to a reduced subset of
         the full set of transform types.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_SKIP_MODE_ALLOWED``
+    * - ``V4L2_AV1_FRAME_FLAG_SKIP_MODE_ALLOWED``
       - 0x00010000
       - This flag retains the same meaning as SkipModeAllowed in :ref:`av1`.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_SKIP_MODE_PRESENT``
+    * - ``V4L2_AV1_FRAME_FLAG_SKIP_MODE_PRESENT``
       - 0x00020000
       - If set, specifies that the syntax element skip_mode will be present, if
         not set, specifies that skip_mode will not be used for this frame.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_FRAME_SIZE_OVERRIDE``
+    * - ``V4L2_AV1_FRAME_FLAG_FRAME_SIZE_OVERRIDE``
       - 0x00040000
       - If set, specifies that the frame size will either be specified as the
         size of one of the reference frames, or computed from the
         frame_width_minus_1 and frame_height_minus_1 syntax elements. If not
         set, specifies that the frame size is equal to the size in the sequence
         header.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_BUFFER_REMOVAL_TIME_PRESENT``
+    * - ``V4L2_AV1_FRAME_FLAG_BUFFER_REMOVAL_TIME_PRESENT``
       - 0x00080000
       - If set, specifies that buffer_removal_time is present. If not set,
         specifies that buffer_removal_time is not present.
-    * - ``V4L2_AV1_FRAME_HEADER_FLAG_FRAME_REFS_SHORT_SIGNALING``
+    * - ``V4L2_AV1_FRAME_FLAG_FRAME_REFS_SHORT_SIGNALING``
       - 0x00100000
       - If set, indicates that only two reference frames are explicitly
         signaled. If not set, indicates that all reference frames are explicitly
@@ -2803,7 +3983,7 @@ AV1 Tx mode as described in section 6.8.21 "TX mode semantics" of :ref:`av1`.
 
 .. tabularcolumns:: |p{1.5cm}|p{5.8cm}|p{10.0cm}|
 
-.. flat-table:: struct v4l2_av1_film_grain
+.. flat-table:: struct v4l2_ctrl_av1_film_grain
     :header-rows:  0
     :stub-columns: 0
     :widths:       1 1 2
@@ -2862,7 +4042,7 @@ AV1 Tx mode as described in section 6.8.21 "TX mode semantics" of :ref:`av1`.
         piecewise linear scaling function for cr component.
     * - __u8
       - ``grain_scaling_minus_8``
-      - Represents the shift – 8 applied to the values of the chroma component.
+      - Represents the shift - 8 applied to the values of the chroma component.
         The grain_scaling_minus_8 can take values of 0..3 and determines the
         range and quantization step of the standard deviation of film grain.
     * - __u8

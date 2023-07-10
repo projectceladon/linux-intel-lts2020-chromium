@@ -43,5 +43,8 @@ ccflags-y += -I$(srctree)/$(src)
 obj-$(CPTCFG_IWLMVM)	+= mvm/
 obj-$(CPTCFG_IWLXVT)	+= xvt/
 
-
 CFLAGS_iwl-devtrace.o := -I$(srctree)/$(src)
+
+ifeq ($(CPTCFG_IWLWIFI_SIMULATION),y)
+UBSAN_SANITIZE := y
+endif

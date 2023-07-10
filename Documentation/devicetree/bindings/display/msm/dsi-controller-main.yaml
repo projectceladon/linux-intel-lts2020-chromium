@@ -31,7 +31,7 @@ properties:
       - description: Display byte clock
       - description: Display byte interface clock
       - description: Display pixel clock
-      - description: Display escape clock
+      - description: Display core clock
       - description: Display AHB clock
       - description: Display AXI clock
 
@@ -63,6 +63,18 @@ properties:
     description: |
       Indicates if the DSI controller is driving a panel which needs
       2 DSI links.
+
+  assigned-clocks:
+    minItems: 2
+    maxItems: 2
+    description: |
+      Parents of "byte" and "pixel" for the given platform.
+
+  assigned-clock-parents:
+    minItems: 2
+    maxItems: 2
+    description: |
+      The Byte clock and Pixel clock PLL outputs provided by a DSI PHY block.
 
   power-domains:
     maxItems: 1
@@ -110,6 +122,18 @@ properties:
       - port@0
       - port@1
 
+  vdd-supply:
+    description:
+      VDD regulator
+
+  vddio-supply:
+    description:
+      VDD-IO regulator
+
+  vdda-supply:
+    description:
+      VDDA regulator
+
 required:
   - compatible
   - reg
@@ -119,8 +143,8 @@ required:
   - clock-names
   - phys
   - phy-names
-  - power-domains
-  - operating-points-v2
+  - assigned-clocks
+  - assigned-clock-parents
   - ports
 
 additionalProperties: false
@@ -158,6 +182,9 @@ examples:
 
            phys = <&dsi0_phy>;
            phy-names = "dsi";
+
+           assigned-clocks = <&dispcc DISP_CC_MDSS_BYTE0_CLK_SRC>, <&dispcc DISP_CC_MDSS_PCLK0_CLK_SRC>;
+           assigned-clock-parents = <&dsi_phy 0>, <&dsi_phy 1>;
 
            power-domains = <&rpmhpd SC7180_CX>;
            operating-points-v2 = <&dsi_opp_table>;

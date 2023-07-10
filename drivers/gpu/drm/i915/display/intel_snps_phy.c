@@ -5,6 +5,8 @@
 
 #include <linux/util_macros.h>
 
+#include "intel_ddi.h"
+#include "intel_ddi_buf_trans.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
 #include "intel_snps_phy.h"
@@ -50,58 +52,28 @@ void intel_snps_phy_update_psr_power_state(struct drm_i915_private *dev_priv,
 			 SNPS_PHY_TX_REQ_LN_DIS_PWR_STATE_PSR, val);
 }
 
-static const u32 dg2_ddi_translations[] = {
-	/* VS 0, pre-emph 0 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 26),
-
-	/* VS 0, pre-emph 1 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 33) |
-		REG_FIELD_PREP(SNPS_PHY_TX_EQ_POST, 6),
-
-	/* VS 0, pre-emph 2 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 38) |
-		REG_FIELD_PREP(SNPS_PHY_TX_EQ_POST, 12),
-
-	/* VS 0, pre-emph 3 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 43) |
-		REG_FIELD_PREP(SNPS_PHY_TX_EQ_POST, 19),
-
-	/* VS 1, pre-emph 0 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 39),
-
-	/* VS 1, pre-emph 1 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 44) |
-		REG_FIELD_PREP(SNPS_PHY_TX_EQ_POST, 8),
-
-	/* VS 1, pre-emph 2 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 47) |
-		REG_FIELD_PREP(SNPS_PHY_TX_EQ_POST, 15),
-
-	/* VS 2, pre-emph 0 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 52),
-
-	/* VS 2, pre-emph 1 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 51) |
-		REG_FIELD_PREP(SNPS_PHY_TX_EQ_POST, 10),
-
-	/* VS 3, pre-emph 0 */
-	REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, 62),
-};
-
-void intel_snps_phy_ddi_vswing_sequence(struct intel_encoder *encoder,
-					u32 level)
+void intel_snps_phy_set_signal_levels(struct intel_encoder *encoder,
+				      const struct intel_crtc_state *crtc_state)
 {
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
+	const struct intel_ddi_buf_trans *trans;
 	enum phy phy = intel_port_to_phy(dev_priv, encoder->port);
+	int level = intel_ddi_level(encoder, crtc_state, 0);
 	int n_entries, ln;
 
-	n_entries = ARRAY_SIZE(dg2_ddi_translations);
-	if (level >= n_entries)
-		level = n_entries - 1;
+	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
+	if (drm_WARN_ON_ONCE(&dev_priv->drm, !trans))
+		return;
 
-	for (ln = 0; ln < 4; ln++)
-		intel_de_write(dev_priv, SNPS_PHY_TX_EQ(ln, phy),
-			       dg2_ddi_translations[level]);
+	for (ln = 0; ln < 4; ln++) {
+		u32 val = 0;
+
+		val |= REG_FIELD_PREP(SNPS_PHY_TX_EQ_MAIN, trans->entries[level].snps.snps_vswing);
+		val |= REG_FIELD_PREP(SNPS_PHY_TX_EQ_PRE, trans->entries[level].snps.snps_pre_cursor);
+		val |= REG_FIELD_PREP(SNPS_PHY_TX_EQ_POST, trans->entries[level].snps.snps_post_cursor);
+
+		intel_de_write(dev_priv, SNPS_PHY_TX_EQ(ln, phy), val);
+	}
 }
 
 /*
@@ -676,7 +648,7 @@ int intel_mpllb_calc_state(struct intel_crtc_state *crtc_state,
 		return -EINVAL;
 
 	for (i = 0; tables[i]; i++) {
-		if (crtc_state->port_clock <= tables[i]->clock) {
+		if (crtc_state->port_clock == tables[i]->clock) {
 			crtc_state->mpllb_state = *tables[i];
 			return 0;
 		}
@@ -859,4 +831,47 @@ int intel_snps_phy_check_hdmi_link_rate(int clock)
 	}
 
 	return MODE_CLOCK_RANGE;
+}
+
+void intel_mpllb_state_verify(struct intel_atomic_state *state,
+			      struct intel_crtc_state *new_crtc_state)
+{
+	struct drm_i915_private *i915 = to_i915(state->base.dev);
+	struct intel_mpllb_state mpllb_hw_state = { 0 };
+	struct intel_mpllb_state *mpllb_sw_state = &new_crtc_state->mpllb_state;
+	struct intel_crtc *crtc = to_intel_crtc(new_crtc_state->uapi.crtc);
+	struct intel_encoder *encoder;
+
+	if (!IS_DG2(i915))
+		return;
+
+	if (!new_crtc_state->hw.active)
+		return;
+
+	encoder = intel_get_crtc_new_encoder(state, new_crtc_state);
+	intel_mpllb_readout_hw_state(encoder, &mpllb_hw_state);
+
+#define MPLLB_CHECK(__name)						\
+	I915_STATE_WARN(mpllb_sw_state->__name != mpllb_hw_state.__name,	\
+			"[CRTC:%d:%s] mismatch in MPLLB: %s (expected 0x%08x, found 0x%08x)", \
+			crtc->base.base.id, crtc->base.name,		\
+			__stringify(__name),				\
+			mpllb_sw_state->__name, mpllb_hw_state.__name)
+
+	MPLLB_CHECK(mpllb_cp);
+	MPLLB_CHECK(mpllb_div);
+	MPLLB_CHECK(mpllb_div2);
+	MPLLB_CHECK(mpllb_fracn1);
+	MPLLB_CHECK(mpllb_fracn2);
+	MPLLB_CHECK(mpllb_sscen);
+	MPLLB_CHECK(mpllb_sscstep);
+
+	/*
+	 * ref_control is handled by the hardware/firemware and never
+	 * programmed by the software, but the proper values are supplied
+	 * in the bspec for verification purposes.
+	 */
+	MPLLB_CHECK(ref_control);
+
+#undef MPLLB_CHECK
 }

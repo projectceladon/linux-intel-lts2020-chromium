@@ -7,7 +7,7 @@
  *  Haijun Liu <haijun.liu@mediatek.com>
  *  Eliot Lee <eliot.lee@intel.com>
  *  Moises Veleta <moises.veleta@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  *
  * Contributors:
  *  Amir Hanania <amir.hanania@intel.com>
@@ -37,17 +37,15 @@
 #include "t7xx_modem_ops.h"
 #include "t7xx_netdev.h"
 #include "t7xx_pci.h"
+#include "t7xx_pci_rescan.h"
 #include "t7xx_pcie_mac.h"
 #include "t7xx_port.h"
 #include "t7xx_port_proxy.h"
 #include "t7xx_reg.h"
 #include "t7xx_state_monitor.h"
-#include "t7xx_pci_rescan.h"
-#include "t7xx_uevent.h"
 
 #define RT_ID_MD_PORT_ENUM	0
-#define RT_ID_SAP_PORT_ENUM 1
-
+#define RT_ID_AP_PORT_ENUM	1
 /* Modem feature query identification code - "ICCC" */
 #define MD_FEATURE_QUERY_ID	0x49434343
 
@@ -169,12 +167,7 @@ static int t7xx_acpi_reset(struct t7xx_pci_dev *t7xx_dev, char *fn_name)
 		return -EFAULT;
 	}
 
-	if (strncmp(fn_name,"_RST",4) == 0)
-		pr_info("warm reset");
-	else if (strncmp(fn_name, "MRST._RST",9) == 0)
-		pr_info("cold reset");
-	else
-		dev_err(dev, "Unspported acpi reset call");
+	kfree(buffer.pointer);
 
 #endif
 	return 0;
@@ -190,9 +183,6 @@ static void t7xx_reset_device_via_pmic(struct t7xx_pci_dev *t7xx_dev)
 	u32 val;
 
 	val = ioread32(IREG_BASE(t7xx_dev) + T7XX_PCIE_MISC_DEV_STATUS);
-	if (val == 0xffffffff)
-		return;
-
 	if (val & MISC_RESET_TYPE_PLDR)
 		t7xx_acpi_reset(t7xx_dev, "MRST._RST");
 	else if (val & MISC_RESET_TYPE_FLDR)
@@ -207,7 +197,7 @@ static irqreturn_t t7xx_rgu_isr_thread(int irq, void *data)
 	t7xx_reset_device_via_pmic(t7xx_dev);
 
 	if (!t7xx_dev->hp_enable)
-		mtk_queue_rescan_work(t7xx_dev->pdev);
+		t7xx_rescan_queue_work(t7xx_dev->pdev, false);
 
 	return IRQ_HANDLED;
 }
@@ -358,48 +348,29 @@ struct feature_query {
 
 static void t7xx_prepare_host_rt_data_query(struct t7xx_sys_info *core)
 {
-	struct t7xx_port_static *port_static = core->ctl_port->port_static;
-	struct ctrl_msg_header *ctrl_msg_h;
 	struct feature_query *ft_query;
-	struct ccci_header *ccci_h;
 	struct sk_buff *skb;
-	size_t packet_size;
 
-	packet_size = sizeof(*ccci_h) + sizeof(*ctrl_msg_h) + sizeof(*ft_query);
-	skb = __dev_alloc_skb(packet_size, GFP_KERNEL);
+	skb = t7xx_ctrl_alloc_skb(sizeof(*ft_query));
 	if (!skb)
 		return;
 
-	skb_put(skb, packet_size);
-
-	ccci_h = (struct ccci_header *)skb->data;
-	t7xx_ccci_header_init(ccci_h, 0, packet_size, port_static->tx_ch, 0);
-	ccci_h->status &= cpu_to_le32(~CCCI_H_SEQ_FLD);
-
-	ctrl_msg_h = (struct ctrl_msg_header *)(skb->data + sizeof(*ccci_h));
-	t7xx_ctrl_msg_header_init(ctrl_msg_h, CTL_ID_HS1_MSG, 0, sizeof(*ft_query));
-
-	ft_query = (struct feature_query *)(skb->data + sizeof(*ccci_h) + sizeof(*ctrl_msg_h));
+	ft_query = skb_put(skb, sizeof(*ft_query));
 	ft_query->head_pattern = cpu_to_le32(MD_FEATURE_QUERY_ID);
 	memcpy(ft_query->feature_set, core->feature_set, FEATURE_COUNT);
 	ft_query->tail_pattern = cpu_to_le32(MD_FEATURE_QUERY_ID);
 
 	/* Send HS1 message to device */
-	t7xx_port_proxy_send_skb(core->ctl_port, skb);
+	t7xx_port_send_ctl_skb(core->ctl_port, skb, CTL_ID_HS1_MSG, 0);
 }
 
 static int t7xx_prepare_device_rt_data(struct t7xx_sys_info *core, struct device *dev,
-				       void *data, int data_length)
+				       void *data)
 {
-	struct t7xx_port_static *port_static = core->ctl_port->port_static;
 	struct feature_query *md_feature = data;
-	struct ctrl_msg_header *ctrl_msg_h;
-	unsigned int total_data_len;
-	struct ccci_header *ccci_h;
-	size_t packet_size = 0;
+	struct mtk_runtime_feature *rt_feature;
+	unsigned int i, rt_data_len = 0;
 	struct sk_buff *skb;
-	char *rt_data;
-	int i;
 
 	/* Parse MD runtime data query */
 	if (le32_to_cpu(md_feature->head_pattern) != MD_FEATURE_QUERY_ID ||
@@ -410,45 +381,35 @@ static int t7xx_prepare_device_rt_data(struct t7xx_sys_info *core, struct device
 		return -EINVAL;
 	}
 
-	skb = __dev_alloc_skb(CLDMA_MTU, GFP_KERNEL);
-	if (!skb)
-		return -EFAULT;
+	for (i = 0; i < FEATURE_COUNT; i++) {
+		if (FIELD_GET(FEATURE_MSK, md_feature->feature_set[i]) !=
+		    MTK_FEATURE_MUST_BE_SUPPORTED)
+			rt_data_len += sizeof(*rt_feature);
+	}
 
-	ccci_h = (struct ccci_header *)skb->data;
-	t7xx_ccci_header_init(ccci_h, 0, packet_size, port_static->tx_ch, 0);
-	ccci_h->status &= cpu_to_le32(~CCCI_H_SEQ_FLD);
-	ctrl_msg_h = (struct ctrl_msg_header *)(skb->data + sizeof(*ccci_h));
-	t7xx_ctrl_msg_header_init(ctrl_msg_h, CTL_ID_HS3_MSG, 0, 0);
-	rt_data = skb->data + sizeof(*ccci_h) + sizeof(*ctrl_msg_h);
+	skb = t7xx_ctrl_alloc_skb(rt_data_len);
+	if (!skb)
+		return -ENOMEM;
+
+	rt_feature = skb_put(skb, rt_data_len);
+	memset(rt_feature, 0, rt_data_len);
 
 	/* Fill runtime feature */
 	for (i = 0; i < FEATURE_COUNT; i++) {
-		struct mtk_runtime_feature rt_feature;
-		u8 md_feature_mask;
+		u8 md_feature_mask = FIELD_GET(FEATURE_MSK, md_feature->feature_set[i]);
 
-		if (FIELD_GET(FEATURE_MSK, md_feature->feature_set[i]) ==
-		    MTK_FEATURE_MUST_BE_SUPPORTED)
+		if (md_feature_mask == MTK_FEATURE_MUST_BE_SUPPORTED)
 			continue;
 
-		memset(&rt_feature, 0, sizeof(rt_feature));
-		rt_feature.feature_id = i;
-
-		md_feature_mask = FIELD_GET(FEATURE_MSK, md_feature->feature_set[i]);
+		rt_feature->feature_id = i;
 		if (md_feature_mask == MTK_FEATURE_DOES_NOT_EXIST)
-			rt_feature.support_info = md_feature->feature_set[i];
+			rt_feature->support_info = md_feature->feature_set[i];
 
-		memcpy(rt_data, &rt_feature, sizeof(rt_feature));
-		rt_data += sizeof(rt_feature);
-		packet_size += sizeof(rt_feature);
+		rt_feature++;
 	}
 
-	ctrl_msg_h->data_length = cpu_to_le32(packet_size);
-	total_data_len = packet_size + sizeof(*ctrl_msg_h) + sizeof(*ccci_h);
-	ccci_h->packet_len = cpu_to_le32(total_data_len);
-	skb_put(skb, total_data_len);
-
 	/* Send HS3 message to device */
-	t7xx_port_proxy_send_skb(core->ctl_port, skb);
+	t7xx_port_send_ctl_skb(core->ctl_port, skb, CTL_ID_HS3_MSG, 0);
 	return 0;
 }
 
@@ -462,21 +423,18 @@ static int t7xx_parse_host_rt_data(struct t7xx_fsm_ctl *ctl, struct t7xx_sys_inf
 	offset = sizeof(struct feature_query);
 	for (i = 0; i < FEATURE_COUNT && offset < data_length; i++) {
 		rt_feature = data + offset;
-		ft_spt_st = FIELD_GET(FEATURE_MSK, rt_feature->support_info);
 		offset += sizeof(*rt_feature) + le32_to_cpu(rt_feature->data_len);
 
 		ft_spt_cfg = FIELD_GET(FEATURE_MSK, core->feature_set[i]);
 		if (ft_spt_cfg != MTK_FEATURE_MUST_BE_SUPPORTED)
 			continue;
 
+		ft_spt_st = FIELD_GET(FEATURE_MSK, rt_feature->support_info);
 		if (ft_spt_st != MTK_FEATURE_MUST_BE_SUPPORTED)
 			return -EINVAL;
 
-		if (i == RT_ID_MD_PORT_ENUM || i == RT_ID_SAP_PORT_ENUM) {
-			struct port_msg *p_msg = (void *)rt_feature + sizeof(*rt_feature);
-
-			t7xx_port_proxy_node_control(ctl->md, p_msg);
-		}
+		if (i == RT_ID_MD_PORT_ENUM || i == RT_ID_AP_PORT_ENUM)
+			t7xx_port_enum_msg_handler(ctl->md, rt_feature->data);
 	}
 
 	return 0;
@@ -510,10 +468,9 @@ static void t7xx_core_hk_handler(struct t7xx_modem *md, struct t7xx_sys_info *co
 				 enum t7xx_fsm_event_state event_id,
 				 enum t7xx_fsm_event_state err_detect)
 {
+	struct t7xx_fsm_event *event = NULL, *event_next;
 	struct device *dev = &md->t7xx_dev->pdev->dev;
-	struct t7xx_fsm_event *event, *event_next;
 	unsigned long flags;
-	void *event_data;
 	int ret;
 
 	t7xx_prepare_host_rt_data_query(core_info);
@@ -545,11 +502,10 @@ static void t7xx_core_hk_handler(struct t7xx_modem *md, struct t7xx_sys_info *co
 			goto err_free_event;
 	}
 
-	if (ctl->exp_flg)
+	if (!event || ctl->exp_flg)
 		goto err_free_event;
 
-	event_data = (void *)event + sizeof(*event);
-	ret = t7xx_parse_host_rt_data(ctl, core_info, dev, event_data, event->length);
+	ret = t7xx_parse_host_rt_data(ctl, core_info, dev, event->data, event->length);
 	if (ret) {
 		dev_err(dev, "Host failure parsing runtime data: %d\n", ret);
 		goto err_free_event;
@@ -558,7 +514,7 @@ static void t7xx_core_hk_handler(struct t7xx_modem *md, struct t7xx_sys_info *co
 	if (ctl->exp_flg)
 		goto err_free_event;
 
-	ret = t7xx_prepare_device_rt_data(core_info, dev, event_data, event->length);
+	ret = t7xx_prepare_device_rt_data(core_info, dev, event->data);
 	if (ret) {
 		dev_err(dev, "Device failure parsing runtime data: %d", ret);
 		goto err_free_event;
@@ -578,42 +534,37 @@ static void t7xx_md_hk_wq(struct work_struct *work)
 
 	/* Clear the HS2 EXIT event appended in core_reset() */
 	t7xx_fsm_clr_event(ctl, FSM_EVENT_MD_HS2_EXIT);
-	t7xx_cldma_stop(md->md_ctrl[CLDMA_ID_MD]);
-	t7xx_cldma_switch_cfg(md->md_ctrl[CLDMA_ID_MD], HIF_CFG1);
+	t7xx_cldma_switch_cfg(md->md_ctrl[CLDMA_ID_MD], CLDMA_SHARED_Q_CFG);
 	t7xx_cldma_start(md->md_ctrl[CLDMA_ID_MD]);
 	t7xx_fsm_broadcast_state(ctl, MD_STATE_WAITING_FOR_HS2);
-	t7xx_uevent_send(&md->t7xx_dev->pdev->dev,
-			 T7XX_UEVENT_MODEM_WAITING_HS2);
 	md->core_md.handshake_ongoing = true;
 	t7xx_core_hk_handler(md, &md->core_md, ctl, FSM_EVENT_MD_HS2, FSM_EVENT_MD_HS2_EXIT);
 }
 
-static void sap_hk_wq(struct work_struct *work)
+static void t7xx_ap_hk_wq(struct work_struct *work)
 {
-	struct t7xx_fsm_ctl *ctl;
-	struct t7xx_modem *md;
+	struct t7xx_modem *md = container_of(work, struct t7xx_modem, ap_handshake_work);
+	struct t7xx_fsm_ctl *ctl = md->fsm_ctl;
 
-	md = container_of(work, struct t7xx_modem, sap_handshake_work);
-	ctl = md->fsm_ctl;
-
+	 /* Clear the HS2 EXIT event appended in t7xx_core_reset(). */
 	t7xx_fsm_clr_event(ctl, FSM_EVENT_AP_HS2_EXIT);
 	t7xx_cldma_stop(md->md_ctrl[CLDMA_ID_AP]);
-	t7xx_cldma_switch_cfg(md->md_ctrl[CLDMA_ID_AP], HIF_CFG1);
+	t7xx_cldma_switch_cfg(md->md_ctrl[CLDMA_ID_AP], CLDMA_SHARED_Q_CFG);
 	t7xx_cldma_start(md->md_ctrl[CLDMA_ID_AP]);
-	md->core_sap.handshake_ongoing = true;
-	t7xx_core_hk_handler(md, &md->core_sap, ctl, FSM_EVENT_AP_HS2, FSM_EVENT_AP_HS2_EXIT);
+	md->core_ap.handshake_ongoing = true;
+	t7xx_core_hk_handler(md, &md->core_ap, ctl, FSM_EVENT_AP_HS2, FSM_EVENT_AP_HS2_EXIT);
 }
 
 void t7xx_md_event_notify(struct t7xx_modem *md, enum md_event_id evt_id)
 {
 	struct t7xx_fsm_ctl *ctl = md->fsm_ctl;
-	void __iomem *mhccif_base;
 	unsigned int int_sta;
 	unsigned long flags;
 
 	switch (evt_id) {
 	case FSM_PRE_START:
-		t7xx_mhccif_mask_clr(md->t7xx_dev, D2H_INT_PORT_ENUM);
+		t7xx_mhccif_mask_clr(md->t7xx_dev, D2H_INT_PORT_ENUM | D2H_INT_ASYNC_MD_HK |
+						   D2H_INT_ASYNC_AP_HK);
 		break;
 
 	case FSM_START:
@@ -626,29 +577,26 @@ void t7xx_md_event_notify(struct t7xx_modem *md, enum md_event_id evt_id)
 			ctl->exp_flg = true;
 			md->exp_id &= ~D2H_INT_EXCEPTION_INIT;
 			md->exp_id &= ~D2H_INT_ASYNC_MD_HK;
+			md->exp_id &= ~D2H_INT_ASYNC_AP_HK;
 		} else if (ctl->exp_flg) {
 			md->exp_id &= ~D2H_INT_ASYNC_MD_HK;
-		} else if (md->exp_id & D2H_INT_ASYNC_MD_HK) {
-			queue_work(md->handshake_wq, &md->handshake_work);
-			md->exp_id &= ~D2H_INT_ASYNC_MD_HK;
-			mhccif_base = md->t7xx_dev->base_addr.mhccif_rc_base;
-			iowrite32(D2H_INT_ASYNC_MD_HK, mhccif_base + REG_EP2RC_SW_INT_ACK);
-			t7xx_mhccif_mask_set(md->t7xx_dev, D2H_INT_ASYNC_MD_HK);
+			md->exp_id &= ~D2H_INT_ASYNC_AP_HK;
 		} else {
-			t7xx_mhccif_mask_clr(md->t7xx_dev, D2H_INT_ASYNC_MD_HK);
-		}
+			void __iomem *mhccif_base = md->t7xx_dev->base_addr.mhccif_rc_base;
 
-		if (md->exp_id & D2H_INT_ASYNC_SAP_HK) {
-			queue_work(md->sap_handshake_wq, &md->sap_handshake_work);
-			md->exp_id &= ~D2H_INT_ASYNC_SAP_HK;
-			mhccif_base = md->t7xx_dev->base_addr.mhccif_rc_base;
-			iowrite32(D2H_INT_ASYNC_SAP_HK,
-				  mhccif_base + REG_EP2RC_SW_INT_ACK);
-			t7xx_mhccif_mask_set(md->t7xx_dev, D2H_INT_ASYNC_SAP_HK);
-		} else {
-			/* unmask async handshake interrupt */
-			t7xx_mhccif_mask_clr(md->t7xx_dev, D2H_INT_ASYNC_MD_HK);
-			t7xx_mhccif_mask_clr(md->t7xx_dev, D2H_INT_ASYNC_SAP_HK);
+			if (md->exp_id & D2H_INT_ASYNC_MD_HK) {
+				queue_work(md->handshake_wq, &md->handshake_work);
+				md->exp_id &= ~D2H_INT_ASYNC_MD_HK;
+				iowrite32(D2H_INT_ASYNC_MD_HK, mhccif_base + REG_EP2RC_SW_INT_ACK);
+				t7xx_mhccif_mask_set(md->t7xx_dev, D2H_INT_ASYNC_MD_HK);
+			}
+
+			if (md->exp_id & D2H_INT_ASYNC_AP_HK) {
+				queue_work(md->ap_handshake_wq, &md->ap_handshake_work);
+				md->exp_id &= ~D2H_INT_ASYNC_AP_HK;
+				iowrite32(D2H_INT_ASYNC_AP_HK, mhccif_base + REG_EP2RC_SW_INT_ACK);
+				t7xx_mhccif_mask_set(md->t7xx_dev, D2H_INT_ASYNC_AP_HK);
+			}
 		}
 		spin_unlock_irqrestore(&md->exp_lock, flags);
 
@@ -661,7 +609,7 @@ void t7xx_md_event_notify(struct t7xx_modem *md, enum md_event_id evt_id)
 
 	case FSM_READY:
 		t7xx_mhccif_mask_set(md->t7xx_dev, D2H_INT_ASYNC_MD_HK);
-		t7xx_mhccif_mask_set(md->t7xx_dev, D2H_INT_ASYNC_SAP_HK);
+		t7xx_mhccif_mask_set(md->t7xx_dev, D2H_INT_ASYNC_AP_HK);
 		break;
 
 	default:
@@ -703,8 +651,6 @@ static struct t7xx_modem *t7xx_md_alloc(struct t7xx_pci_dev *t7xx_dev)
 
 	md->t7xx_dev = t7xx_dev;
 	t7xx_dev->md = md;
-	md->core_md.ready = false;
-	md->core_md.handshake_ongoing = false;
 	spin_lock_init(&md->exp_lock);
 	md->handshake_wq = alloc_workqueue("%s", WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI,
 					   0, "md_hk_wq");
@@ -716,16 +662,16 @@ static struct t7xx_modem *t7xx_md_alloc(struct t7xx_pci_dev *t7xx_dev)
 	md->core_md.feature_set[RT_ID_MD_PORT_ENUM] |=
 		FIELD_PREP(FEATURE_MSK, MTK_FEATURE_MUST_BE_SUPPORTED);
 
-	md->core_sap.ready = false;
-	md->core_sap.handshake_ongoing = false;
-	md->sap_handshake_wq =
-		alloc_workqueue("%s", WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI,
-				0, "sap_hk_wq");
-	if (!md->sap_handshake_wq)
+	md->ap_handshake_wq = alloc_workqueue("%s", WQ_UNBOUND | WQ_MEM_RECLAIM | WQ_HIGHPRI,
+					      0, "ap_hk_wq");
+	if (!md->ap_handshake_wq) {
+		destroy_workqueue(md->handshake_wq);
 		return NULL;
-	INIT_WORK(&md->sap_handshake_work, sap_hk_wq);
-	md->core_sap.feature_set[RT_ID_SAP_PORT_ENUM] &= ~FEATURE_MSK;
-	md->core_sap.feature_set[RT_ID_SAP_PORT_ENUM] |=
+	}
+
+	INIT_WORK(&md->ap_handshake_work, t7xx_ap_hk_wq);
+	md->core_ap.feature_set[RT_ID_AP_PORT_ENUM] &= ~FEATURE_MSK;
+	md->core_ap.feature_set[RT_ID_AP_PORT_ENUM] |=
 		FIELD_PREP(FEATURE_MSK, MTK_FEATURE_MUST_BE_SUPPORTED);
 
 	return md;
@@ -737,7 +683,6 @@ int t7xx_md_reset(struct t7xx_pci_dev *t7xx_dev)
 
 	md->md_init_finish = false;
 	md->exp_id = 0;
-	spin_lock_init(&md->exp_lock);
 	t7xx_fsm_reset(md);
 	t7xx_cldma_reset(md->md_ctrl[CLDMA_ID_MD]);
 	t7xx_cldma_reset(md->md_ctrl[CLDMA_ID_AP]);
@@ -788,14 +733,14 @@ int t7xx_md_init(struct t7xx_pci_dev *t7xx_dev)
 
 	ret = t7xx_cldma_init(md->md_ctrl[CLDMA_ID_AP]);
 	if (ret)
-		goto err_uninit_cldma;
+		goto err_uninit_md_cldma;
 
 	ret = t7xx_port_proxy_init(md);
 	if (ret)
-		goto err_uninit_cldma;
+		goto err_uninit_ap_cldma;
 
 	ret = t7xx_fsm_append_cmd(md->fsm_ctl, FSM_CMD_START, 0);
-	if (ret) /* fsm_uninit flushes cmd queue */
+	if (ret) /* t7xx_fsm_uninit() flushes cmd queue */
 		goto err_uninit_proxy;
 
 	t7xx_md_sys_sw_init(t7xx_dev);
@@ -805,7 +750,10 @@ int t7xx_md_init(struct t7xx_pci_dev *t7xx_dev)
 err_uninit_proxy:
 	t7xx_port_proxy_uninit(md->port_prox);
 
-err_uninit_cldma:
+err_uninit_ap_cldma:
+	t7xx_cldma_exit(md->md_ctrl[CLDMA_ID_AP]);
+
+err_uninit_md_cldma:
 	t7xx_cldma_exit(md->md_ctrl[CLDMA_ID_MD]);
 
 err_uninit_ccmni:
@@ -816,7 +764,7 @@ err_uninit_fsm:
 
 err_destroy_hswq:
 	destroy_workqueue(md->handshake_wq);
-	destroy_workqueue(md->sap_handshake_wq);
+	destroy_workqueue(md->ap_handshake_wq);
 	dev_err(&t7xx_dev->pdev->dev, "Modem init failed\n");
 	return ret;
 }
@@ -832,10 +780,10 @@ void t7xx_md_exit(struct t7xx_pci_dev *t7xx_dev)
 
 	t7xx_fsm_append_cmd(md->fsm_ctl, FSM_CMD_PRE_STOP, FSM_CMD_FLAG_WAIT_FOR_COMPLETION);
 	t7xx_port_proxy_uninit(md->port_prox);
-	t7xx_cldma_exit(md->md_ctrl[CLDMA_ID_MD]);
 	t7xx_cldma_exit(md->md_ctrl[CLDMA_ID_AP]);
+	t7xx_cldma_exit(md->md_ctrl[CLDMA_ID_MD]);
 	t7xx_ccmni_exit(t7xx_dev);
 	t7xx_fsm_uninit(md);
 	destroy_workqueue(md->handshake_wq);
-	destroy_workqueue(md->sap_handshake_wq);
+	destroy_workqueue(md->ap_handshake_wq);
 }

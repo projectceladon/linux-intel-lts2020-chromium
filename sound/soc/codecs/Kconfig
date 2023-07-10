@@ -123,6 +123,7 @@ config SND_SOC_ALL_CODECS
 	imply SND_SOC_MAX98373_I2C
 	imply SND_SOC_MAX98373_SDW
 	imply SND_SOC_MAX98390
+	imply SND_SOC_MAX98396
 	imply SND_SOC_MAX9850
 	imply SND_SOC_MAX9860
 	imply SND_SOC_MAX9759
@@ -134,6 +135,7 @@ config SND_SOC_ALL_CODECS
 	imply SND_SOC_MT6358
 	imply SND_SOC_MT6359
 	imply SND_SOC_MT6660
+	imply SND_SOC_NAU8315
 	imply SND_SOC_NAU8540
 	imply SND_SOC_NAU8810
 	imply SND_SOC_NAU8822
@@ -812,7 +814,6 @@ config SND_SOC_DA9055
 
 config SND_SOC_DMIC
 	tristate "Generic Digital Microphone CODEC"
-	depends on GPIOLIB
 	help
 	  Enable support for the Generic Digital Microphone CODEC.
 	  Select this if your sound card has DMICs.
@@ -913,7 +914,6 @@ config SND_SOC_MAX98095
 
 config SND_SOC_MAX98357A
 	tristate "Maxim MAX98357A CODEC"
-	depends on GPIOLIB
 
 config SND_SOC_MAX98371
 	tristate
@@ -963,6 +963,15 @@ config SND_SOC_MAX98373_SDW
 config SND_SOC_MAX98390
 	tristate "Maxim Integrated MAX98390 Speaker Amplifier"
 	depends on I2C
+
+config SND_SOC_MAX98396
+	tristate "Analog Devices MAX98396 Speaker Amplifier"
+	depends on I2C
+	help
+	  Enable support for Analog Devices MAX98396 audio
+	  amplifier. The device provides a PCM interface for
+	  audio data and a standard I2C interface for control
+	  data communication.
 
 config SND_SOC_MAX9850
 	tristate
@@ -1157,7 +1166,6 @@ config SND_SOC_RT1015
 
 config SND_SOC_RT1015P
 	tristate
-	depends on GPIOLIB
 
 config SND_SOC_RT1019
 	tristate
@@ -1791,7 +1799,7 @@ config SND_SOC_WSA881X
 config SND_SOC_ZL38060
 	tristate "Microsemi ZL38060 Connected Home Audio Processor"
 	depends on SPI_MASTER
-	select GPIOLIB
+	depends on GPIOLIB
 	select REGMAP
 	help
 	  Support for ZL38060 Connected Home Audio Processor from Microsemi,
@@ -1852,6 +1860,10 @@ config SND_SOC_MT6660
 	  speaker protection, multi-band DRC, equalizer functions.
 	  Select N if you don't have MT6660 on board.
 	  Select M to build this as module.
+
+config SND_SOC_NAU8315
+	tristate "Nuvoton Technology Corporation NAU8315 CODEC"
+	depends on GPIOLIB
 
 config SND_SOC_NAU8540
 	tristate "Nuvoton Technology Corporation NAU85L40 CODEC"

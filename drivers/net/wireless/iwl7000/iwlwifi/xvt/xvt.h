@@ -47,6 +47,7 @@ enum iwl_xvt_state {
  * @mod_tx_done_wq: queue to wait on until all packets are sent and received
  * @txq_full: set to true when mod_tx_wq is full
  * @seq_num: sequence number of qos frames (per-tid)
+ * @sta_msk: station id mask
  */
 struct tx_meta_data {
 	struct task_struct *tx_mod_thread;
@@ -59,6 +60,7 @@ struct tx_meta_data {
 	wait_queue_head_t mod_tx_done_wq;
 	bool txq_full;
 	u16 seq_num[IWL_MAX_TID_COUNT];
+	u32 sta_msk;
 };
 
 /*
@@ -116,12 +118,16 @@ struct iwl_xvt_reorder_buffer {
  * @tx_counter: Number of packets that were sent from this queue. Counts TX_RSP
  * @txq_full: Set to true when tx_wq is full
  * @allocated_queue: Whether queue is allocated
+ * @sta_mask: Station id mask
+ * @tid: TID
  */
 struct tx_queue_data {
 	wait_queue_head_t tx_wq;
 	u64 tx_counter;
 	bool txq_full;
 	bool allocated_queue;
+	u32 sta_mask;
+	u16 tid;
 };
 
 /**
@@ -404,3 +410,5 @@ static inline int iwl_xvt_dbgfs_register(struct iwl_xvt *xvt,
 int iwl_xvt_init_sar_tables(struct iwl_xvt *xvt);
 int iwl_xvt_sar_select_profile(struct iwl_xvt *xvt, int prof_a, int prof_b);
 int iwl_xvt_init_ppag_tables(struct iwl_xvt *xvt);
+void iwl_xvt_txpath_flush_send_cmd(struct iwl_xvt *xvt, u32 sta_id, u16 tfd_msk);
+void iwl_xvt_lari_cfg(struct iwl_xvt *xvt);

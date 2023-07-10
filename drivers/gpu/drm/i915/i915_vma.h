@@ -57,9 +57,16 @@ static inline bool i915_vma_is_active(const struct i915_vma *vma)
 
 int __must_check __i915_vma_move_to_active(struct i915_vma *vma,
 					   struct i915_request *rq);
-int __must_check i915_vma_move_to_active(struct i915_vma *vma,
-					 struct i915_request *rq,
-					 unsigned int flags);
+int __must_check _i915_vma_move_to_active(struct i915_vma *vma,
+					  struct i915_request *rq,
+					  struct dma_fence *fence,
+					  unsigned int flags);
+static inline int __must_check
+i915_vma_move_to_active(struct i915_vma *vma, struct i915_request *rq,
+			unsigned int flags)
+{
+	return _i915_vma_move_to_active(vma, rq, &rq->fence, flags);
+}
 
 #define __i915_vma_flags(v) ((unsigned long *)&(v)->flags.counter)
 
@@ -118,13 +125,59 @@ static inline bool i915_vma_is_closed(const struct i915_vma *vma)
 	return !list_empty(&vma->closed_link);
 }
 
+/* Internal use only. */
+static inline u64 __i915_vma_size(const struct i915_vma *vma)
+{
+	return vma->node.size - 2 * vma->guard;
+}
+
+/**
+ * i915_vma_offset - Obtain the va range size of the vma
+ * @vma: The vma
+ *
+ * GPU virtual address space may be allocated with padding. This
+ * function returns the effective virtual address range size
+ * with padding subtracted.
+ *
+ * Return: The effective virtual address range size.
+ */
+static inline u64 i915_vma_size(const struct i915_vma *vma)
+{
+	GEM_BUG_ON(!drm_mm_node_allocated(&vma->node));
+	return __i915_vma_size(vma);
+}
+
+/* Internal use only. */
+static inline u64 __i915_vma_offset(const struct i915_vma *vma)
+{
+	/* The actual start of the vma->pages is after the guard pages. */
+	return vma->node.start + vma->guard;
+}
+
+/**
+ * i915_vma_offset - Obtain the va offset of the vma
+ * @vma: The vma
+ *
+ * GPU virtual address space may be allocated with padding. This
+ * function returns the effective virtual address offset the gpu
+ * should use to access the bound data.
+ *
+ * Return: The effective virtual address offset.
+ */
+static inline u64 i915_vma_offset(const struct i915_vma *vma)
+{
+	GEM_BUG_ON(!drm_mm_node_allocated(&vma->node));
+	return __i915_vma_offset(vma);
+}
+
 static inline u32 i915_ggtt_offset(const struct i915_vma *vma)
 {
 	GEM_BUG_ON(!i915_vma_is_ggtt(vma));
 	GEM_BUG_ON(!drm_mm_node_allocated(&vma->node));
-	GEM_BUG_ON(upper_32_bits(vma->node.start));
-	GEM_BUG_ON(upper_32_bits(vma->node.start + vma->node.size - 1));
-	return lower_32_bits(vma->node.start);
+	GEM_BUG_ON(upper_32_bits(i915_vma_offset(vma)));
+	GEM_BUG_ON(upper_32_bits(i915_vma_offset(vma) +
+				 i915_vma_size(vma) - 1));
+	return lower_32_bits(i915_vma_offset(vma));
 }
 
 static inline u32 i915_ggtt_pin_bias(struct i915_vma *vma)
@@ -425,5 +478,8 @@ static inline int i915_vma_sync(struct i915_vma *vma)
 	/* Wait for the asynchronous bindings and pending GPU reads */
 	return i915_active_wait(&vma->active);
 }
+
+void i915_vma_module_exit(void);
+int i915_vma_module_init(void);
 
 #endif

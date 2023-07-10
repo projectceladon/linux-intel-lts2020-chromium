@@ -86,16 +86,6 @@
 static DEFINE_IDR(loop_index_idr);
 static DEFINE_MUTEX(loop_ctl_mutex);
 
-static const char kBlockOpenOnAutoclearPrefix[] = "__block_open_on_autoclear__";
-
-static bool should_block_open_on_autoclear(struct file *file)
-{
-	const size_t prefix_len = strlen(kBlockOpenOnAutoclearPrefix);
-	const char *fname = file->f_path.dentry->d_name.name;
-
-	return !strncmp(fname, kBlockOpenOnAutoclearPrefix, prefix_len);
-}
-
 static int max_part;
 static int part_shift;
 
@@ -738,8 +728,6 @@ static int loop_change_fd(struct loop_device *lo, struct block_device *bdev,
 	blk_mq_freeze_queue(lo->lo_queue);
 	mapping_set_gfp_mask(old_file->f_mapping, lo->old_gfp_mask);
 	lo->lo_backing_file = file;
-	if (should_block_open_on_autoclear(file))
-		lo->block_open_on_autoclear = true;
 	lo->old_gfp_mask = mapping_gfp_mask(file->f_mapping);
 	mapping_set_gfp_mask(file->f_mapping,
 			     lo->old_gfp_mask & ~(__GFP_IO|__GFP_FS));
@@ -1041,8 +1029,13 @@ loop_set_status_from_info(struct loop_device *lo,
 	if (err)
 		return err;
 
+	/* Avoid assigning overflow values */
+	if (info->lo_offset > LLONG_MAX || info->lo_sizelimit > LLONG_MAX)
+		return -EOVERFLOW;
+
 	lo->lo_offset = info->lo_offset;
 	lo->lo_sizelimit = info->lo_sizelimit;
+
 	memcpy(lo->lo_file_name, info->lo_file_name, LO_NAME_SIZE);
 	memcpy(lo->lo_crypt_name, info->lo_crypt_name, LO_NAME_SIZE);
 	lo->lo_file_name[LO_NAME_SIZE-1] = 0;
@@ -1142,8 +1135,6 @@ static int loop_configure(struct loop_device *lo, fmode_t mode,
 	lo->use_dio = lo->lo_flags & LO_FLAGS_DIRECT_IO;
 	lo->lo_device = bdev;
 	lo->lo_backing_file = file;
-	if (should_block_open_on_autoclear(file))
-		lo->block_open_on_autoclear = true;
 	lo->old_gfp_mask = mapping_gfp_mask(mapping);
 	mapping_set_gfp_mask(mapping, lo->old_gfp_mask & ~(__GFP_IO|__GFP_FS));
 
@@ -1233,7 +1224,6 @@ static int __loop_clr_fd(struct loop_device *lo, bool release)
 
 	spin_lock_irq(&lo->lo_lock);
 	lo->lo_backing_file = NULL;
-	lo->block_open_on_autoclear = false;
 	spin_unlock_irq(&lo->lo_lock);
 
 	loop_release_xfer(lo);
@@ -1903,11 +1893,6 @@ static int lo_open(struct block_device *bdev, fmode_t mode)
 	lo = bdev->bd_disk->private_data;
 	if (!lo) {
 		err = -ENXIO;
-		goto out;
-	}
-
-	if (lo->lo_flags & LO_FLAGS_AUTOCLEAR && lo->block_open_on_autoclear) {
-		err = -EBUSY;
 		goto out;
 	}
 

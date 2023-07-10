@@ -7,7 +7,7 @@
  *  Amir Hanania <amir.hanania@intel.com>
  *  Haijun Liu <haijun.liu@mediatek.com>
  *  Moises Veleta <moises.veleta@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  *
  * Contributors:
  *  Chiranjeevi Rapolu <chiranjeevi.rapolu@intel.com>
@@ -24,14 +24,13 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 
-#include "t7xx_common.h"
 #include "t7xx_dpmaif.h"
 #include "t7xx_hif_dpmaif.h"
 #include "t7xx_hif_dpmaif_rx.h"
 #include "t7xx_hif_dpmaif_tx.h"
-#include "t7xx_netdev.h"
 #include "t7xx_pci.h"
 #include "t7xx_pcie_mac.h"
+#include "t7xx_state_monitor.h"
 
 unsigned int t7xx_ring_buf_get_next_wr_idx(unsigned int buf_len, unsigned int buf_idx)
 {
@@ -153,6 +152,15 @@ static irqreturn_t t7xx_dpmaif_isr_handler(int irq, void *data)
 	}
 
 	t7xx_pcie_mac_clear_int(dpmaif_ctrl->t7xx_dev, isr_para->pcie_int);
+
+	return IRQ_WAKE_THREAD;
+}
+
+static irqreturn_t t7xx_dpmaif_isr_thread(int irq, void *data)
+{
+	struct dpmaif_isr_para *isr_para = data;
+	struct dpmaif_ctrl *dpmaif_ctrl = isr_para->dpmaif_ctrl;
+
 	t7xx_dpmaif_irq_cb(isr_para);
 	t7xx_pcie_mac_set_int(dpmaif_ctrl->t7xx_dev, isr_para->pcie_int);
 	return IRQ_HANDLED;
@@ -189,7 +197,7 @@ static void t7xx_dpmaif_register_pcie_irq(struct dpmaif_ctrl *dpmaif_ctrl)
 		t7xx_pcie_mac_clear_int(t7xx_dev, int_type);
 
 		t7xx_dev->intr_handler[int_type] = t7xx_dpmaif_isr_handler;
-		t7xx_dev->intr_thread[int_type] = NULL;
+		t7xx_dev->intr_thread[int_type] = t7xx_dpmaif_isr_thread;
 		t7xx_dev->callback_param[int_type] = isr_para;
 
 		t7xx_pcie_mac_clear_int_status(t7xx_dev, int_type);
@@ -483,7 +491,7 @@ static int t7xx_dpmaif_pm_entity_release(struct dpmaif_ctrl *dpmaif_ctrl)
 	return ret;
 }
 
-int t7xx_dpmaif_md_state_callback(struct dpmaif_ctrl *dpmaif_ctrl, unsigned char state)
+int t7xx_dpmaif_md_state_callback(struct dpmaif_ctrl *dpmaif_ctrl, enum md_state state)
 {
 	int ret = 0;
 
@@ -544,8 +552,7 @@ struct dpmaif_ctrl *t7xx_dpmaif_hif_init(struct t7xx_pci_dev *t7xx_dev,
 	dpmaif_ctrl->dpmaif_sw_init_done = false;
 	dpmaif_ctrl->hw_info.dev = dev;
 	dpmaif_ctrl->hw_info.pcie_base = t7xx_dev->base_addr.pcie_ext_reg_base -
-					     t7xx_dev->base_addr.pcie_dev_reg_trsl_addr;
-	dpmaif_ctrl->napi_enable = !!(t7xx_dev->ccmni_ctlb->capability & NIC_CAP_NAPI);
+					 t7xx_dev->base_addr.pcie_dev_reg_trsl_addr;
 
 	ret = t7xx_dpmaif_pm_entity_init(dpmaif_ctrl);
 	if (ret)

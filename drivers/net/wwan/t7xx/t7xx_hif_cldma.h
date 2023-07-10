@@ -6,7 +6,7 @@
  * Authors:
  *  Haijun Liu <haijun.liu@mediatek.com>
  *  Moises Veleta <moises.veleta@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  *  Sreehari Kancharla <sreehari.kancharla@intel.com>
  *
  * Contributors:
@@ -29,13 +29,16 @@
 #include <linux/types.h>
 
 #include "t7xx_cldma.h"
-#include "t7xx_common.h"
 #include "t7xx_pci.h"
+
+#define CLDMA_JUMBO_BUFF_SZ		(63 * 1024 + sizeof(struct ccci_header))
+#define CLDMA_SHARED_Q_BUFF_SZ		3584
+#define CLDMA_DEDICATED_Q_BUFF_SZ	2048
 
 /**
  * enum cldma_id - Identifiers for CLDMA HW units.
  * @CLDMA_ID_MD: Modem control channel.
- * @CLDMA_ID_AP: Application Processor control channel (not used at the moment).
+ * @CLDMA_ID_AP: Application Processor control channel.
  * @CLDMA_NUM:   Number of CLDMA HW units available.
  */
 enum cldma_id {
@@ -44,20 +47,30 @@ enum cldma_id {
 	CLDMA_NUM
 };
 
+struct cldma_gpd {
+	u8 flags;
+	u8 not_used1;
+	__le16 rx_data_allow_len;
+	__le32 next_gpd_ptr_h;
+	__le32 next_gpd_ptr_l;
+	__le32 data_buff_bd_ptr_h;
+	__le32 data_buff_bd_ptr_l;
+	__le16 data_buff_len;
+	__le16 not_used2;
+};
+
 enum cldma_queue_type {
 	CLDMA_SHARED_Q,
 	CLDMA_DEDICATED_Q,
 };
 
-enum hif_cfg_type {
-	HIF_CFG_DEF = 0,
-	HIF_CFG1,
-	HIF_CFG2,
-	HIF_CFG_MAX,
+enum cldma_cfg {
+	CLDMA_SHARED_Q_CFG,
+	CLDMA_DEDICATED_Q_CFG,
 };
 
 struct cldma_request {
-	void *gpd;		/* Virtual address for CPU */
+	struct cldma_gpd *gpd;	/* Virtual address for CPU */
 	dma_addr_t gpd_addr;	/* Physical address for DMA */
 	struct sk_buff *skb;
 	dma_addr_t mapped_buff;
@@ -72,9 +85,8 @@ struct cldma_ring {
 
 struct cldma_queue {
 	struct cldma_ctrl *md_ctrl;
-	enum cldma_id hif_id;
 	enum mtk_txrx dir;
-	unsigned char index;
+	unsigned int index;
 	struct cldma_ring *tr_ring;
 	struct cldma_request *tr_done;
 	struct cldma_request *rx_refill;
@@ -105,49 +117,22 @@ struct cldma_ctrl {
 	struct t7xx_cldma_hw hw_info;
 	bool is_late_init;
 	int (*recv_skb)(struct cldma_queue *queue, struct sk_buff *skb);
-	enum cldma_queue_type rxq_type[CLDMA_RXQ_NUM];
-	enum cldma_queue_type txq_type[CLDMA_TXQ_NUM];
-	int rxq_buff_size[CLDMA_RXQ_NUM];
-	int txq_buff_size[CLDMA_TXQ_NUM];
+};
+
+enum cldma_txq_rxq_port_id {
+	DOWNLOAD_PORT_ID = 0,
+	DUMP_PORT_ID = 1
 };
 
 #define GPD_FLAGS_HWO		BIT(0)
 #define GPD_FLAGS_IOC		BIT(7)
 #define GPD_DMAPOOL_ALIGN	16
 
-#define CLDMA_MTU		3584	/* 3.5kB */
-
-struct cldma_tgpd {
-	u8 gpd_flags;
-	u8 not_used1;
-	u8 not_used2;
-	u8 debug_id;
-	__le32 next_gpd_ptr_h;
-	__le32 next_gpd_ptr_l;
-	__le32 data_buff_bd_ptr_h;
-	__le32 data_buff_bd_ptr_l;
-	__le16 data_buff_len;
-	__le16 not_used3;
-};
-
-struct cldma_rgpd {
-	u8 gpd_flags;
-	u8 not_used1;
-	__le16 data_allow_len;
-	__le32 next_gpd_ptr_h;
-	__le32 next_gpd_ptr_l;
-	__le32 data_buff_bd_ptr_h;
-	__le32 data_buff_bd_ptr_l;
-	__le16 data_buff_len;
-	u8 not_used2;
-	u8 debug_id;
-};
-
 int t7xx_cldma_alloc(enum cldma_id hif_id, struct t7xx_pci_dev *t7xx_dev);
 void t7xx_cldma_hif_hw_init(struct cldma_ctrl *md_ctrl);
 int t7xx_cldma_init(struct cldma_ctrl *md_ctrl);
 void t7xx_cldma_exit(struct cldma_ctrl *md_ctrl);
-void t7xx_cldma_switch_cfg(struct cldma_ctrl *md_ctrl, unsigned int cfg_id);
+void t7xx_cldma_switch_cfg(struct cldma_ctrl *md_ctrl, enum cldma_cfg cfg_id);
 void t7xx_cldma_start(struct cldma_ctrl *md_ctrl);
 int t7xx_cldma_stop(struct cldma_ctrl *md_ctrl);
 void t7xx_cldma_reset(struct cldma_ctrl *md_ctrl);
@@ -156,8 +141,5 @@ void t7xx_cldma_set_recv_skb(struct cldma_ctrl *md_ctrl,
 int t7xx_cldma_send_skb(struct cldma_ctrl *md_ctrl, int qno, struct sk_buff *skb);
 void t7xx_cldma_stop_all_qs(struct cldma_ctrl *md_ctrl, enum mtk_txrx tx_rx);
 void t7xx_cldma_clear_all_qs(struct cldma_ctrl *md_ctrl, enum mtk_txrx tx_rx);
-int cldma_txq_mtu(struct cldma_ctrl *md_ctrl, unsigned char qno);
-int t7xx_cldma_write_room(struct cldma_ctrl *md_ctrl, unsigned char qno);
-extern bool da_down_stage_flag;
 
 #endif /* __T7XX_HIF_CLDMA_H__ */

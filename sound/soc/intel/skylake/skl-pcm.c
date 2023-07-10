@@ -564,11 +564,8 @@ static int skl_link_hw_params(struct snd_pcm_substream *substream,
 
 	stream_tag = hdac_stream(link_dev)->stream_tag;
 
-	/* set the stream tag in the codec dai dma params  */
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		snd_soc_dai_set_tdm_slot(codec_dai, stream_tag, 0, 0, 0);
-	else
-		snd_soc_dai_set_tdm_slot(codec_dai, 0, stream_tag, 0, 0);
+	/* set the hdac_stream in the codec dai */
+	snd_soc_dai_set_stream(codec_dai, hdac_stream(link_dev), substream->stream);
 
 	p_params.s_fmt = snd_pcm_format_width(params_format(params));
 	p_params.s_cont = snd_pcm_format_physical_width(params_format(params));
@@ -1217,13 +1214,6 @@ static snd_pcm_uframes_t skl_platform_soc_pointer(
 	return bytes_to_frames(substream->runtime, pos);
 }
 
-static int skl_platform_soc_mmap(struct snd_soc_component *component,
-				 struct snd_pcm_substream *substream,
-				 struct vm_area_struct *area)
-{
-	return snd_pcm_lib_default_mmap(substream, area);
-}
-
 static u64 skl_adjust_codec_delay(struct snd_pcm_substream *substream,
 				u64 nsec)
 {
@@ -1456,7 +1446,6 @@ static const struct snd_soc_component_driver skl_component  = {
 	.trigger	= skl_platform_soc_trigger,
 	.pointer	= skl_platform_soc_pointer,
 	.get_time_info	= skl_platform_soc_get_time_info,
-	.mmap		= skl_platform_soc_mmap,
 	.pcm_construct	= skl_platform_soc_new,
 	.module_get_upon_open = 1, /* increment refcount when a pcm is opened */
 };

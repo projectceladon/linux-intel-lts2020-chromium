@@ -1,6 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only
  *
- * Copyright (c) 2022, MediaTek Inc.
  * Copyright (c) 2022, Intel Corporation.
  */
 
@@ -16,7 +15,6 @@
 #define T7XX_FB_RESPONSE_SIZE 64
 #define T7XX_FB_MCMD_SIZE     64
 #define T7XX_FB_MDATA_SIZE    1024
-
 #define T7XX_FB_RESP_COUNT    30
 
 #define T7XX_FB_CMD_RTS          "_RTS"
@@ -26,31 +24,32 @@
 #define T7XX_FB_CMD_OEM_LKDUMP   "oem dump_pllk_log"
 #define T7XX_FB_CMD_DOWNLOAD     "download"
 #define T7XX_FB_CMD_FLASH        "flash"
+#define T7XX_FB_CMD_REBOOT       "reboot"
 #define T7XX_FB_RESP_MRDUMP_DONE "MRDUMP08_DONE"
 #define T7XX_FB_RESP_OKAY        "OKAY"
 #define T7XX_FB_RESP_FAIL        "FAIL"
 #define T7XX_FB_RESP_DATA        "DATA"
 #define T7XX_FB_RESP_INFO        "INFO"
 
-#define T7XX_FB_CMD_SIZE        25
 #define T7XX_FB_EVENT_SIZE      50
 
-#define T7XX_MAX_SNAPSHOTS 1
+#define T7XX_MAX_SNAPSHOTS  1
 #define T7XX_MAX_REGION_NAME_LENGTH 20
-#define T7XX_MRDUMP_SIZE (160 * 1024 * 1024)
-#define T7XX_LKDUMP_SIZE (256 * 1024)
-#define T7XX_TOTAL_REGIONS 2
+#define T7XX_MRDUMP_SIZE    (160 * 1024 * 1024)
+#define T7XX_LKDUMP_SIZE    (256 * 1024)
+#define T7XX_TOTAL_REGIONS  2
 
 #define T7XX_FLASH_STATUS   0
 #define T7XX_MRDUMP_STATUS  1
 #define T7XX_LKDUMP_STATUS  2
+#define T7XX_DEVLINK_IDLE   0
 
-#define T7XX_FB_NO_MODE    0x0
-#define T7XX_FB_DL_MODE    0x1
-#define T7XX_FB_DUMP_MODE  0x2
+#define T7XX_FB_NO_MODE     0
+#define T7XX_FB_DL_MODE     1
+#define T7XX_FB_DUMP_MODE   2
 
-#define T7XX_MRDUMP_INDEX 0
-#define T7XX_LKDUMP_INDEX 1
+#define T7XX_MRDUMP_INDEX   0
+#define T7XX_LKDUMP_INDEX   1
 
 struct t7xx_devlink_work {
 	struct work_struct work;
@@ -77,8 +76,10 @@ struct t7xx_devlink {
 	struct devlink_region *dl_region[T7XX_TOTAL_REGIONS];
 	u8 mode;
 	unsigned long status;
+	int set_fastboot_dl;
 };
 
-void t7xx_devlink_flash_debugfs_create(void);
-void t7xx_devlink_flash_debugfs_remove(void);
+int t7xx_devlink_register(struct t7xx_pci_dev *t7xx_dev);
+void t7xx_devlink_unregister(struct t7xx_pci_dev *t7xx_dev);
+
 #endif /*__T7XX_PORT_DEVLINK_H__*/

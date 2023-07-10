@@ -1,11 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright(c) 2020 Intel Corporation.
- */
-
-/*
  * This file defines data structures used in Machine Driver for Intel
  * platforms with Cirrus Logic Codecs.
+ *
+ * Copyright 2022 Intel Corporation.
  */
 #ifndef __SOF_CIRRUS_COMMON_H
 #define __SOF_CIRRUS_COMMON_H

@@ -4,9 +4,9 @@
 #include <linux/acpi.h>
 #include <sound/intel-nhlt.h>
 
-struct acpi_table_nhlt *intel_nhlt_init(struct device *dev)
+struct nhlt_acpi_table *intel_nhlt_init(struct device *dev)
 {
-	struct acpi_table_nhlt *nhlt;
+	struct nhlt_acpi_table *nhlt;
 	acpi_status status;
 
 	status = acpi_get_table(ACPI_SIG_NHLT, 0,
@@ -20,13 +20,13 @@ struct acpi_table_nhlt *intel_nhlt_init(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(intel_nhlt_init);
 
-void intel_nhlt_free(struct acpi_table_nhlt *nhlt)
+void intel_nhlt_free(struct nhlt_acpi_table *nhlt)
 {
 	acpi_put_table((struct acpi_table_header *)nhlt);
 }
 EXPORT_SYMBOL_GPL(intel_nhlt_free);
 
-int intel_nhlt_get_dmic_geo(struct device *dev, struct acpi_table_nhlt *nhlt)
+int intel_nhlt_get_dmic_geo(struct device *dev, struct nhlt_acpi_table *nhlt)
 {
 	struct nhlt_endpoint *epnt;
 	struct nhlt_dmic_array_config *cfg;
@@ -55,20 +55,26 @@ int intel_nhlt_get_dmic_geo(struct device *dev, struct acpi_table_nhlt *nhlt)
 
 		/* find max number of channels based on format_configuration */
 		if (fmt_configs->fmt_count) {
-			dev_dbg(dev, "%s: found %d format definitions\n",
-				__func__, fmt_configs->fmt_count);
+			struct nhlt_fmt_cfg *fmt_cfg = fmt_configs->fmt_config;
+
+			dev_dbg(dev, "found %d format definitions\n",
+				fmt_configs->fmt_count);
 
 			for (i = 0; i < fmt_configs->fmt_count; i++) {
 				struct wav_fmt_ext *fmt_ext;
 
-				fmt_ext = &fmt_configs->fmt_config[i].fmt_ext;
+				fmt_ext = &fmt_cfg->fmt_ext;
 
 				if (fmt_ext->fmt.channels > max_ch)
 					max_ch = fmt_ext->fmt.channels;
+
+				/* Move to the next nhlt_fmt_cfg */
+				fmt_cfg = (struct nhlt_fmt_cfg *)(fmt_cfg->config.caps +
+								  fmt_cfg->config.size);
 			}
-			dev_dbg(dev, "%s: max channels found %d\n", __func__, max_ch);
+			dev_dbg(dev, "max channels found %d\n", max_ch);
 		} else {
-			dev_dbg(dev, "%s: No format information found\n", __func__);
+			dev_dbg(dev, "No format information found\n");
 		}
 
 		if (cfg->device_config.config_type != NHLT_CONFIG_TYPE_MIC_ARRAY) {
@@ -95,23 +101,22 @@ int intel_nhlt_get_dmic_geo(struct device *dev, struct acpi_table_nhlt *nhlt)
 			}
 
 			if (dmic_geo > 0) {
-				dev_dbg(dev, "%s: Array with %d dmics\n", __func__, dmic_geo);
+				dev_dbg(dev, "Array with %d dmics\n", dmic_geo);
 			}
 			if (max_ch > dmic_geo) {
-				dev_dbg(dev, "%s: max channels %d exceed dmic number %d\n",
-					__func__, max_ch, dmic_geo);
+				dev_dbg(dev, "max channels %d exceed dmic number %d\n",
+					max_ch, dmic_geo);
 			}
 		}
 	}
 
-	dev_dbg(dev, "%s: dmic number %d max_ch %d\n",
-		__func__, dmic_geo, max_ch);
+	dev_dbg(dev, "dmic number %d max_ch %d\n", dmic_geo, max_ch);
 
 	return dmic_geo;
 }
 EXPORT_SYMBOL_GPL(intel_nhlt_get_dmic_geo);
 
-bool intel_nhlt_has_endpoint_type(struct acpi_table_nhlt *nhlt, u8 link_type)
+bool intel_nhlt_has_endpoint_type(struct nhlt_acpi_table *nhlt, u8 link_type)
 {
 	struct nhlt_endpoint *epnt;
 	int i;
@@ -177,7 +182,7 @@ static bool nhlt_check_ep_match(struct device *dev, struct nhlt_endpoint *epnt,
 }
 
 struct nhlt_specific_cfg *
-intel_nhlt_get_endpoint_blob(struct device *dev, struct acpi_table_nhlt *nhlt,
+intel_nhlt_get_endpoint_blob(struct device *dev, struct nhlt_acpi_table *nhlt,
 			     u32 bus_id, u8 link_type, u8 vbps, u8 bps,
 			     u8 num_ch, u32 rate, u8 dir, u8 dev_type)
 {

@@ -91,12 +91,12 @@ static int uvc_ioctl_ctrl_map(struct uvc_video_chain *chain,
 	map->id = xmap->id;
 	/* Non standard control id. */
 	if (v4l2_ctrl_get_name(map->id) == NULL) {
-		map->name = kmemdup(xmap->name, sizeof(xmap->name),
-				    GFP_KERNEL);
-		if (!map->name) {
-			ret = -ENOMEM;
+		if (xmap->name[0] == '\0') {
+			ret = -EINVAL;
 			goto free_map;
 		}
+		xmap->name[sizeof(xmap->name) - 1] = '\0';
+		map->name = xmap->name;
 	}
 	memcpy(map->entity, xmap->entity, sizeof(map->entity));
 	map->selector = xmap->selector;
@@ -294,14 +294,11 @@ static int uvc_v4l2_try_format(struct uvc_streaming *stream,
 	 * developers test their webcams with the Linux driver as well as with
 	 * the Windows driver).
 	 */
-	mutex_lock(&stream->mutex);
 
 	ret = uvc_pm_get(stream);
-	if (ret) {
-		mutex_unlock(&stream->mutex);
-		ret = -ENODEV;
-		goto done;
-	}
+	if (ret)
+		return -ENODEV;
+	mutex_lock(&stream->mutex);
 
 	if (stream->dev->quirks & UVC_QUIRK_PROBE_EXTRAFIELDS)
 		probe->dwMaxVideoFrameSize =
@@ -497,15 +494,15 @@ static int uvc_v4l2_set_streamparm(struct uvc_streaming *stream,
 	uvc_dbg(stream->dev, FORMAT, "Setting frame interval to %u/%u (%u)\n",
 		timeperframe.numerator, timeperframe.denominator, interval);
 
-	mutex_lock(&stream->mutex);
-
-	if (!video_is_registered(&stream->vdev)) {
-		mutex_unlock(&stream->mutex);
+	ret = uvc_pm_get(stream);
+	if (ret)
 		return -ENODEV;
-	}
+
+	mutex_lock(&stream->mutex);
 
 	if (uvc_queue_streaming(&stream->queue)) {
 		mutex_unlock(&stream->mutex);
+		uvc_pm_put(stream);
 		return -EBUSY;
 	}
 
@@ -538,21 +535,17 @@ static int uvc_v4l2_set_streamparm(struct uvc_streaming *stream,
 	}
 
 	/* Probe the device with the new settings. */
-	ret = uvc_pm_get(stream);
-	if (ret) {
-		mutex_unlock(&stream->mutex);
-		return ret;
-	}
 	ret = uvc_probe_video(stream, &probe);
-	uvc_pm_put(stream);
 	if (ret < 0) {
 		mutex_unlock(&stream->mutex);
+		uvc_pm_put(stream);
 		return ret;
 	}
 
 	stream->ctrl = probe;
 	stream->cur_frame = frame;
 	mutex_unlock(&stream->mutex);
+	uvc_pm_put(stream);
 
 	/* Return the actual frame period. */
 	timeperframe.numerator = probe.dwFrameInterval;
@@ -911,28 +904,38 @@ static int uvc_ioctl_streamon(struct file *file, void *fh,
 {
 	struct uvc_fh *handle = fh;
 	struct uvc_streaming *stream = handle->stream;
+	bool do_pm_put = false;
 	int ret;
 
 	if (!uvc_has_privileges(handle))
 		return -EBUSY;
 
-	mutex_lock(&stream->mutex);
+	/*
+	 * Cannot hold stream->mutex when entering uvc_pm_*
+	 */
+	ret = uvc_pm_get(stream);
+	if (ret)
+		return ret;
 
-	if (!handle->is_streaming) {
-		ret = uvc_pm_get(stream);
-		if (ret)
-			goto unlock;
+	mutex_lock(&stream->mutex);
+	if (handle->is_streaming) {
+		/*
+		 * Device was already on, return
+		 */
+		do_pm_put = true;
+		goto unlock;
 	}
 
 	ret = uvc_queue_streamon(&stream->queue, type);
-
-	if (ret && !handle->is_streaming)
-		uvc_pm_put(stream);
-
-	if (!ret)
+	if (ret)
+		do_pm_put = true;
+	else
 		handle->is_streaming = true;
 unlock:
 	mutex_unlock(&stream->mutex);
+
+	if (do_pm_put)
+		uvc_pm_put(stream);
 
 	return ret;
 }
@@ -942,6 +945,7 @@ static int uvc_ioctl_streamoff(struct file *file, void *fh,
 {
 	struct uvc_fh *handle = fh;
 	struct uvc_streaming *stream = handle->stream;
+	bool do_pm_put = false;
 	int ret = 0;
 
 	if (!uvc_has_privileges(handle))
@@ -955,10 +959,16 @@ static int uvc_ioctl_streamoff(struct file *file, void *fh,
 	uvc_queue_streamoff(&stream->queue, type);
 	if (handle->is_streaming) {
 		handle->is_streaming = false;
-		uvc_pm_put(stream);
+		do_pm_put = true;
 	}
 unlock:
 	mutex_unlock(&stream->mutex);
+
+	/*
+	 * Cannot hold stream->mutex when entering uvc_pm_*
+	 */
+	if (do_pm_put)
+		uvc_pm_put(stream);
 
 	return ret;
 }
@@ -970,29 +980,31 @@ static int uvc_ioctl_enum_input(struct file *file, void *fh,
 	struct uvc_video_chain *chain = handle->chain;
 	const struct uvc_entity *selector = chain->selector;
 	struct uvc_entity *iterm = NULL;
+	struct uvc_entity *it;
 	u32 index = input->index;
-	int pin = 0;
 
 	if (selector == NULL ||
 	    (chain->dev->quirks & UVC_QUIRK_IGNORE_SELECTOR_UNIT)) {
 		if (index != 0)
 			return -EINVAL;
-		list_for_each_entry(iterm, &chain->entities, chain) {
-			if (UVC_ENTITY_IS_ITERM(iterm))
+		list_for_each_entry(it, &chain->entities, chain) {
+			if (UVC_ENTITY_IS_ITERM(it)) {
+				iterm = it;
 				break;
+			}
 		}
-		pin = iterm->id;
 	} else if (index < selector->bNrInPins) {
-		pin = selector->baSourceID[index];
-		list_for_each_entry(iterm, &chain->entities, chain) {
-			if (!UVC_ENTITY_IS_ITERM(iterm))
+		list_for_each_entry(it, &chain->entities, chain) {
+			if (!UVC_ENTITY_IS_ITERM(it))
 				continue;
-			if (iterm->id == pin)
+			if (it->id == selector->baSourceID[index]) {
+				iterm = it;
 				break;
+			}
 		}
 	}
 
-	if (iterm == NULL || iterm->id != pin)
+	if (iterm == NULL)
 		return -EINVAL;
 
 	memset(input, 0, sizeof(*input));
@@ -1354,8 +1366,8 @@ static int uvc_ioctl_g_roi_target(struct file *file, void *fh,
 	sel->r.width	= roi->wROI_Right - roi->wROI_Left + 1;
 
 out:
-	uvc_pm_put(stream);
 	mutex_unlock(&chain->ctrl_mutex);
+	uvc_pm_put(stream);
 	return ret;
 }
 
@@ -1443,6 +1455,7 @@ static int uvc_ioctl_s_roi(struct file *file, void *fh,
 	struct uvc_fh *handle = fh;
 	struct uvc_streaming *stream = handle->stream;
 	struct uvc_video_chain *chain = handle->chain;
+	struct uvc_roi roi_backup;
 	struct uvc_roi *roi;
 	int ret;
 
@@ -1464,22 +1477,9 @@ static int uvc_ioctl_s_roi(struct file *file, void *fh,
 
 	mutex_lock(&stream->mutex);
 
-	/*
-	 * Get current ROI configuration from the firmware. First, we need
-	 * ->auto_controls, which is handled by UVC control code.
-	 *
-	 * Second, the rectangle value, which is passed via v4l2 selection
-	 * API, must also be stored in UVC control data, so that when use
-	 * changes auto_controls, it will use most recent ROI rectangle
-	 * value and new auto_controls value.
-	 */
-	ret = uvc_query_ctrl(stream->dev, UVC_GET_CUR, 1, stream->dev->intfnum,
-			     UVC_CT_REGION_OF_INTEREST_CONTROL, roi,
-			     sizeof(struct uvc_roi));
-	if (ret)
-		goto out;
-
 	validate_roi_bounds(stream, sel);
+
+	roi_backup = *roi;
 
 	/*
 	 * ROI left, top, right, bottom are global coordinates.
@@ -1493,13 +1493,15 @@ static int uvc_ioctl_s_roi(struct file *file, void *fh,
 	ret = uvc_query_ctrl(stream->dev, UVC_SET_CUR, 1, stream->dev->intfnum,
 			     UVC_CT_REGION_OF_INTEREST_CONTROL, roi,
 			     sizeof(struct uvc_roi));
-	if (ret)
+	if (ret) {
+		*roi = roi_backup;
 		goto out;
+	}
 
 out:
-	uvc_pm_put(stream);
 	mutex_unlock(&stream->mutex);
 	mutex_unlock(&chain->ctrl_mutex);
+	uvc_pm_put(stream);
 	return ret;
 }
 
@@ -1903,4 +1905,3 @@ const struct v4l2_file_operations uvc_fops = {
 	.get_unmapped_area = uvc_v4l2_get_unmapped_area,
 #endif
 };
-

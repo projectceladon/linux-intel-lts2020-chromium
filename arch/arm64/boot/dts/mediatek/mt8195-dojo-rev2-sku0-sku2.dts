@@ -9,6 +9,7 @@
 / {
 	model = "MediaTek Dojo board";
 	compatible = "google,dojo-rev2-sku0", "google,dojo-rev2-sku2",
+	             "google,dojo-sku0", "google,dojo-sku2",
 	             "google,dojo", "mediatek,mt8195";
 };
 
@@ -43,6 +44,6 @@
 		MATRIX_KEY(0x00, 0x04, KEY_MUTE)
 		MATRIX_KEY(0x00, 0x01, KEY_VOLUMEDOWN)
 		MATRIX_KEY(0x01, 0x05, KEY_VOLUMEUP)
-		MATRIX_KEY(0x03, 0x05, KEY_MENU)
+		MATRIX_KEY(0x03, 0x05, KEY_CONTROLPANEL)
 	>;
 };

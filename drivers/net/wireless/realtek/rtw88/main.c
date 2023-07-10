@@ -277,7 +277,8 @@ static void rtw_ips_work(struct work_struct *work)
 	struct rtw_dev *rtwdev = container_of(work, struct rtw_dev, ips_work);
 
 	mutex_lock(&rtwdev->mutex);
-	rtw_enter_ips(rtwdev);
+	if (rtwdev->hw->conf.flags & IEEE80211_CONF_IDLE)
+		rtw_enter_ips(rtwdev);
 	mutex_unlock(&rtwdev->mutex);
 }
 
@@ -660,67 +661,111 @@ void rtw_set_rx_freq_band(struct rtw_rx_pkt_stat *pkt_stat, u8 channel)
 }
 EXPORT_SYMBOL(rtw_set_rx_freq_band);
 
+void rtw_set_dtim_period(struct rtw_dev *rtwdev, int dtim_period)
+{
+	rtw_write32_set(rtwdev, REG_TCR, BIT_TCR_UPDATE_TIMIE);
+	rtw_write8(rtwdev, REG_DTIM_COUNTER_ROOT, dtim_period - 1);
+}
+
+void rtw_update_channel(struct rtw_dev *rtwdev, u8 center_channel,
+			u8 primary_channel, enum rtw_supported_band band,
+			enum rtw_bandwidth bandwidth)
+{
+	enum nl80211_band nl_band = rtw_hw_to_nl80211_band(band);
+	struct rtw_hal *hal = &rtwdev->hal;
+	u8 *cch_by_bw = hal->cch_by_bw;
+	u32 center_freq, primary_freq;
+	u8 primary_channel_idx;
+
+	center_freq = ieee80211_channel_to_frequency(center_channel, nl_band);
+	primary_freq = ieee80211_channel_to_frequency(primary_channel, nl_band);
+
+	/* assign the center channel used while 20M bw is selected */
+	cch_by_bw[RTW_CHANNEL_WIDTH_20] = primary_channel;
+
+	/* assign the center channel used while current bw is selected */
+	cch_by_bw[bandwidth] = center_channel;
+
+	switch (bandwidth) {
+	case RTW_CHANNEL_WIDTH_20:
+	default:
+		primary_channel_idx = RTW_SC_DONT_CARE;
+		break;
+	case RTW_CHANNEL_WIDTH_40:
+		if (primary_freq > center_freq)
+			primary_channel_idx = RTW_SC_20_UPPER;
+		else
+			primary_channel_idx = RTW_SC_20_LOWER;
+		break;
+	case RTW_CHANNEL_WIDTH_80:
+		if (primary_freq > center_freq) {
+			if (primary_freq - center_freq == 10)
+				primary_channel_idx = RTW_SC_20_UPPER;
+			else
+				primary_channel_idx = RTW_SC_20_UPMOST;
+
+			/* assign the center channel used
+			 * while 40M bw is selected
+			 */
+			cch_by_bw[RTW_CHANNEL_WIDTH_40] = center_channel + 4;
+		} else {
+			if (center_freq - primary_freq == 10)
+				primary_channel_idx = RTW_SC_20_LOWER;
+			else
+				primary_channel_idx = RTW_SC_20_LOWEST;
+
+			/* assign the center channel used
+			 * while 40M bw is selected
+			 */
+			cch_by_bw[RTW_CHANNEL_WIDTH_40] = center_channel - 4;
+		}
+		break;
+	}
+
+	hal->current_primary_channel_index = primary_channel_idx;
+	hal->current_band_width = bandwidth;
+	hal->primary_channel = primary_channel;
+	hal->current_channel = center_channel;
+	hal->current_band_type = band;
+}
+
 void rtw_get_channel_params(struct cfg80211_chan_def *chandef,
 			    struct rtw_channel_params *chan_params)
 {
 	struct ieee80211_channel *channel = chandef->chan;
 	enum nl80211_chan_width width = chandef->width;
-	u8 *cch_by_bw = chan_params->cch_by_bw;
 	u32 primary_freq, center_freq;
 	u8 center_chan;
 	u8 bandwidth = RTW_CHANNEL_WIDTH_20;
-	u8 primary_chan_idx = 0;
-	u8 i;
 
 	center_chan = channel->hw_value;
 	primary_freq = channel->center_freq;
 	center_freq = chandef->center_freq1;
 
-	/* assign the center channel used while 20M bw is selected */
-	cch_by_bw[RTW_CHANNEL_WIDTH_20] = channel->hw_value;
-
 	switch (width) {
 	case NL80211_CHAN_WIDTH_20_NOHT:
 	case NL80211_CHAN_WIDTH_20:
 		bandwidth = RTW_CHANNEL_WIDTH_20;
-		primary_chan_idx = RTW_SC_DONT_CARE;
 		break;
 	case NL80211_CHAN_WIDTH_40:
 		bandwidth = RTW_CHANNEL_WIDTH_40;
-		if (primary_freq > center_freq) {
-			primary_chan_idx = RTW_SC_20_UPPER;
+		if (primary_freq > center_freq)
 			center_chan -= 2;
-		} else {
-			primary_chan_idx = RTW_SC_20_LOWER;
+		else
 			center_chan += 2;
-		}
 		break;
 	case NL80211_CHAN_WIDTH_80:
 		bandwidth = RTW_CHANNEL_WIDTH_80;
 		if (primary_freq > center_freq) {
-			if (primary_freq - center_freq == 10) {
-				primary_chan_idx = RTW_SC_20_UPPER;
+			if (primary_freq - center_freq == 10)
 				center_chan -= 2;
-			} else {
-				primary_chan_idx = RTW_SC_20_UPMOST;
+			else
 				center_chan -= 6;
-			}
-			/* assign the center channel used
-			 * while 40M bw is selected
-			 */
-			cch_by_bw[RTW_CHANNEL_WIDTH_40] = center_chan + 4;
 		} else {
-			if (center_freq - primary_freq == 10) {
-				primary_chan_idx = RTW_SC_20_LOWER;
+			if (center_freq - primary_freq == 10)
 				center_chan += 2;
-			} else {
-				primary_chan_idx = RTW_SC_20_LOWEST;
+			else
 				center_chan += 6;
-			}
-			/* assign the center channel used
-			 * while 40M bw is selected
-			 */
-			cch_by_bw[RTW_CHANNEL_WIDTH_40] = center_chan - 4;
 		}
 		break;
 	default:
@@ -730,13 +775,7 @@ void rtw_get_channel_params(struct cfg80211_chan_def *chandef,
 
 	chan_params->center_chan = center_chan;
 	chan_params->bandwidth = bandwidth;
-	chan_params->primary_chan_idx = primary_chan_idx;
-
-	/* assign the center channel used while current bw is selected */
-	cch_by_bw[bandwidth] = center_chan;
-
-	for (i = bandwidth + 1; i <= RTW_MAX_CHANNEL_WIDTH; i++)
-		cch_by_bw[i] = 0;
+	chan_params->primary_chan = channel->hw_value;
 }
 
 void rtw_set_channel(struct rtw_dev *rtwdev)
@@ -745,26 +784,21 @@ void rtw_set_channel(struct rtw_dev *rtwdev)
 	struct rtw_hal *hal = &rtwdev->hal;
 	struct rtw_chip_info *chip = rtwdev->chip;
 	struct rtw_channel_params ch_param;
-	u8 center_chan, bandwidth, primary_chan_idx;
-	u8 i;
+	u8 center_chan, primary_chan, bandwidth, band;
 
 	rtw_get_channel_params(&hw->conf.chandef, &ch_param);
 	if (WARN(ch_param.center_chan == 0, "Invalid channel\n"))
 		return;
 
 	center_chan = ch_param.center_chan;
+	primary_chan = ch_param.primary_chan;
 	bandwidth = ch_param.bandwidth;
-	primary_chan_idx = ch_param.primary_chan_idx;
+	band = ch_param.center_chan > 14 ? RTW_BAND_5G : RTW_BAND_2G;
 
-	hal->current_band_width = bandwidth;
-	hal->current_channel = center_chan;
-	hal->current_primary_channel_index = primary_chan_idx;
-	hal->current_band_type = center_chan > 14 ? RTW_BAND_5G : RTW_BAND_2G;
+	rtw_update_channel(rtwdev, center_chan, primary_chan, band, bandwidth);
 
-	for (i = RTW_CHANNEL_WIDTH_20; i <= RTW_MAX_CHANNEL_WIDTH; i++)
-		hal->cch_by_bw[i] = ch_param.cch_by_bw[i];
-
-	chip->ops->set_channel(rtwdev, center_chan, bandwidth, primary_chan_idx);
+	chip->ops->set_channel(rtwdev, center_chan, bandwidth,
+			       hal->current_primary_channel_index);
 
 	if (hal->current_band_type == RTW_BAND_5G) {
 		rtw_coex_switchband_notify(rtwdev, COEX_SWITCH_TO_5G);
@@ -1310,7 +1344,7 @@ void rtw_core_scan_start(struct rtw_dev *rtwdev, struct rtw_vif *rtwvif,
 
 	rtw_leave_lps(rtwdev);
 
-	if (hw_scan && rtwvif->net_type == RTW_NET_NO_LINK) {
+	if (hw_scan && (rtwdev->hw->conf.flags & IEEE80211_CONF_IDLE)) {
 		ret = rtw_leave_ips(rtwdev);
 		if (ret) {
 			rtw_err(rtwdev, "failed to leave idle state\n");
@@ -1332,8 +1366,11 @@ void rtw_core_scan_start(struct rtw_dev *rtwdev, struct rtw_vif *rtwvif,
 void rtw_core_scan_complete(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
 			    bool hw_scan)
 {
-	struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+	struct rtw_vif *rtwvif = vif ? (struct rtw_vif *)vif->drv_priv : NULL;
 	u32 config = 0;
+
+	if (!rtwvif)
+		return;
 
 	clear_bit(RTW_FLAG_SCANNING, rtwdev->flags);
 	clear_bit(RTW_FLAG_DIG_DISABLE, rtwdev->flags);
@@ -1346,7 +1383,7 @@ void rtw_core_scan_complete(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
 
 	rtw_coex_scan_notify(rtwdev, COEX_SCAN_FINISH);
 
-	if (rtwvif->net_type == RTW_NET_NO_LINK && hw_scan)
+	if (hw_scan && (rtwdev->hw->conf.flags & IEEE80211_CONF_IDLE))
 		ieee80211_queue_work(rtwdev->hw, &rtwdev->ips_work);
 }
 
@@ -1391,6 +1428,7 @@ void rtw_core_stop(struct rtw_dev *rtwdev)
 	mutex_unlock(&rtwdev->mutex);
 
 	cancel_work_sync(&rtwdev->c2h_work);
+	cancel_work_sync(&rtwdev->update_beacon_work);
 	cancel_delayed_work_sync(&rtwdev->watch_dog_work);
 	cancel_delayed_work_sync(&coex->bt_relink_work);
 	cancel_delayed_work_sync(&coex->bt_reenable_work);
@@ -1410,6 +1448,7 @@ static void rtw_init_ht_cap(struct rtw_dev *rtwdev,
 			    struct ieee80211_sta_ht_cap *ht_cap)
 {
 	struct rtw_efuse *efuse = &rtwdev->efuse;
+	struct rtw_chip_info *chip = rtwdev->chip;
 
 	ht_cap->ht_supported = true;
 	ht_cap->cap = 0;
@@ -1427,7 +1466,7 @@ static void rtw_init_ht_cap(struct rtw_dev *rtwdev,
 				IEEE80211_HT_CAP_DSSSCCK40 |
 				IEEE80211_HT_CAP_SGI_40;
 	ht_cap->ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
-	ht_cap->ampdu_density = IEEE80211_HT_MPDU_DENSITY_16;
+	ht_cap->ampdu_density = chip->ampdu_density;
 	ht_cap->mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED;
 	if (efuse->hw_cap.nss > 1) {
 		ht_cap->mcs.rx_mask[0] = 0xFF;
@@ -1491,6 +1530,21 @@ static void rtw_init_vht_cap(struct rtw_dev *rtwdev,
 	vht_cap->vht_mcs.tx_highest = highest;
 }
 
+static u16 rtw_get_max_scan_ie_len(struct rtw_dev *rtwdev)
+{
+	u16 len;
+
+	len = rtwdev->chip->max_scan_ie_len;
+
+	if (!rtw_fw_feature_check(&rtwdev->fw, FW_FEATURE_SCAN_OFFLOAD) &&
+	    rtwdev->chip->id == RTW_CHIP_TYPE_8822C)
+		len = IEEE80211_MAX_DATA_LEN;
+	else if (rtw_fw_feature_ext_check(&rtwdev->fw, FW_FEATURE_EXT_OLD_PAGE_NUM))
+		len -= RTW_OLD_PROBE_PG_CNT * TX_PAGE_SIZE;
+
+	return len;
+}
+
 static void rtw_set_supported_band(struct ieee80211_hw *hw,
 				   struct rtw_chip_info *chip)
 {
@@ -1540,6 +1594,10 @@ static void __update_firmware_feature(struct rtw_dev *rtwdev,
 
 	feature = le32_to_cpu(fw_hdr->feature);
 	fw->feature = feature & FW_FEATURE_SIG ? feature : 0;
+
+	if (rtwdev->chip->id == RTW_CHIP_TYPE_8822C &&
+	    RTW_FW_SUIT_VER_CODE(rtwdev->fw) < RTW_FW_VER_CODE(9, 9, 13))
+		fw->feature_ext |= FW_FEATURE_EXT_OLD_PAGE_NUM;
 }
 
 static void __update_firmware_info(struct rtw_dev *rtwdev,
@@ -1902,6 +1960,10 @@ int rtw_core_init(struct rtw_dev *rtwdev)
 	timer_setup(&rtwdev->tx_report.purge_timer,
 		    rtw_tx_report_purge_timer, 0);
 	rtwdev->tx_wq = alloc_workqueue("rtw_tx_wq", WQ_UNBOUND | WQ_HIGHPRI, 0);
+	if (!rtwdev->tx_wq) {
+		rtw_warn(rtwdev, "alloc_workqueue rtw_tx_wq failed\n");
+		return -ENOMEM;
+	}
 
 	INIT_DELAYED_WORK(&rtwdev->watch_dog_work, rtw_watch_dog_work);
 	INIT_DELAYED_WORK(&coex->bt_relink_work, rtw_coex_bt_relink_work);
@@ -1917,6 +1979,7 @@ int rtw_core_init(struct rtw_dev *rtwdev)
 	INIT_WORK(&rtwdev->c2h_work, rtw_c2h_work);
 	INIT_WORK(&rtwdev->ips_work, rtw_ips_work);
 	INIT_WORK(&rtwdev->fw_recovery_work, rtw_fw_recovery_work);
+	INIT_WORK(&rtwdev->update_beacon_work, rtw_fw_update_beacon_work);
 	INIT_WORK(&rtwdev->ba_work, rtw_txq_ba_work);
 	skb_queue_head_init(&rtwdev->c2h_queue);
 	skb_queue_head_init(&rtwdev->coex.queue);
@@ -1950,7 +2013,7 @@ int rtw_core_init(struct rtw_dev *rtwdev)
 	ret = rtw_load_firmware(rtwdev, RTW_NORMAL_FW);
 	if (ret) {
 		rtw_warn(rtwdev, "no firmware loaded\n");
-		return ret;
+		goto out;
 	}
 
 	if (chip->wow_fw_name) {
@@ -1960,11 +2023,15 @@ int rtw_core_init(struct rtw_dev *rtwdev)
 			wait_for_completion(&rtwdev->fw.completion);
 			if (rtwdev->fw.firmware)
 				release_firmware(rtwdev->fw.firmware);
-			return ret;
+			goto out;
 		}
 	}
 
 	return 0;
+
+out:
+	destroy_workqueue(rtwdev->tx_wq);
+	return ret;
 }
 EXPORT_SYMBOL(rtw_core_init);
 
@@ -2041,7 +2108,7 @@ int rtw_register_hw(struct rtw_dev *rtwdev, struct ieee80211_hw *hw)
 
 	hw->wiphy->features |= NL80211_FEATURE_SCAN_RANDOM_MAC_ADDR;
 	hw->wiphy->max_scan_ssids = RTW_SCAN_MAX_SSIDS;
-	hw->wiphy->max_scan_ie_len = RTW_SCAN_MAX_IE_LEN;
+	hw->wiphy->max_scan_ie_len = rtw_get_max_scan_ie_len(rtwdev);
 
 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_CAN_REPLACE_PTK0);
 	wiphy_ext_feature_set(hw->wiphy, NL80211_EXT_FEATURE_SCAN_RANDOM_SN);

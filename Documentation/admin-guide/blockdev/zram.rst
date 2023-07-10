@@ -347,6 +347,11 @@ they could write a page index into the interface.
 
 	echo "page_index=1251" > /sys/block/zramX/writeback
 
+Additionally, if a user choose to writeback only huge and idle pages
+this can be accomplished with::
+
+        echo huge_idle > /sys/block/zramX/writeback
+
 If there are lots of write IO with flash device, potentially, it has
 flash wearout problem so that admin needs to design write limitation
 to guarantee storage health for entire product life.

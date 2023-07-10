@@ -391,8 +391,6 @@ int fsverity_ioctl_enable(struct file *filp, const void __user *uarg)
 		goto out_drop_write;
 
 	err = enable_verity(filp, &arg);
-	if (err)
-		goto out_allow_write_access;
 
 	/*
 	 * Some pages of the file may have been evicted from pagecache after
@@ -402,14 +400,11 @@ int fsverity_ioctl_enable(struct file *filp, const void __user *uarg)
 	 * fs-verity now claims to be enforcing, we have to wipe the pagecache
 	 * to ensure that all future reads are verified.
 	 */
-	filemap_write_and_wait(inode->i_mapping);
-	invalidate_inode_pages2(inode->i_mapping);
 
 	/*
 	 * allow_write_access() is needed to pair with deny_write_access().
 	 * Regardless, the filesystem won't allow writing to verity files.
 	 */
-out_allow_write_access:
 	allow_write_access(filp);
 out_drop_write:
 	mnt_drop_write_file(filp);

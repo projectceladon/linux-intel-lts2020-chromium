@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
- * Copyright (C) 2012-2014, 2018-2021 Intel Corporation
+ * Copyright (C) 2012-2014, 2018-2022 Intel Corporation
  * Copyright (C) 2013-2015 Intel Mobile Communications GmbH
  * Copyright (C) 2016-2017 Intel Deutschland GmbH
  */
@@ -179,7 +179,7 @@ static ssize_t iwl_dbgfs_mac_params_read(struct file *file,
 
 	mutex_lock(&mvm->mutex);
 
-	ap_sta_id = mvmvif->ap_sta_id;
+	ap_sta_id = mvmvif->deflink.ap_sta_id;
 
 	switch (ieee80211_vif_type_p2p(vif)) {
 	case NL80211_IFTYPE_ADHOC:
@@ -200,10 +200,7 @@ static ssize_t iwl_dbgfs_mac_params_read(struct file *file,
 	case NL80211_IFTYPE_P2P_DEVICE:
 		pos += scnprintf(buf+pos, bufsz-pos, "type: p2p dev\n");
 		break;
-#if CFG80211_VERSION >= KERNEL_VERSION(4,4,0)
 	case NL80211_IFTYPE_NAN:
-		/* keep code in case of fall-through (spatch generated) */
-#endif
 		pos += scnprintf(buf+pos, bufsz-pos, "type: NAN\n");
 		break;
 	default:
@@ -217,14 +214,14 @@ static ssize_t iwl_dbgfs_mac_params_read(struct file *file,
 	pos += scnprintf(buf+pos, bufsz-pos, "Load: %d\n",
 			 mvm->tcm.result.load[mvmvif->id]);
 	pos += scnprintf(buf+pos, bufsz-pos, "QoS:\n");
-	for (i = 0; i < ARRAY_SIZE(mvmvif->queue_params); i++)
+	for (i = 0; i < ARRAY_SIZE(mvmvif->deflink.queue_params); i++)
 		pos += scnprintf(buf+pos, bufsz-pos,
 				 "\t%d: txop:%d - cw_min:%d - cw_max = %d - aifs = %d upasd = %d\n",
-				 i, mvmvif->queue_params[i].txop,
-				 mvmvif->queue_params[i].cw_min,
-				 mvmvif->queue_params[i].cw_max,
-				 mvmvif->queue_params[i].aifs,
-				 mvmvif->queue_params[i].uapsd);
+				 i, mvmvif->deflink.queue_params[i].txop,
+				 mvmvif->deflink.queue_params[i].cw_min,
+				 mvmvif->deflink.queue_params[i].cw_max,
+				 mvmvif->deflink.queue_params[i].aifs,
+				 mvmvif->deflink.queue_params[i].uapsd);
 
 	if (vif->type == NL80211_IFTYPE_STATION &&
 	    ap_sta_id != IWL_MVM_INVALID_STA) {
@@ -240,7 +237,7 @@ static ssize_t iwl_dbgfs_mac_params_read(struct file *file,
 	}
 
 	rcu_read_lock();
-	chanctx_conf = rcu_dereference(vif->chanctx_conf);
+	chanctx_conf = rcu_dereference(vif->bss_conf.chanctx_conf);
 	if (chanctx_conf)
 		pos += scnprintf(buf+pos, bufsz-pos,
 				 "idle rx chains %d, active rx chains: %d\n",
@@ -444,13 +441,6 @@ static ssize_t iwl_dbgfs_bf_params_read(struct file *file,
 	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
 }
 
-static inline char *iwl_dbgfs_is_match(char *name, char *buf)
-{
-	int len = strlen(name);
-
-	return !strncmp(name, buf, len) ? buf + len : NULL;
-}
-
 static ssize_t iwl_dbgfs_os_device_timediff_read(struct file *file,
 						 char __user *user_buf,
 						 size_t count, loff_t *ppos)
@@ -603,7 +593,7 @@ static ssize_t iwl_dbgfs_rx_phyinfo_write(struct ieee80211_vif *vif, char *buf,
 	mutex_lock(&mvm->mutex);
 	rcu_read_lock();
 
-	chanctx_conf = rcu_dereference(vif->chanctx_conf);
+	chanctx_conf = rcu_dereference(vif->bss_conf.chanctx_conf);
 	/* make sure the channel context is assigned */
 	if (!chanctx_conf) {
 		rcu_read_unlock();
@@ -770,6 +760,102 @@ static ssize_t iwl_dbgfs_twt_setup_write(struct ieee80211_vif *vif, char *buf,
 	return ret ?: count;
 }
 
+static ssize_t iwl_dbgfs_eht_puncturing_read(struct file *file,
+					     char __user *user_buf,
+					     size_t count, loff_t *ppos)
+{
+	struct ieee80211_vif *vif = file->private_data;
+	char buf[8];
+	int len;
+
+	len = scnprintf(buf, sizeof(buf), "0x%04x\n",
+			vif->bss_conf.eht_puncturing);
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
+}
+
+static ssize_t iwl_dbgfs_eht_puncturing_write(struct ieee80211_vif *vif, char *buf,
+					      size_t count, loff_t *ppos)
+{
+	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
+	struct iwl_mvm *mvm = mvmvif->mvm;
+	struct ieee80211_sta *sta;
+	struct iwl_mvm_sta *mvmsta;
+	u16 puncturing;
+	int ret, i;
+
+	if (!iwl_mvm_firmware_running(mvm))
+		return -EIO;
+
+	if (vif->type != NL80211_IFTYPE_AP)
+		return -EINVAL;
+
+	ret = kstrtou16(buf, 0, &puncturing);
+	if (ret)
+		return ret;
+
+	/*
+	 * MVM is not supposed to modify the BSS info,
+	 * but softAP doesn't use this field anyway.
+	 */
+	vif->bss_conf.eht_puncturing = puncturing;
+
+	mutex_lock(&mvm->mutex);
+
+	for (i = 0; i < mvm->fw->ucode_capa.num_stations; i++) {
+		sta = rcu_dereference_protected(mvm->fw_id_to_mac_id[i],
+						lockdep_is_held(&mvm->mutex));
+
+		if (IS_ERR_OR_NULL(sta))
+			continue;
+
+		mvmsta = iwl_mvm_sta_from_mac80211(sta);
+		if (mvmsta->vif != vif)
+			continue;
+
+		iwl_mvm_cfg_he_sta(mvm, vif, mvmsta->deflink.sta_id);
+	}
+
+	mutex_unlock(&mvm->mutex);
+	return count;
+}
+
+static ssize_t iwl_dbgfs_max_tx_op_write(struct ieee80211_vif *vif, char *buf,
+					 size_t count, loff_t *ppos)
+{
+	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
+	struct iwl_mvm *mvm = mvmvif->mvm;
+	u16 value;
+	int ret;
+
+	ret = kstrtou16(buf, 0, &value);
+	if (ret)
+		return ret;
+
+	mutex_lock(&mvm->mutex);
+	mvmvif->max_tx_op = value;
+	mutex_unlock(&mvm->mutex);
+
+	return count;
+}
+
+static ssize_t iwl_dbgfs_max_tx_op_read(struct file *file,
+					char __user *user_buf,
+					size_t count, loff_t *ppos)
+{
+	struct ieee80211_vif *vif = file->private_data;
+	struct iwl_mvm_vif *mvmvif = iwl_mvm_vif_from_mac80211(vif);
+	struct iwl_mvm *mvm = mvmvif->mvm;
+	char buf[10];
+	int len;
+
+	mutex_lock(&mvm->mutex);
+	len = scnprintf(buf, sizeof(buf), "%hu\n", mvmvif->max_tx_op);
+	mutex_unlock(&mvm->mutex);
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
+}
+
 #define MVM_DEBUGFS_WRITE_FILE_OPS(name, bufsz) \
 	_MVM_DEBUGFS_WRITE_FILE_OPS(name, bufsz, struct ieee80211_vif)
 #define MVM_DEBUGFS_READ_WRITE_FILE_OPS(name, bufsz) \
@@ -790,6 +876,8 @@ MVM_DEBUGFS_READ_WRITE_FILE_OPS(rx_phyinfo, 10);
 MVM_DEBUGFS_READ_WRITE_FILE_OPS(quota_min, 32);
 MVM_DEBUGFS_READ_FILE_OPS(os_device_timediff);
 MVM_DEBUGFS_WRITE_FILE_OPS(twt_setup, 256);
+MVM_DEBUGFS_READ_WRITE_FILE_OPS(eht_puncturing, 16);
+MVM_DEBUGFS_READ_WRITE_FILE_OPS(max_tx_op, 10);
 
 
 void iwl_mvm_vif_dbgfs_register(struct iwl_mvm *mvm, struct ieee80211_vif *vif)
@@ -826,6 +914,8 @@ void iwl_mvm_vif_dbgfs_register(struct iwl_mvm *mvm, struct ieee80211_vif *vif)
 	MVM_DEBUGFS_ADD_FILE_VIF(quota_min, mvmvif->dbgfs_dir, 0600);
 	MVM_DEBUGFS_ADD_FILE_VIF(os_device_timediff, mvmvif->dbgfs_dir, 0400);
 	MVM_DEBUGFS_ADD_FILE_VIF(twt_setup, mvmvif->dbgfs_dir, 0200);
+	MVM_DEBUGFS_ADD_FILE_VIF(eht_puncturing, mvmvif->dbgfs_dir, 0600);
+	MVM_DEBUGFS_ADD_FILE_VIF(max_tx_op, mvmvif->dbgfs_dir, 0600);
 
 	if (vif->type == NL80211_IFTYPE_STATION && !vif->p2p &&
 	    mvmvif == mvm->bf_allowed_vif)

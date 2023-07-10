@@ -351,6 +351,7 @@ static int pxp_create_arb_session(struct intel_pxp *pxp)
 		drm_err(&gt->i915->drm, "arb session failed to go in play\n");
 		return ret;
 	}
+	drm_dbg(&gt->i915->drm, "PXP ARB session is alive\n");
 
 	if (!++pxp->key_instance)
 		++pxp->key_instance;
@@ -398,11 +399,16 @@ static int pxp_terminate_all_sessions_and_global(struct intel_pxp *pxp)
 {
 	int ret;
 	struct intel_gt *gt = pxp_to_gt(pxp);
+	u32 active_sip_slots;
 
 	/* must mark termination in progress calling this function */
 	GEM_WARN_ON(pxp->arb_session.is_valid);
 
+	active_sip_slots = intel_uncore_read(gt->uncore, GEN12_KCR_SIP);
+
 	mutex_lock(&pxp->session_mutex);
+
+	intel_pxp_tee_end_all_fw_sessions(pxp, active_sip_slots);
 
 	/* terminate the hw sessions */
 	ret = pxp_terminate_all_sessions(pxp);
@@ -424,9 +430,11 @@ out:
 	return ret;
 }
 
-static void pxp_terminate(struct intel_pxp *pxp)
+void intel_pxp_terminate(struct intel_pxp *pxp, bool post_invalidation_needs_restart)
 {
 	int ret;
+
+	pxp->hw_state_invalidated = post_invalidation_needs_restart;
 
 	ret = pxp_terminate_all_sessions_and_global(pxp);
 
@@ -481,7 +489,7 @@ void intel_pxp_session_work(struct work_struct *work)
 
 	if (events & PXP_TERMINATION_REQUEST) {
 		events &= ~PXP_TERMINATION_COMPLETE;
-		pxp_terminate(pxp);
+		intel_pxp_terminate(pxp, true);
 	}
 
 	if (events & PXP_TERMINATION_COMPLETE)

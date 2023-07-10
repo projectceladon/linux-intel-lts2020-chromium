@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0
 obj-$(CPTCFG_MAC80211) += iwl7000_mac80211.o
 
+ifeq ($(CPTCFG_IWLWIFI_SIMULATION),y)
+UBSAN_SANITIZE := y
+endif
+
 # mac80211 objects
 mac80211-y := \
 	main.o status.o \
@@ -16,6 +20,7 @@ mac80211-y := \
 	s1g.o \
 	ibss.o \
 	iface.o \
+	link.o \
 	rate.o \
 	michael.o \
 	tkip.o \
@@ -72,6 +77,6 @@ mac80211-$(CPTCFG_MAC80211_RC_MINSTREL) += $(rc80211_minstrel-y)
 
 ccflags-y += -DDEBUG
 
-mac80211-y += backports.o cfg-utils.o reg.o
+mac80211-y += backports.o cfg-utils.o
 
 iwl7000_mac80211-objs := $(mac80211-objs) $(mac80211-y)

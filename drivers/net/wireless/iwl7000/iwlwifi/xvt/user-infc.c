@@ -464,6 +464,8 @@ static int iwl_xvt_continue_init_unified(struct iwl_xvt *xvt)
 		goto init_error;
 	}
 
+	iwl_xvt_lari_cfg(xvt);
+
 	return err;
 init_error:
 	xvt->state = IWL_XVT_STATE_UNINITIALIZED;
@@ -592,10 +594,52 @@ static int iwl_xvt_start_op_mode(struct iwl_xvt *xvt)
 	return err;
 }
 
-static void iwl_xvt_stop_op_mode(struct iwl_xvt *xvt)
+static int iwl_xvt_stop_tx(struct iwl_xvt *xvt)
 {
+	int err = 0;
+
+	if (xvt->tx_task && xvt->is_enhanced_tx) {
+		err = kthread_stop(xvt->tx_task);
+		wake_up_interruptible(&xvt->tx_done_wq);
+		xvt->tx_task = NULL;
+		wait_for_completion(&xvt->tx_task_completion);
+	}
+
+	return err;
+}
+
+static int _iwl_xvt_modulated_tx_infinite_stop(struct tx_meta_data *xvt_tx)
+{
+	int err = 0;
+
+	if (xvt_tx->tx_mod_thread && xvt_tx->tx_task_operating) {
+		err = kthread_stop(xvt_tx->tx_mod_thread);
+		xvt_tx->tx_mod_thread = NULL;
+		wait_for_completion(&xvt_tx->tx_mod_thread_completion);
+	}
+
+	return err;
+}
+
+void iwl_xvt_stop_op_mode(struct iwl_xvt *xvt)
+{
+	int i, r;
+
 	if (xvt->state == IWL_XVT_STATE_UNINITIALIZED)
 		return;
+
+	/* Ensure all TX kthreads are shut down */
+	if (xvt->tx_task)
+		IWL_WARN(xvt, "Forced stop of TX: %d\n",
+			 iwl_xvt_stop_tx(xvt));
+	for (i = 0; i < ARRAY_SIZE(xvt->tx_meta_data); i++) {
+		if (xvt->tx_meta_data[i].tx_mod_thread) {
+			r = _iwl_xvt_modulated_tx_infinite_stop(&xvt->tx_meta_data[i]);
+			IWL_WARN(xvt,
+				 "Forced stop of modulated TX (lmac: %d): %d\n",
+				 i, r);
+		}
+	}
 
 	if (xvt->fw_running) {
 		iwl_xvt_txq_disable(xvt);
@@ -1245,6 +1289,18 @@ static int iwl_xvt_send_tx_done_notif(struct iwl_xvt *xvt, u32 status)
 	return err;
 }
 
+static void iwl_xvt_flush_sta_tids(struct iwl_xvt *xvt)
+{
+	int sta_id, i;
+	unsigned long sta_mask = 0;
+
+	for (i = 0; i < ARRAY_SIZE(xvt->queue_data); i++)
+		sta_mask |= xvt->queue_data[i].sta_mask;
+
+	for_each_set_bit(sta_id, &sta_mask, sizeof(sta_mask))
+		iwl_xvt_txpath_flush_send_cmd(xvt, sta_id, 0xFFFF);
+}
+
 static int iwl_xvt_start_tx_handler(void *data)
 {
 	struct iwl_xvt_enhanced_tx_data *task_data = data;
@@ -1300,7 +1356,6 @@ static int iwl_xvt_start_tx_handler(void *data)
 			if (xvt->fw_error) {
 				IWL_ERR(xvt, "FW Error during TX\n");
 				status = XVT_TX_DRIVER_ABORTED;
-				err = -ENODEV;
 				goto on_exit;
 			}
 
@@ -1317,7 +1372,6 @@ static int iwl_xvt_start_tx_handler(void *data)
 				if (!skb) {
 					IWL_ERR(xvt, "skb is NULL\n");
 					status = XVT_TX_DRIVER_ABORTED;
-					err = -ENOMEM;
 					goto on_exit;
 				}
 				err = iwl_xvt_transmit_packet(xvt,
@@ -1334,6 +1388,14 @@ static int iwl_xvt_start_tx_handler(void *data)
 
 				sent_packets++;
 				++frag_idx;
+
+				if (kthread_should_stop()) {
+				/* Flushing the queues here as FW may send response for
+				 * already sent TX_CMD after terminating tx handler
+				 */
+					iwl_xvt_flush_sta_tids(xvt);
+					goto on_exit;
+				}
 			}
 		}
 	}
@@ -1341,10 +1403,13 @@ static int iwl_xvt_start_tx_handler(void *data)
 on_exit:
 	if (sent_packets > 0 && !xvt->fw_error) {
 		time_remain = wait_event_interruptible_timeout(xvt->tx_done_wq,
-					xvt->num_of_tx_resp == sent_packets,
+					xvt->num_of_tx_resp == sent_packets ||
+					kthread_should_stop(),
 					5 * HZ * CPTCFG_IWL_TIMEOUT_FACTOR);
 		if (time_remain <= 0) {
-			IWL_ERR(xvt, "Not all Tx messages were sent\n");
+			iwl_xvt_flush_sta_tids(xvt);
+			IWL_ERR(xvt, "err %d: Not all Tx messages were sent\n",
+				time_remain);
 			if (status == 0)
 				status = XVT_TX_DRIVER_TIMEOUT;
 		}
@@ -1430,17 +1495,9 @@ static int iwl_xvt_modulated_tx_handler(void *data)
 static int iwl_xvt_modulated_tx_infinite_stop(struct iwl_xvt *xvt,
 					      struct iwl_tm_data *data_in)
 {
-	int err = 0;
 	u32 lmac_id = ((struct iwl_xvt_tx_mod_stop *)data_in->data)->lmac_id;
-	struct tx_meta_data *xvt_tx = &xvt->tx_meta_data[lmac_id];
 
-	if (xvt_tx->tx_mod_thread && xvt_tx->tx_task_operating) {
-		err = kthread_stop(xvt_tx->tx_mod_thread);
-		xvt_tx->tx_mod_thread = NULL;
-		wait_for_completion(&xvt_tx->tx_mod_thread_completion);
-	}
-
-	return err;
+	return _iwl_xvt_modulated_tx_infinite_stop(&xvt->tx_meta_data[lmac_id]);
 }
 
 static inline int map_sta_to_lmac(struct iwl_xvt *xvt, u8 sta_id)
@@ -1508,25 +1565,12 @@ static int iwl_xvt_start_tx(struct iwl_xvt *xvt,
 	xvt->tx_task = kthread_run(iwl_xvt_start_tx_handler,
 				   task_data, "start enhanced tx command");
 	if (!xvt->tx_task) {
-		xvt->is_enhanced_tx = true;
+		xvt->is_enhanced_tx = false;
 		kfree(task_data);
 		return -ENOMEM;
 	}
 
 	return 0;
-}
-
-static int iwl_xvt_stop_tx(struct iwl_xvt *xvt)
-{
-	int err = 0;
-
-	if (xvt->tx_task && xvt->is_enhanced_tx) {
-		err = kthread_stop(xvt->tx_task);
-		xvt->tx_task = NULL;
-		wait_for_completion(&xvt->tx_task_completion);
-	}
-
-	return err;
 }
 
 static int iwl_xvt_set_tx_payload(struct iwl_xvt *xvt,
@@ -1815,21 +1859,29 @@ static int iwl_xvt_add_txq(struct iwl_xvt *xvt, u32 sta_mask,
 	}
 
 	xvt->queue_data[queue_id].allocated_queue = true;
+	xvt->queue_data[queue_id].sta_mask = sta_mask;
+	xvt->queue_data[queue_id].tid = cmd->tid;
 	init_waitqueue_head(&xvt->queue_data[queue_id].tx_wq);
 
 	return queue_id;
 }
 
 static int iwl_xvt_remove_txq(struct iwl_xvt *xvt,
-			      struct iwl_scd_txq_cfg_cmd *cmd)
+			      struct iwl_scd_txq_cfg_cmd *cmd,
+			      u32 sta_mask /* only for new MLD API */)
 {
 	u32 new_cmd_id = WIDE_ID(DATA_PATH_GROUP, SCD_QUEUE_CONFIG_CMD);
 	int ret = 0;
 
+	/* for old API */
+	if (!sta_mask)
+		sta_mask = BIT(cmd->sta_id);
+
 	if (iwl_fw_lookup_cmd_ver(xvt->fw, new_cmd_id, 0) == 3) {
 		struct iwl_scd_queue_cfg_cmd remove_cmd = {
 			.operation = cpu_to_le32(IWL_SCD_QUEUE_REMOVE),
-			.u.remove.queue = cpu_to_le32(cmd->scd_queue),
+			.u.remove.sta_mask = cpu_to_le32(sta_mask),
+			.u.remove.tid = cpu_to_le32(cmd->tid),
 		};
 
 		ret = iwl_xvt_send_cmd_pdu(xvt, new_cmd_id, 0,
@@ -1857,6 +1909,8 @@ static int iwl_xvt_remove_txq(struct iwl_xvt *xvt,
 		return ret;
 
 	xvt->queue_data[cmd->scd_queue].allocated_queue = false;
+	xvt->queue_data[cmd->scd_queue].sta_mask = 0;
+	xvt->queue_data[cmd->scd_queue].tid = 0;
 
 	return 0;
 }
@@ -1887,7 +1941,7 @@ static int iwl_xvt_config_txq_old(struct iwl_xvt *xvt,
 		return -ENOBUFS;
 
 	if (conf->action == TX_QUEUE_CFG_REMOVE) {
-		error = iwl_xvt_remove_txq(xvt, &cmd);
+		error = iwl_xvt_remove_txq(xvt, &cmd, 0);
 		if (WARN(error, "failed to remove queue"))
 			return error;
 	} else {
@@ -1906,14 +1960,42 @@ static int iwl_xvt_config_txq_old(struct iwl_xvt *xvt,
 	return 0;
 }
 
-static int iwl_xvt_modify_txq(struct iwl_xvt *xvt, u32 queue, u32 sta_mask)
+static int iwl_xvt_find_queue(struct iwl_xvt *xvt, u32 tid, u32 sta_mask)
+{
+	int queue_id;
+
+	for (queue_id = 0; queue_id < ARRAY_SIZE(xvt->queue_data); queue_id++) {
+		if (xvt->queue_data[queue_id].allocated_queue &&
+		    xvt->queue_data[queue_id].tid == tid &&
+		    xvt->queue_data[queue_id].sta_mask & sta_mask)
+			return queue_id;
+	}
+
+	return -ENOENT;
+}
+
+static int iwl_xvt_config_sta_mask(struct iwl_xvt *xvt, u32 tid,
+				   u32 old_sta_mask, u32 new_sta_mask)
+{
+	int queue_id = iwl_xvt_find_queue(xvt, tid, old_sta_mask);
+
+	if (queue_id < 0)
+		return queue_id;
+
+	xvt->queue_data[queue_id].sta_mask = new_sta_mask;
+	return 0;
+}
+
+static int iwl_xvt_modify_txq(struct iwl_xvt *xvt, u32 tid,
+			      u32 old_sta_mask, u32 new_sta_mask)
 {
 	u32 new_cmd_id = WIDE_ID(DATA_PATH_GROUP, SCD_QUEUE_CONFIG_CMD);
 
 	struct iwl_scd_queue_cfg_cmd modify_cmd = {
 		.operation = cpu_to_le32(IWL_SCD_QUEUE_MODIFY),
-		.u.modify.queue = cpu_to_le32(queue),
-		.u.modify.sta_mask = cpu_to_le32(sta_mask),
+		.u.modify.tid = cpu_to_le32(tid),
+		.u.modify.old_sta_mask = cpu_to_le32(old_sta_mask),
+		.u.modify.new_sta_mask = cpu_to_le32(new_sta_mask),
 	};
 
 	return iwl_xvt_send_cmd_pdu(xvt, new_cmd_id, 0,
@@ -1929,19 +2011,28 @@ static int iwl_xvt_config_txq_mld(struct iwl_xvt *xvt,
 	struct iwl_xvt_txq_cfg_mld_resp txq_resp = {
 		.sta_mask = conf->sta_mask,
 		.tid = conf->tid,
-		.queue_id = conf->queue_id,
+		.queue_id = U16_MAX,
 	};
 	struct iwl_scd_txq_cfg_cmd legacy_cmd = {
-		.scd_queue = conf->queue_id,
+		.tid = conf->tid,
 	};
 	int ret;
+
+	if (!conf->sta_mask)
+		return -EINVAL;
+
+	legacy_cmd.sta_id = ffs(conf->sta_mask) - 1;
 
 	if (req->max_out_length < sizeof(txq_resp))
 		return -ENOBUFS;
 
 	switch (conf->action) {
 	case TX_QUEUE_CFG_REMOVE:
-		ret = iwl_xvt_remove_txq(xvt, &legacy_cmd);
+		ret = iwl_xvt_find_queue(xvt, conf->tid, conf->sta_mask);
+		if (ret < 0)
+			return ret;
+		legacy_cmd.scd_queue = ret;
+		ret = iwl_xvt_remove_txq(xvt, &legacy_cmd, conf->sta_mask);
 		if (ret)
 			return ret;
 		break;
@@ -1953,7 +2044,14 @@ static int iwl_xvt_config_txq_mld(struct iwl_xvt *xvt,
 		txq_resp.queue_id = ret;
 		break;
 	case TX_QUEUE_CFG_MODIFY:
-		ret = iwl_xvt_modify_txq(xvt, conf->queue_id, conf->sta_mask);
+		ret = iwl_xvt_modify_txq(xvt, conf->tid, conf->sta_mask,
+					 conf->new_sta_mask);
+		if (ret < 0)
+			return ret;
+		IWL_DEBUG_INFO(xvt, "TXQ modified, configuring sta_mask to %d from %d\n",
+			       conf->new_sta_mask, conf->sta_mask);
+		ret = iwl_xvt_config_sta_mask(xvt, conf->tid, conf->sta_mask,
+					      conf->new_sta_mask);
 		if (ret < 0)
 			return ret;
 		break;

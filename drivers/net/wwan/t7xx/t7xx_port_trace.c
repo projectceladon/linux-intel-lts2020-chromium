@@ -9,19 +9,13 @@
 #include <linux/skbuff.h>
 #include <linux/wwan.h>
 
-#include "t7xx_common.h"
 #include "t7xx_port.h"
 #include "t7xx_port_proxy.h"
 #include "t7xx_state_monitor.h"
 
 #define T7XX_TRC_SUB_BUFF_SIZE		131072
 #define T7XX_TRC_N_SUB_BUFF		32
-#define T7XX_TRC_FILE_PERM		0660
-
-struct t7xx_trace {
-	struct rchan			*t7xx_rchan;
-	struct dentry			*ctrl_file;
-};
+#define T7XX_TRC_FILE_PERM              0600
 
 static struct dentry *t7xx_trace_create_buf_file_handler(const char *filename,
 							 struct dentry *parent,
@@ -59,61 +53,46 @@ static struct rchan_callbacks relay_callbacks = {
 };
 
 static ssize_t t7xx_port_trace_write(struct file *file, const char __user *buf,
-				     size_t len, loff_t *ppos)
+				size_t len, loff_t *ppos)
 {
 	struct t7xx_port *port = file->private_data;
 	size_t actual_len, alloc_size, txq_mtu;
-	struct t7xx_port_static *port_static;
-	struct cldma_ctrl *md_ctrl;
-	struct ccci_header *ccci_h;
+	const struct t7xx_port_conf *port_conf;
 	enum md_state md_state;
 	struct sk_buff *skb;
 	int ret;
 
-	port_static = port->port_static;
+	port_conf = port->port_conf;
 	md_state = t7xx_fsm_get_md_state(port->t7xx_dev->md->fsm_ctl);
-
 	if (md_state == MD_STATE_WAITING_FOR_HS1 || md_state == MD_STATE_WAITING_FOR_HS2) {
 		dev_warn(port->dev, "port: %s ch: %d, write fail when md_state: %d\n",
-			 port_static->name, port_static->tx_ch, md_state);
+				port_conf->name, port_conf->tx_ch, md_state);
 		return -ENODEV;
 	}
-
-	if (t7xx_port_write_room_to_md(port) <= 0)
-		return -EAGAIN;
-
-	md_ctrl = port->t7xx_dev->md->md_ctrl[port_static->path_id];
-
-	txq_mtu = cldma_txq_mtu(md_ctrl, port_static->txq_index);
-	alloc_size = min_t(size_t, txq_mtu, len + CCCI_H_ELEN);
-	actual_len = alloc_size - CCCI_H_ELEN;
-
-	skb = __dev_alloc_skb(alloc_size, GFP_KERNEL);
+	txq_mtu = t7xx_get_port_mtu(port);
+	alloc_size = min_t(size_t, txq_mtu, len + sizeof(struct ccci_header));
+	actual_len = alloc_size - sizeof(struct ccci_header);
+	skb = t7xx_port_alloc_skb(alloc_size);
 	if (!skb) {
 		ret = -ENOMEM;
 		goto err_out;
 	}
 
-	ccci_h = skb_put(skb, CCCI_H_LEN);
-	t7xx_ccci_header_init(ccci_h, 0, actual_len + CCCI_H_LEN, port_static->tx_ch, 0);
-
 	ret = copy_from_user(skb_put(skb, actual_len), buf, actual_len);
+	if (ret) {
+		ret = -EFAULT;
+		goto err_out;
+	}
+
+	ret = t7xx_port_send_skb(port, skb, 0, 0);
 	if (ret)
 		goto err_out;
-
-	t7xx_port_proxy_set_tx_seq_num(port, ccci_h);
-
-	ret = t7xx_port_send_skb_to_md(port, skb);
-	if (ret)
-		goto err_out;
-
-	port->seq_nums[MTK_TX]++;
 
 	return actual_len;
 
 err_out:
 	dev_err(port->dev, "write error done on %s, size: %zu, ret: %d\n",
-		port_static->name, actual_len, ret);
+			port_conf->name, actual_len, ret);
 	dev_kfree_skb(skb);
 	return ret;
 }
@@ -124,66 +103,90 @@ static const struct file_operations t7xx_trace_fops = {
 	.write = t7xx_port_trace_write,
 };
 
-static int t7xx_trace_port_init(struct t7xx_port *port)
-{
-	struct dentry *debugfs_pdev = wwan_get_debugfs_dir(port->dev);
-
-	if (IS_ERR(debugfs_pdev))
-		debugfs_pdev = NULL; // WWAN_DEBUGFS not working
-
-	port->debugfs_dir = debugfs_create_dir(KBUILD_MODNAME, debugfs_pdev);
-	if (IS_ERR_OR_NULL(port->debugfs_dir))
-		return -ENOMEM;
-
-	port->trace = devm_kzalloc(port->dev, sizeof(*port->trace), GFP_KERNEL);
-	if (!port->trace)
-		goto err_debugfs_dir;
-
-	port->trace->ctrl_file = debugfs_create_file("mdlog_ctrl",
-						     T7XX_TRC_FILE_PERM,
-						     port->debugfs_dir,
-						     port,
-						     &t7xx_trace_fops);
-	if (!port->trace->ctrl_file)
-		goto err_debugfs_dir;
-
-	port->trace->t7xx_rchan = relay_open("relay_ch",
-					     port->debugfs_dir,
-					     T7XX_TRC_SUB_BUFF_SIZE,
-					     T7XX_TRC_N_SUB_BUFF,
-					     &relay_callbacks, NULL);
-	if (!port->trace->t7xx_rchan)
-		goto err_debugfs_dir;
-
-	return 0;
-
-err_debugfs_dir:
-	debugfs_remove_recursive(port->debugfs_dir);
-	return -ENOMEM;
-}
-
 static void t7xx_trace_port_uninit(struct t7xx_port *port)
 {
-	struct t7xx_trace *trace = port->trace;
+	struct rchan *relaych = port->relaych;
 
-	relay_close(trace->t7xx_rchan);
+	if (!relaych)
+		return;
+
+	relay_close(relaych);
 	debugfs_remove_recursive(port->debugfs_dir);
+	wwan_put_debugfs_dir(port->debugfs_wwan_dir);
 }
 
 static int t7xx_trace_port_recv_skb(struct t7xx_port *port, struct sk_buff *skb)
 {
-	struct t7xx_trace *t7xx_trace = port->trace;
+	struct rchan *relaych = port->relaych;
 
-	if (!t7xx_trace->t7xx_rchan)
+	if (!relaych)
 		return -EINVAL;
 
-	relay_write(t7xx_trace->t7xx_rchan, skb->data, skb->len);
+	relay_write(relaych, skb->data, skb->len);
 	dev_kfree_skb(skb);
 	return 0;
 }
 
+static void t7xx_port_trace_md_state_notify(struct t7xx_port *port, unsigned int state)
+{
+	struct rchan *relaych;
+
+	struct dentry *ctrl_file;
+
+	if (state != MD_STATE_READY || port->relaych)
+		return;
+
+	port->debugfs_wwan_dir = wwan_get_debugfs_dir(port->dev);
+	if (IS_ERR(port->debugfs_wwan_dir))
+		port->debugfs_wwan_dir = NULL;
+
+	port->debugfs_dir = debugfs_create_dir(KBUILD_MODNAME, port->debugfs_wwan_dir);
+	if (IS_ERR_OR_NULL(port->debugfs_dir)) {
+		dev_err(port->dev, "Unable to create debugfs for trace");
+		return;
+	}
+
+	ctrl_file = devm_kzalloc(port->dev, sizeof(*ctrl_file), GFP_KERNEL);
+	if (!ctrl_file)
+		goto err_rm_debugfs_dir;
+
+	ctrl_file = debugfs_create_file("mdlog_ctrl",
+			T7XX_TRC_FILE_PERM,
+			port->debugfs_dir,
+			port,
+			&t7xx_trace_fops);
+
+	if (!ctrl_file)
+		goto err_rm_trace;
+
+	relaych = devm_kzalloc(port->dev, sizeof(*relaych), GFP_KERNEL);
+	if (!relaych)
+		goto err_rm_debugfs_dir;
+
+	relaych = relay_open("relay_ch",
+			     port->debugfs_dir,
+			     T7XX_TRC_SUB_BUFF_SIZE,
+			     T7XX_TRC_N_SUB_BUFF,
+			     &relay_callbacks, NULL);
+	if (!relaych)
+		goto err_rm_trace;
+
+	port->relaych = relaych;
+	port->ctrl_file = ctrl_file;
+	return;
+
+err_rm_trace:
+	kfree(relaych);
+	kfree(ctrl_file);
+
+err_rm_debugfs_dir:
+	debugfs_remove_recursive(port->debugfs_dir);
+	wwan_put_debugfs_dir(port->debugfs_wwan_dir);
+	dev_err(port->dev, "Unable to create trace port %s", port->port_conf->name);
+}
+
 struct port_ops t7xx_trace_port_ops = {
-	.init =	t7xx_trace_port_init,
 	.recv_skb = t7xx_trace_port_recv_skb,
 	.uninit = t7xx_trace_port_uninit,
+	.md_state_notify = t7xx_port_trace_md_state_notify,
 };

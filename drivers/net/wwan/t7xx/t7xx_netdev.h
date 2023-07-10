@@ -10,7 +10,7 @@
  * Contributors:
  *  Amir Hanania <amir.hanania@intel.com>
  *  Chiranjeevi Rapolu <chiranjeevi.rapolu@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  */
 
 #ifndef __T7XX_NETDEV_H__
@@ -20,7 +20,6 @@
 #include <linux/netdevice.h>
 #include <linux/types.h>
 
-#include "t7xx_common.h"
 #include "t7xx_hif_dpmaif.h"
 #include "t7xx_pci.h"
 #include "t7xx_state_monitor.h"
@@ -28,7 +27,7 @@
 #define RXQ_NUM				DPMAIF_RXQ_NUM
 #define NIC_DEV_MAX			21
 #define NIC_DEV_DEFAULT			2
-#define NIC_CAP_NAPI			BIT(4)
+
 #define CCMNI_NETDEV_WDT_TO		(1 * HZ)
 #define CCMNI_MTU_MAX			3000
 #define NIC_NAPI_POLL_BUDGET		128
@@ -53,7 +52,6 @@ struct t7xx_ccmni_ctrl {
 	struct napi_struct		*napi[RXQ_NUM];
 	atomic_t			napi_usr_refcnt;
 	bool				is_napi_en;
-	unsigned int			capability;
 };
 
 int t7xx_ccmni_init(struct t7xx_pci_dev *t7xx_dev);

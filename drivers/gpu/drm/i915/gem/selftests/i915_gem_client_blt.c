@@ -5,6 +5,7 @@
 
 #include "i915_selftest.h"
 
+#include "gt/intel_context.h"
 #include "gt/intel_engine_user.h"
 #include "gt/intel_gt.h"
 #include "gt/intel_gpu_commands.h"
@@ -15,118 +16,6 @@
 #include "selftests/i915_random.h"
 #include "huge_gem_object.h"
 #include "mock_context.h"
-
-static int __igt_client_fill(struct intel_engine_cs *engine)
-{
-	struct intel_context *ce = engine->kernel_context;
-	struct drm_i915_gem_object *obj;
-	I915_RND_STATE(prng);
-	IGT_TIMEOUT(end);
-	u32 *vaddr;
-	int err = 0;
-
-	intel_engine_pm_get(engine);
-	do {
-		const u32 max_block_size = S16_MAX * PAGE_SIZE;
-		u32 sz = min_t(u64, ce->vm->total >> 4, prandom_u32_state(&prng));
-		u32 phys_sz = sz % (max_block_size + 1);
-		u32 val = prandom_u32_state(&prng);
-		u32 i;
-
-		sz = round_up(sz, PAGE_SIZE);
-		phys_sz = round_up(phys_sz, PAGE_SIZE);
-
-		pr_debug("%s with phys_sz= %x, sz=%x, val=%x\n", __func__,
-			 phys_sz, sz, val);
-
-		obj = huge_gem_object(engine->i915, phys_sz, sz);
-		if (IS_ERR(obj)) {
-			err = PTR_ERR(obj);
-			goto err_flush;
-		}
-
-		vaddr = i915_gem_object_pin_map_unlocked(obj, I915_MAP_WB);
-		if (IS_ERR(vaddr)) {
-			err = PTR_ERR(vaddr);
-			goto err_put;
-		}
-
-		/*
-		 * XXX: The goal is move this to get_pages, so try to dirty the
-		 * CPU cache first to check that we do the required clflush
-		 * before scheduling the blt for !llc platforms. This matches
-		 * some version of reality where at get_pages the pages
-		 * themselves may not yet be coherent with the GPU(swap-in). If
-		 * we are missing the flush then we should see the stale cache
-		 * values after we do the set_to_cpu_domain and pick it up as a
-		 * test failure.
-		 */
-		memset32(vaddr, val ^ 0xdeadbeaf,
-			 huge_gem_object_phys_size(obj) / sizeof(u32));
-
-		if (!(obj->cache_coherent & I915_BO_CACHE_COHERENT_FOR_WRITE))
-			obj->cache_dirty = true;
-
-		err = i915_gem_schedule_fill_pages_blt(obj, ce, obj->mm.pages,
-						       &obj->mm.page_sizes,
-						       val);
-		if (err)
-			goto err_unpin;
-
-		i915_gem_object_lock(obj, NULL);
-		err = i915_gem_object_set_to_cpu_domain(obj, false);
-		i915_gem_object_unlock(obj);
-		if (err)
-			goto err_unpin;
-
-		for (i = 0; i < huge_gem_object_phys_size(obj) / sizeof(u32); ++i) {
-			if (vaddr[i] != val) {
-				pr_err("vaddr[%u]=%x, expected=%x\n", i,
-				       vaddr[i], val);
-				err = -EINVAL;
-				goto err_unpin;
-			}
-		}
-
-		i915_gem_object_unpin_map(obj);
-		i915_gem_object_put(obj);
-	} while (!time_after(jiffies, end));
-
-	goto err_flush;
-
-err_unpin:
-	i915_gem_object_unpin_map(obj);
-err_put:
-	i915_gem_object_put(obj);
-err_flush:
-	if (err == -ENOMEM)
-		err = 0;
-	intel_engine_pm_put(engine);
-
-	return err;
-}
-
-static int igt_client_fill(void *arg)
-{
-	int inst = 0;
-
-	do {
-		struct intel_engine_cs *engine;
-		int err;
-
-		engine = intel_engine_lookup_user(arg,
-						  I915_ENGINE_CLASS_COPY,
-						  inst++);
-		if (!engine)
-			return 0;
-
-		err = __igt_client_fill(engine);
-		if (err == -ENOMEM)
-			err = 0;
-		if (err)
-			return err;
-	} while (1);
-}
 
 #define WIDTH 512
 #define HEIGHT 32
@@ -198,14 +87,14 @@ static int prepare_blit(const struct tiled_blits *t,
 	*cs++ = BLT_DEPTH_32 | BLT_ROP_SRC_COPY | dst_pitch;
 	*cs++ = 0;
 	*cs++ = t->height << 16 | t->width;
-	*cs++ = lower_32_bits(dst->vma->node.start);
+	*cs++ = lower_32_bits(i915_vma_offset(dst->vma));
 	if (use_64b_reloc)
-		*cs++ = upper_32_bits(dst->vma->node.start);
+		*cs++ = upper_32_bits(i915_vma_offset(dst->vma));
 	*cs++ = 0;
 	*cs++ = src_pitch;
-	*cs++ = lower_32_bits(src->vma->node.start);
+	*cs++ = lower_32_bits(i915_vma_offset(src->vma));
 	if (use_64b_reloc)
-		*cs++ = upper_32_bits(src->vma->node.start);
+		*cs++ = upper_32_bits(i915_vma_offset(src->vma));
 
 	*cs++ = MI_BATCH_BUFFER_END;
 
@@ -421,7 +310,7 @@ static int pin_buffer(struct i915_vma *vma, u64 addr)
 {
 	int err;
 
-	if (drm_mm_node_allocated(&vma->node) && vma->node.start != addr) {
+	if (drm_mm_node_allocated(&vma->node) && i915_vma_offset(vma) != addr) {
 		err = i915_vma_unbind(vma);
 		if (err)
 			return err;
@@ -431,6 +320,7 @@ static int pin_buffer(struct i915_vma *vma, u64 addr)
 	if (err)
 		return err;
 
+	GEM_BUG_ON(i915_vma_offset(vma) != addr);
 	return 0;
 }
 
@@ -477,8 +367,8 @@ tiled_blit(struct tiled_blits *t,
 		err = move_to_active(dst->vma, rq, 0);
 	if (!err)
 		err = rq->engine->emit_bb_start(rq,
-						t->batch->node.start,
-						t->batch->node.size,
+						i915_vma_offset(t->batch),
+						i915_vma_size(t->batch),
 						0);
 	i915_request_get(rq);
 	i915_request_add(rq);
@@ -693,7 +583,6 @@ static int igt_client_tiled_blits(void *arg)
 int i915_gem_client_blt_live_selftests(struct drm_i915_private *i915)
 {
 	static const struct i915_subtest tests[] = {
-		SUBTEST(igt_client_fill),
 		SUBTEST(igt_client_tiled_blits),
 	};
 

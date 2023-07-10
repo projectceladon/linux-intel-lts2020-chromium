@@ -10,7 +10,7 @@
  *
  * Contributors:
  *  Eliot Lee <eliot.lee@intel.com>
- *  Ricardo Martinez<ricardo.martinez@linux.intel.com>
+ *  Ricardo Martinez <ricardo.martinez@linux.intel.com>
  *  Sreehari Kancharla <sreehari.kancharla@intel.com>
  */
 
@@ -23,7 +23,6 @@
 #include <linux/types.h>
 #include <linux/wait.h>
 
-#include "t7xx_common.h"
 #include "t7xx_modem_ops.h"
 
 enum t7xx_fsm_state {
@@ -67,21 +66,25 @@ enum t7xx_md_irq_type {
 	MD_IRQ_PORT_ENUM,
 };
 
+enum md_state {
+	MD_STATE_INVALID,
+	MD_STATE_WAITING_FOR_HS1,
+	MD_STATE_WAITING_FOR_HS2,
+	MD_STATE_READY,
+	MD_STATE_EXCEPTION,
+	MD_STATE_WAITING_TO_STOP,
+	MD_STATE_STOPPED,
+};
+
 #define FSM_CMD_FLAG_WAIT_FOR_COMPLETION	BIT(0)
 #define FSM_CMD_FLAG_FLIGHT_MODE		BIT(1)
 #define FSM_CMD_FLAG_IN_INTERRUPT		BIT(2)
 #define FSM_CMD_EX_REASON			GENMASK(23, 16)
 
-struct coprocessor_ctl {
-	unsigned int last_dummy_reg;
-	struct timer_list event_check_timer;
-};
-
 struct t7xx_fsm_ctl {
 	struct t7xx_modem	*md;
 	enum md_state		md_state;
 	unsigned int		curr_state;
-	u32			prev_status;
 	struct list_head	command_queue;
 	struct list_head	event_queue;
 	wait_queue_head_t	command_wq;
@@ -93,13 +96,15 @@ struct t7xx_fsm_ctl {
 	bool			exp_flg;
 	spinlock_t		notifier_lock;		/* Protects notifier list */
 	struct list_head	notifier_list;
-	struct coprocessor_ctl	sap_state_ctl;
+	u32                     prev_dev_status;
+	unsigned int		device_stage_check_cnt;
 };
 
 struct t7xx_fsm_event {
 	struct list_head	entry;
 	enum t7xx_fsm_event_state event_id;
 	unsigned int		length;
+	unsigned char		data[];
 };
 
 struct t7xx_fsm_command {

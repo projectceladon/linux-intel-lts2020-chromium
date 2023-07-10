@@ -42,7 +42,6 @@
 
 struct priv_data {
 	int irq;
-	int locality;
 	struct completion tpm_ready;
 	u8 buf[CR50_MAX_BUFSIZE + sizeof(u8)];
 };
@@ -80,8 +79,7 @@ static int cr50_i2c_wait_tpm_ready(struct tpm_chip *chip)
 	}
 
 	/* Wait for interrupt to indicate TPM is ready to respond */
-	rc = wait_for_completion_timeout(&priv->tpm_ready,
-		msecs_to_jiffies(chip->timeout_a));
+	rc = wait_for_completion_timeout(&priv->tpm_ready, chip->timeout_a);
 
 	if (rc == 0)
 		dev_warn(&chip->dev, "Timeout waiting for TPM ready\n");
@@ -165,8 +163,6 @@ static int cr50_i2c_read(struct tpm_chip *chip, u8 addr, u8 *buffer, size_t len)
 	};
 	int rc;
 
-	i2c_lock_bus(client->adapter, I2C_LOCK_SEGMENT);
-
 	/* Prepare for completion interrupt */
 	cr50_i2c_enable_tpm_irq(chip);
 
@@ -185,7 +181,6 @@ static int cr50_i2c_read(struct tpm_chip *chip, u8 addr, u8 *buffer, size_t len)
 
 out:
 	cr50_i2c_disable_tpm_irq(chip);
-	i2c_unlock_bus(client->adapter, I2C_LOCK_SEGMENT);
 
 	if (rc < 0)
 		return rc;
@@ -224,8 +219,6 @@ static int cr50_i2c_write(struct tpm_chip *chip, u8 addr, u8 *buffer,
 	if (len > CR50_MAX_BUFSIZE)
 		return -EINVAL;
 
-	i2c_lock_bus(client->adapter, I2C_LOCK_SEGMENT);
-
 	/* Prepend the 'register address' to the buffer */
 	priv->buf[0] = addr;
 	memcpy(priv->buf + 1, buffer, len);
@@ -243,7 +236,6 @@ static int cr50_i2c_write(struct tpm_chip *chip, u8 addr, u8 *buffer,
 
 out:
 	cr50_i2c_disable_tpm_irq(chip);
-	i2c_unlock_bus(client->adapter, I2C_LOCK_SEGMENT);
 
 	if (rc < 0)
 		return rc;
@@ -279,57 +271,66 @@ static int check_locality(struct tpm_chip *chip, int loc)
 	return -EIO;
 }
 
-static void release_locality(struct tpm_chip *chip, int force)
+static int release_locality(struct tpm_chip *chip, int loc)
 {
-	struct priv_data *priv = dev_get_drvdata(&chip->dev);
+	struct i2c_client *client = to_i2c_client(chip->dev.parent);
 	u8 mask = TPM_ACCESS_VALID | TPM_ACCESS_REQUEST_PENDING;
-	u8 addr = TPM_ACCESS(priv->locality);
+	u8 addr = TPM_ACCESS(loc);
 	u8 buf;
+	int rc;
 
-	if (cr50_i2c_read(chip, addr, &buf, 1) < 0)
-		return;
+	rc = cr50_i2c_read(chip, addr, &buf, 1);
+	if (rc < 0)
+		goto unlock_out;
 
-	if (force || (buf & mask) == mask) {
+	if ((buf & mask) == mask) {
 		buf = TPM_ACCESS_ACTIVE_LOCALITY;
-		cr50_i2c_write(chip, addr, &buf, 1);
+		rc = cr50_i2c_write(chip, addr, &buf, 1);
 	}
 
-	priv->locality = 0;
+unlock_out:
+	i2c_unlock_bus(client->adapter, I2C_LOCK_SEGMENT);
+	return rc;
 }
 
 static int request_locality(struct tpm_chip *chip, int loc)
 {
-	struct priv_data *priv = dev_get_drvdata(&chip->dev);
+	struct i2c_client *client = to_i2c_client(chip->dev.parent);
 	u8 buf = TPM_ACCESS_REQUEST_USE;
 	unsigned long stop;
 	int rc;
+
+	i2c_lock_bus(client->adapter, I2C_LOCK_SEGMENT);
 
 	if (check_locality(chip, loc) == loc)
 		return loc;
 
 	rc = cr50_i2c_write(chip, TPM_ACCESS(loc), &buf, 1);
 	if (rc < 0)
-		return rc;
+		goto unlock_out;
 
 	stop = jiffies + chip->timeout_a;
 	do {
-		if (check_locality(chip, loc) == loc) {
-			priv->locality = loc;
+		if (check_locality(chip, loc) == loc)
 			return loc;
-		}
+
 		msleep(CR50_TIMEOUT_SHORT_MS);
 	} while (time_before(jiffies, stop));
 
-	return -ETIMEDOUT;
+	rc = -ETIMEDOUT;
+
+unlock_out:
+	i2c_unlock_bus(client->adapter, I2C_LOCK_SEGMENT);
+	return rc;
+
 }
 
 /* cr50 requires all 4 bytes of status register to be read */
 static u8 cr50_i2c_tis_status(struct tpm_chip *chip)
 {
-	struct priv_data *priv = dev_get_drvdata(&chip->dev);
 	u8 buf[4];
 
-	if (cr50_i2c_read(chip, TPM_STS(priv->locality), buf, sizeof(buf)) < 0)
+	if (cr50_i2c_read(chip, TPM_STS(chip->locality), buf, sizeof(buf)) < 0)
 		return 0;
 	return buf[0];
 }
@@ -337,10 +338,9 @@ static u8 cr50_i2c_tis_status(struct tpm_chip *chip)
 /* cr50 requires all 4 bytes of status register to be written */
 static void cr50_i2c_tis_ready(struct tpm_chip *chip)
 {
-	struct priv_data *priv = dev_get_drvdata(&chip->dev);
 	u8 buf[4] = { TPM_STS_COMMAND_READY };
 
-	cr50_i2c_write(chip, TPM_STS(priv->locality), buf, sizeof(buf));
+	cr50_i2c_write(chip, TPM_STS(chip->locality), buf, sizeof(buf));
 	msleep(CR50_TIMEOUT_SHORT_MS);
 }
 
@@ -351,14 +351,13 @@ static void cr50_i2c_tis_ready(struct tpm_chip *chip)
 static int cr50_i2c_wait_burststs(struct tpm_chip *chip, u8 mask,
 				  size_t *burst, int *status)
 {
-	struct priv_data *priv = dev_get_drvdata(&chip->dev);
 	unsigned long stop;
 	u8 buf[4];
 
 	/* wait for burstcount */
 	stop = jiffies + chip->timeout_b;
 	do {
-		if (cr50_i2c_read(chip, TPM_STS(priv->locality),
+		if (cr50_i2c_read(chip, TPM_STS(chip->locality),
 				  (u8 *)&buf, sizeof(buf)) < 0) {
 			msleep(CR50_TIMEOUT_SHORT_MS);
 			continue;
@@ -380,10 +379,9 @@ static int cr50_i2c_wait_burststs(struct tpm_chip *chip, u8 mask,
 
 static int cr50_i2c_tis_recv(struct tpm_chip *chip, u8 *buf, size_t buf_len)
 {
-	struct priv_data *priv = dev_get_drvdata(&chip->dev);
 	int status, rc;
 	size_t burstcnt, cur, len, expected;
-	u8 addr = TPM_DATA_FIFO(priv->locality);
+	u8 addr = TPM_DATA_FIFO(chip->locality);
 	u8 mask = TPM_STS_VALID | TPM_STS_DATA_AVAIL;
 
 	if (buf_len < TPM_HEADER_SIZE)
@@ -443,7 +441,6 @@ static int cr50_i2c_tis_recv(struct tpm_chip *chip, u8 *buf, size_t buf_len)
 		goto out_err;
 	}
 
-	release_locality(chip, 0);
 	return cur;
 
 out_err:
@@ -451,21 +448,15 @@ out_err:
 	if (cr50_i2c_tis_status(chip) & TPM_STS_COMMAND_READY)
 		cr50_i2c_tis_ready(chip);
 
-	release_locality(chip, 0);
 	return rc;
 }
 
 static int cr50_i2c_tis_send(struct tpm_chip *chip, u8 *buf, size_t len)
 {
-	struct priv_data *priv = dev_get_drvdata(&chip->dev);
 	int rc, status;
 	size_t burstcnt, limit, sent = 0;
 	u8 tpm_go[4] = { TPM_STS_GO };
 	unsigned long stop;
-
-	rc = request_locality(chip, 0);
-	if (rc < 0)
-		return rc;
 
 	/* Wait until TPM is ready for a command */
 	stop = jiffies + chip->timeout_b;
@@ -495,7 +486,7 @@ static int cr50_i2c_tis_send(struct tpm_chip *chip, u8 *buf, size_t len)
 		 * that is inserted by cr50_i2c_write()
 		 */
 		limit = min_t(size_t, burstcnt - 1, len);
-		rc = cr50_i2c_write(chip, TPM_DATA_FIFO(priv->locality),
+		rc = cr50_i2c_write(chip, TPM_DATA_FIFO(chip->locality),
 				    &buf[sent], limit);
 		if (rc < 0) {
 			dev_err(&chip->dev, "Write failed\n");
@@ -517,7 +508,7 @@ static int cr50_i2c_tis_send(struct tpm_chip *chip, u8 *buf, size_t len)
 	}
 
 	/* Start the TPM command */
-	rc = cr50_i2c_write(chip, TPM_STS(priv->locality), tpm_go,
+	rc = cr50_i2c_write(chip, TPM_STS(chip->locality), tpm_go,
 			    sizeof(tpm_go));
 	if (rc < 0) {
 		dev_err(&chip->dev, "Start command failed\n");
@@ -530,7 +521,6 @@ out_err:
 	if (cr50_i2c_tis_status(chip) & TPM_STS_COMMAND_READY)
 		cr50_i2c_tis_ready(chip);
 
-	release_locality(chip, 0);
 	return rc;
 }
 
@@ -561,6 +551,8 @@ static const struct tpm_class_ops cr50_i2c = {
 	.req_complete_mask = TPM_STS_DATA_AVAIL | TPM_STS_VALID,
 	.req_complete_val = TPM_STS_DATA_AVAIL | TPM_STS_VALID,
 	.req_canceled = &cr50_i2c_req_canceled,
+	.request_locality = &request_locality,
+	.relinquish_locality = &release_locality,
 };
 
 static int cr50_i2c_init(struct i2c_client *client)
@@ -620,14 +612,20 @@ static int cr50_i2c_init(struct i2c_client *client)
 	rc = cr50_i2c_read(chip, TPM_DID_VID(0), buf, sizeof(buf));
 	if (rc < 0) {
 		dev_err(dev, "Could not read vendor id\n");
-		release_locality(chip, 1);
+		if (release_locality(chip, 0))
+			dev_err(dev, "Could not release locality\n");
+		return rc;
+	}
+
+	rc = release_locality(chip, 0);
+	if (rc) {
+		dev_err(dev, "Could not release locality\n");
 		return rc;
 	}
 
 	vendor = le32_to_cpup((__le32 *)buf);
 	if (vendor != CR50_I2C_DID_VID && vendor != TI50_I2C_DID_VID) {
 		dev_err(dev, "Vendor ID did not match! ID was %08x\n", vendor);
-		release_locality(chip, 1);
 		return -ENODEV;
 	}
 
@@ -674,7 +672,6 @@ static int cr50_i2c_remove(struct i2c_client *client)
 	struct tpm_chip *chip = i2c_get_clientdata(client);
 
 	tpm_chip_unregister(chip);
-	release_locality(chip, 1);
 
 	return 0;
 }

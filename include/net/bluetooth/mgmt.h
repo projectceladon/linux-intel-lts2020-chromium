@@ -627,7 +627,7 @@ struct mgmt_cp_set_appearance {
 #define MGMT_SET_APPEARANCE_SIZE	2
 
 #define MGMT_OP_GET_PHY_CONFIGURATION	0x0044
-struct mgmt_rp_get_phy_confguration {
+struct mgmt_rp_get_phy_configuration {
 	__le32	supported_phys;
 	__le32	configurable_phys;
 	__le32	selected_phys;
@@ -664,7 +664,7 @@ struct mgmt_rp_get_phy_confguration {
 			     MGMT_PHY_LE_CODED_RX)
 
 #define MGMT_OP_SET_PHY_CONFIGURATION	0x0045
-struct mgmt_cp_set_phy_confguration {
+struct mgmt_cp_set_phy_configuration {
 	__le32	selected_phys;
 } __packed;
 #define MGMT_SET_PHY_CONFIGURATION_SIZE	4
@@ -838,6 +838,60 @@ struct mgmt_cp_add_adv_patterns_monitor_rssi {
 	struct mgmt_adv_pattern patterns[];
 } __packed;
 #define MGMT_ADD_ADV_PATTERNS_MONITOR_RSSI_SIZE	8
+
+
+/*
+ * Floss MGMT Opcodes start here.
+ */
+#define MGMT_OP_GET_SCO_CODEC_CAPABILITIES	0x0100
+#define MGMT_SCO_CODEC_CVSD			0x1
+#define MGMT_SCO_CODEC_MSBC_TRANSPARENT		0x2
+#define MGMT_SCO_CODEC_MSBC			0x3
+
+struct mgmt_bt_codec {
+	__u8	codec;
+	__u8	packet_size;
+	__u8	data_path;
+	__u32	data_length;
+	__u8	data[];
+} __packed;
+
+struct mgmt_cp_get_codec_capabilities {
+	__u16	hci_id;
+	__u32	num_codecs;
+	__u8	codecs[];
+} __packed;
+#define MGMT_GET_SCO_CODEC_CAPABILITIES_SIZE	0x6
+
+struct mgmt_rp_get_codec_capabilities {
+	__u16			hci_id;
+	__u8			offload_capable;
+	__u32			num_codecs;
+	struct mgmt_bt_codec	codecs[];
+} __packed;
+
+#define MGMT_OP_NOTIFY_SCO_CONNECTION_CHANGE	0x0101
+struct mgmt_cp_notify_sco_connection_change {
+	__u16 hci_id;
+	struct mgmt_addr_info	addr;
+	__u8			connected;
+	__u8			codec;
+} __packed;
+#define MGMT_NOTIFY_SCO_CONNECTION_CHANGE_SIZE	0xB
+
+#define MGMT_OP_GET_VS_OPCODE			0x0102
+#define MGMT_VS_OPCODE_MSFT			0x0001
+
+struct mgmt_cp_get_vs_opcode {
+	__u16	hci_id;
+	__u16	vendor_specification;
+} __packed;
+#define MGMT_GET_VS_OPCODE_SIZE			0x4
+
+struct mgmt_rp_get_vs_opcode {
+	__u16	hci_id;
+	__u16	opcode;
+} __packed;
 
 #define MGMT_EV_CMD_COMPLETE		0x0001
 struct mgmt_ev_cmd_complete {

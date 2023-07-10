@@ -264,6 +264,8 @@ int drm_plane_register_all(struct drm_device *dev);
 void drm_plane_unregister_all(struct drm_device *dev);
 int drm_plane_check_pixel_format(struct drm_plane *plane,
 				 u32 format, u64 modifier);
+struct drm_mode_rect *
+__drm_plane_get_damage_clips(const struct drm_plane_state *state);
 
 /* drm_bridge.c */
 void drm_bridge_detach(struct drm_bridge *bridge);
@@ -284,6 +286,5 @@ int drm_mode_page_flip_ioctl(struct drm_device *dev,
 
 /* drm_edid.c */
 void drm_mode_fixup_1366x768(struct drm_display_mode *mode);
-void drm_reset_display_info(struct drm_connector *connector);
-u32 drm_add_display_info(struct drm_connector *connector, const struct edid *edid);
-void drm_update_tile_info(struct drm_connector *connector, const struct edid *edid);
+int drm_edid_override_set(struct drm_connector *connector, const void *edid, size_t size);
+int drm_edid_override_reset(struct drm_connector *connector);

@@ -541,12 +541,17 @@ static const struct hantro_ctrl controls[] = {
 	}, {
 		.codec = HANTRO_MPEG2_DECODER,
 		.cfg = {
-			.id = V4L2_CID_MPEG_VIDEO_MPEG2_SLICE_PARAMS,
+			.id = V4L2_CID_STATELESS_MPEG2_SEQUENCE,
 		},
 	}, {
 		.codec = HANTRO_MPEG2_DECODER,
 		.cfg = {
-			.id = V4L2_CID_MPEG_VIDEO_MPEG2_QUANTIZATION,
+			.id = V4L2_CID_STATELESS_MPEG2_PICTURE,
+		},
+	}, {
+		.codec = HANTRO_MPEG2_DECODER,
+		.cfg = {
+			.id = V4L2_CID_STATELESS_MPEG2_QUANTISATION,
 		},
 	}, {
 		.codec = HANTRO_VP8_DECODER,
@@ -599,6 +604,15 @@ static const struct hantro_ctrl controls[] = {
 			.menu_skip_mask =
 			BIT(V4L2_MPEG_VIDEO_H264_PROFILE_EXTENDED),
 			.def = V4L2_MPEG_VIDEO_H264_PROFILE_MAIN,
+		}
+	}, {
+		.codec = HANTRO_VP8_ENCODER | HANTRO_H264_ENCODER,
+		.cfg = {
+			.id = V4L2_CID_MPEG_VIDEO_BITRATE_MODE,
+			.min = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR,
+			.max = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR,
+			.menu_skip_mask = 0,
+			.def = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR,
 		}
 	}, {
 	},

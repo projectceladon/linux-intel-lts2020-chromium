@@ -171,6 +171,11 @@ struct drm_bridge_funcs {
 	 * signals) feeding it is still running when this callback is called.
 	 *
 	 * The @disable callback is optional.
+	 *
+	 * NOTE:
+	 *
+	 * This is deprecated, do not use!
+	 * New drivers shall use &drm_bridge_funcs.atomic_disable.
 	 */
 	void (*disable)(struct drm_bridge *bridge);
 
@@ -190,6 +195,11 @@ struct drm_bridge_funcs {
 	 * called.
 	 *
 	 * The @post_disable callback is optional.
+	 *
+	 * NOTE:
+	 *
+	 * This is deprecated, do not use!
+	 * New drivers shall use &drm_bridge_funcs.atomic_post_disable.
 	 */
 	void (*post_disable)(struct drm_bridge *bridge);
 
@@ -215,9 +225,9 @@ struct drm_bridge_funcs {
 	 *
 	 * NOTE:
 	 *
-	 * If a need arises to store and access modes adjusted for other
-	 * locations than the connection between the CRTC and the first bridge,
-	 * the DRM framework will have to be extended with DRM bridge states.
+	 * This is deprecated, do not use!
+	 * New drivers shall set their mode in the
+	 * &drm_bridge_funcs.atomic_enable operation.
 	 */
 	void (*mode_set)(struct drm_bridge *bridge,
 			 const struct drm_display_mode *mode,
@@ -239,6 +249,11 @@ struct drm_bridge_funcs {
 	 * there is one) when this callback is called.
 	 *
 	 * The @pre_enable callback is optional.
+	 *
+	 * NOTE:
+	 *
+	 * This is deprecated, do not use!
+	 * New drivers shall use &drm_bridge_funcs.atomic_pre_enable.
 	 */
 	void (*pre_enable)(struct drm_bridge *bridge);
 
@@ -259,6 +274,11 @@ struct drm_bridge_funcs {
 	 * chain if there is one.
 	 *
 	 * The @enable callback is optional.
+	 *
+	 * NOTE:
+	 *
+	 * This is deprecated, do not use!
+	 * New drivers shall use &drm_bridge_funcs.atomic_enable.
 	 */
 	void (*enable)(struct drm_bridge *bridge);
 
@@ -427,11 +447,11 @@ struct drm_bridge_funcs {
 	 *
 	 * The returned array must be allocated with kmalloc() and will be
 	 * freed by the caller. If the allocation fails, NULL should be
-	 * returned. num_output_fmts must be set to the returned array size.
+	 * returned. num_input_fmts must be set to the returned array size.
 	 * Formats listed in the returned array should be listed in decreasing
 	 * preference order (the core will try all formats until it finds one
 	 * that works). When the format is not supported NULL should be
-	 * returned and num_output_fmts should be set to 0.
+	 * returned and num_input_fmts should be set to 0.
 	 *
 	 * This method is called on all elements of the bridge chain as part of
 	 * the bus format negotiation process that happens in

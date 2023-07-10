@@ -114,7 +114,6 @@ struct hda_codec_ops {
 	int (*resume)(struct hda_codec *codec);
 	int (*check_power_status)(struct hda_codec *codec, hda_nid_t nid);
 #endif
-	void (*reboot_notify)(struct hda_codec *codec);
 	void (*stream_pm)(struct hda_codec *codec, hda_nid_t nid, bool on);
 };
 
@@ -305,7 +304,7 @@ struct hda_codec {
 /*
  * constructors
  */
-struct hda_codec *
+__printf(3, 4) struct hda_codec *
 snd_hda_codec_device_init(struct hda_bus *bus, unsigned int codec_addr,
 			  const char *fmt, ...);
 int snd_hda_codec_new(struct hda_bus *bus, struct snd_card *card,

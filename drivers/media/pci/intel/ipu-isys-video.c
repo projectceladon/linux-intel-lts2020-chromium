@@ -29,6 +29,11 @@
 #include "ipu-fw-isys.h"
 #include "ipu-fw-com.h"
 
+#define IPU_IS_DEFAULT_FREQ	\
+	(IPU_IS_FREQ_RATIO_BASE * IPU_IS_FREQ_CTL_DEFAULT_RATIO)
+#define IPU6SE_IS_DEFAULT_FREQ	\
+	(IPU_IS_FREQ_RATIO_BASE * IPU6SE_IS_FREQ_CTL_DEFAULT_RATIO)
+
 /* use max resolution pixel rate by default */
 #define DEFAULT_PIXEL_RATE	(360000000ULL * 2 * 4 / 10)
 
@@ -590,6 +595,21 @@ static int link_validate(struct media_link *link)
 	return 0;
 }
 
+static void set_buttress_isys_freq(struct ipu_isys_video *av, bool max)
+{
+	struct ipu_device *isp = av->isys->adev->isp;
+
+	if (max) {
+		ipu_buttress_isys_freq_set(isp, BUTTRESS_MAX_FORCE_IS_FREQ);
+	} else {
+		if (ipu_ver == IPU_VER_6SE)
+			ipu_buttress_isys_freq_set(isp, IPU6SE_IS_DEFAULT_FREQ);
+		else
+			ipu_buttress_isys_freq_set(isp, IPU_IS_DEFAULT_FREQ);
+	}
+
+}
+
 static void get_stream_opened(struct ipu_isys_video *av)
 {
 	unsigned long flags;
@@ -597,6 +617,9 @@ static void get_stream_opened(struct ipu_isys_video *av)
 	spin_lock_irqsave(&av->isys->lock, flags);
 	av->isys->stream_opened++;
 	spin_unlock_irqrestore(&av->isys->lock, flags);
+
+	if (av->isys->stream_opened > 1)
+		set_buttress_isys_freq(av, true);
 }
 
 static void put_stream_opened(struct ipu_isys_video *av)
@@ -606,6 +629,9 @@ static void put_stream_opened(struct ipu_isys_video *av)
 	spin_lock_irqsave(&av->isys->lock, flags);
 	av->isys->stream_opened--;
 	spin_unlock_irqrestore(&av->isys->lock, flags);
+
+	if (av->isys->stream_opened <= 1)
+		set_buttress_isys_freq(av, false);
 }
 
 static int get_stream_handle(struct ipu_isys_video *av)
@@ -1424,10 +1450,12 @@ static void calculate_stream_datarate(struct video_stream_watermark *watermark)
 	u64 pixels_per_line, bytes_per_line, line_time_ns;
 	u64 pages_per_line, pb_bytes_per_line, stream_data_rate;
 	u16 sram_granulrity_shift =
-		(ipu_ver == IPU_VER_6 || ipu_ver == IPU_VER_6EP) ?
+		(ipu_ver == IPU_VER_6 || ipu_ver == IPU_VER_6EP ||
+		 ipu_ver == IPU_VER_6EP_MTL) ?
 		IPU6_SRAM_GRANULRITY_SHIFT : IPU6SE_SRAM_GRANULRITY_SHIFT;
 	u16 sram_granulrity_size =
-		(ipu_ver == IPU_VER_6 || ipu_ver == IPU_VER_6EP) ?
+		(ipu_ver == IPU_VER_6 || ipu_ver == IPU_VER_6EP ||
+		 ipu_ver == IPU_VER_6EP_MTL) ?
 		IPU6_SRAM_GRANULRITY_SIZE : IPU6SE_SRAM_GRANULRITY_SIZE;
 
 	pixels_per_line = watermark->width + watermark->hblank;
@@ -1551,7 +1579,7 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 	if (state) {
 		rval = start_stream_firmware(av, bl);
 		if (rval)
-			goto out_media_entity_stop_streaming;
+			goto out_update_stream_watermark;
 
 		dev_dbg(dev, "set stream: source %d, stream_handle %d\n",
 			ip->source, ip->stream_handle);
@@ -1576,6 +1604,10 @@ int ipu_isys_video_set_streaming(struct ipu_isys_video *av,
 
 out_media_entity_stop_streaming_firmware:
 	stop_streaming_firmware(av);
+
+out_update_stream_watermark:
+	if (av->aq.css_pin_type == IPU_FW_ISYS_PIN_TYPE_RAW_SOC)
+		update_stream_watermark(av, 0);
 
 out_media_entity_stop_streaming:
 	mutex_lock(&mdev->graph_mutex);
