@@ -1353,6 +1353,7 @@ static int add_call_destinations(struct objtool_file *file)
 			if (!dest) {
 				if (is_cfi_section(reloc->sym->sec))
 					continue;
+
 				WARN_FUNC("can't find call dest symbol at %s+0x%lx",
 					  insn->sec, insn->offset,
 					  reloc->sym->sec->name,
@@ -1367,23 +1368,6 @@ static int add_call_destinations(struct objtool_file *file)
 
 		} else
 			add_call_dest(file, insn, reloc->sym, false);
-
-		if (mcount && !strcmp(insn->call_dest->name, "__fentry__")) {
-			if (reloc) {
-				reloc->type = R_NONE;
-				elf_write_reloc(file->elf, reloc);
-			}
-
-			elf_write_insn(file->elf, insn->sec,
-				       insn->offset, insn->len,
-				       arch_nop_insn(insn->len));
-
-			insn->type = INSN_NOP;
-
-			list_add_tail(&insn->mcount_loc_node,
-				      &file->mcount_loc_list);
-		}
-
 	}
 
 	return 0;
@@ -3648,6 +3632,13 @@ int check(struct objtool_file *file)
 		goto out;
 	warnings += ret;
 
+	if (mcount) {
+		ret = create_mcount_loc_sections(file);
+		if (ret < 0)
+			goto out;
+		warnings += ret;
+	}
+
 	if (retpoline) {
 		ret = create_retpoline_sites_sections(file);
 		if (ret < 0)
@@ -3668,13 +3659,6 @@ int check(struct objtool_file *file)
 		printf("nr_cfi_reused: %ld\n", nr_cfi_reused);
 		printf("nr_cfi_cache: %ld\n", nr_cfi_cache);
 	}
-
-        if (mcount) {
-                ret = create_mcount_loc_sections(file);
-                if (ret < 0)
-                        goto out;
-                warnings += ret;
-        }
 
 out:
 	/*

@@ -547,6 +547,7 @@ static int mtk_iommu_attach_device(struct iommu_domain *domain,
 	}
 
 	mutex_lock(&data->mutex);
+
 	if (!bank->m4u_dom) { /* Initialize the M4U HW for each a BANK */
 		ret = pm_runtime_resume_and_get(m4udev);
 		if (ret < 0)
@@ -718,6 +719,7 @@ static struct iommu_group *mtk_iommu_device_group(struct device *dev)
 	if (regionid < 0)
 		return ERR_PTR(regionid);
 	bankid = mtk_iommu_get_bank_id(dev, data->plat_data);
+
 
 	/*
 	 * If the bank function is enabled, each a bank is a iommu group/domain.
@@ -1150,6 +1152,8 @@ static int mtk_iommu_remove(struct platform_device *pdev)
 		bus_set_iommu(&pci_bus_type, NULL);
 		#endif
 	}
+
+	device_link_remove(data->smicomm_dev, &pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	for (i = 0; i < data->plat_data->bank_nr; i++) {
 		bank = &data->bank[i];

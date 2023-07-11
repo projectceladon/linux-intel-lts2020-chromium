@@ -20,7 +20,6 @@
 #include <linux/of_device.h>
 #include <linux/acpi.h>
 #include <linux/dma-map-ops.h>
-#include <linux/coiommu.h>
 #include "pci.h"
 #include "pcie/portdrv.h"
 
@@ -500,9 +499,9 @@ static void pci_device_shutdown(struct device *dev)
 		pci_clear_master(pci_dev);
 }
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 
-/* Auxiliary functions used for system resume */
+/* Auxiliary functions used for system resume and run-time resume. */
 
 /**
  * pci_restore_standard_config - restore standard config registers of PCI device
@@ -522,17 +521,16 @@ static int pci_restore_standard_config(struct pci_dev *pci_dev)
 	pci_pme_restore(pci_dev);
 	return 0;
 }
-#endif /* CONFIG_PM_SLEEP */
-
-#ifdef CONFIG_PM
-
-/* Auxiliary functions used for system resume and run-time resume */
 
 static void pci_pm_default_resume(struct pci_dev *pci_dev)
 {
 	pci_fixup_device(pci_fixup_resume, pci_dev);
 	pci_enable_wake(pci_dev, PCI_D0, false);
 }
+
+#endif
+
+#ifdef CONFIG_PM_SLEEP
 
 static void pci_pm_default_resume_early(struct pci_dev *pci_dev)
 {
@@ -541,10 +539,6 @@ static void pci_pm_default_resume_early(struct pci_dev *pci_dev)
 	pci_restore_state(pci_dev);
 	pci_pme_restore(pci_dev);
 }
-
-#endif /* CONFIG_PM */
-
-#ifdef CONFIG_PM_SLEEP
 
 /*
  * Default "suspend" method for devices that have no driver provided suspend,
@@ -1295,7 +1289,7 @@ static int pci_pm_runtime_resume(struct device *dev)
 	 * to a driver because although we left it in D0, it may have gone to
 	 * D3cold when the bridge above it runtime suspended.
 	 */
-	pci_pm_default_resume_early(pci_dev);
+	pci_restore_standard_config(pci_dev);
 
 	if (!pci_dev->driver)
 		return 0;
@@ -1390,7 +1384,6 @@ int __pci_register_driver(struct pci_driver *drv, struct module *owner,
 	drv->driver.owner = owner;
 	drv->driver.mod_name = mod_name;
 	drv->driver.groups = drv->groups;
-	drv->driver.dev_groups = drv->dev_groups;
 
 	spin_lock_init(&drv->dynids.lock);
 	INIT_LIST_HEAD(&drv->dynids.list);
@@ -1462,7 +1455,7 @@ static int pci_bus_match(struct device *dev, struct device_driver *drv)
 
 	pci_drv = to_pci_driver(drv);
 	found_id = pci_match_device(pci_drv, pci_dev);
-	if (found_id && pci_allowed_to_attach(pci_drv, pci_dev))
+	if (found_id)
 		return 1;
 
 	return 0;
@@ -1586,10 +1579,6 @@ static int pci_dma_configure(struct device *dev)
 {
 	struct device *bridge;
 	int ret = 0;
-
-	ret = coiommu_configure(dev);
-	if (ret)
-		return ret;
 
 	bridge = pci_get_host_bridge_device(to_pci_dev(dev));
 

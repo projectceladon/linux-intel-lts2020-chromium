@@ -297,7 +297,7 @@ EXPORT_SYMBOL_GPL(dma_heap_get_name);
 
 struct dma_heap *dma_heap_add(const struct dma_heap_export_info *exp_info)
 {
-	struct dma_heap *heap, *err_ret;
+	struct dma_heap *heap, *h, *err_ret;
 	unsigned int minor;
 	int ret;
 
@@ -362,6 +362,7 @@ struct dma_heap *dma_heap_add(const struct dma_heap_export_info *exp_info)
 			pr_err("dma_heap: Already registered heap named %s\n",
 			       exp_info->name);
 			err_ret = ERR_PTR(-EINVAL);
+			put_device(heap->heap_dev);
 			goto err3;
 		}
 	}

@@ -222,7 +222,16 @@ struct fscrypt_info {
 	 * will be NULL if the master key was found in a process-subscribed
 	 * keyring rather than in the filesystem-level keyring.
 	 */
+#ifdef __GENKSYMS__
+	/*
+	 * Android ABI CRC preservation due to commit 391cceee6d43 ("fscrypt:
+	 * stop using keyrings subsystem for fscrypt_master_key") changing this
+	 * type.  Size is the same, this is a private field.
+	 */
+	struct key *ci_master_key;
+#else
 	struct fscrypt_master_key *ci_master_key;
+#endif
 
 	/*
 	 * Link in list of inodes that were unlocked with the master key.
@@ -503,7 +512,10 @@ struct fscrypt_master_key {
 	 * FS_IOC_REMOVE_ENCRYPTION_KEY can be retried, or
 	 * FS_IOC_ADD_ENCRYPTION_KEY can add the secret again.
 	 *
-	 * Locking: protected by this master key's key->sem.
+	 * While ->mk_secret is present, one ref in ->mk_active_refs is held.
+	 *
+	 * Locking: protected by ->mk_sem.  The manipulation of ->mk_active_refs
+	 *	    associated with this field is protected by ->mk_sem as well.
 	 */
 	struct fscrypt_master_key_secret	mk_secret;
 
@@ -524,10 +536,9 @@ struct fscrypt_master_key {
 	 *
 	 * This is NULL for v1 policy keys; those can only be added by root.
 	 *
-	 * Locking: in addition to this keyring's own semaphore, this is
-	 * protected by this master key's key->sem, so we can do atomic
-	 * search+insert.  It can also be searched without taking any locks, but
-	 * in that case the returned key may have already been removed.
+	 * Locking: protected by ->mk_sem.  (We don't just rely on the keyrings
+	 * subsystem semaphore ->mk_users->sem, as we need support for atomic
+	 * search+insert along with proper synchronization with ->mk_secret.)
 	 */
 	struct key		*mk_users;
 
@@ -556,10 +567,10 @@ static inline bool
 is_master_key_secret_present(const struct fscrypt_master_key_secret *secret)
 {
 	/*
-	 * The READ_ONCE() is only necessary for fscrypt_drop_inode() and
-	 * fscrypt_key_describe().  These run in atomic context, so they can't
-	 * take the key semaphore and thus 'secret' can change concurrently
-	 * which would be a data race.  But they only need to know whether the
+	 * The READ_ONCE() is only necessary for fscrypt_drop_inode().
+	 * fscrypt_drop_inode() runs in atomic context, so it can't take the key
+	 * semaphore and thus 'secret' can change concurrently which would be a
+	 * data race.  But fscrypt_drop_inode() only need to know whether the
 	 * secret *was* present at the time of check, so READ_ONCE() suffices.
 	 */
 	return READ_ONCE(secret->size) != 0;

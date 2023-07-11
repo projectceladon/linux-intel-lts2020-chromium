@@ -123,6 +123,8 @@ struct mtk_iommu_data {
 
 	struct mutex			mutex; /* Protect m4u_group/m4u_dom above */
 
+	struct mutex			mutex; /* Protect m4u_group/m4u_dom above */
+
 	struct list_head		list;
 	struct mtk_smi_larb_iommu	larb_imu[MTK_LARB_NR_MAX];
 };

@@ -11223,6 +11223,7 @@ static int jit_subprogs(struct bpf_verifier_env *env)
 		/* the btf and func_info will be freed only at prog->aux */
 		func[i]->aux->btf = prog->aux->btf;
 		func[i]->aux->func_info = prog->aux->func_info;
+		func[i]->aux->func_info_cnt = prog->aux->func_info_cnt;
 
 		for (j = 0; j < prog->aux->size_poke_tab; j++) {
 			u32 insn_idx = prog->aux->poke_tab[j].insn_idx;

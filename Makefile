@@ -1523,10 +1523,7 @@ endif
 
 PHONY += modules
 # if KBUILD_BUILTIN && !KBUILD_MIXED_TREE, depend on vmlinux
-modules: $(if $(KBUILD_BUILTIN), $(if $(KBUILD_MIXED_TREE),,vmlinux))
-modules: modules_check modules_prepare
-	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modpost
-
+modules: $(if $(KBUILD_BUILTIN), $(if $(KBUILD_MIXED_TREE),,vmlinux)) modules_check modules_prepare
 
 PHONY += modules_check
 modules_check: modules.order
@@ -1851,7 +1848,7 @@ modules: $(MODORDER)
 
 quiet_cmd_depmod = DEPMOD  $(KERNELRELEASE)
       cmd_depmod = $(CONFIG_SHELL) $(srctree)/scripts/depmod.sh $(DEPMOD) \
-                   $(KERNELRELEASE)
+                   $(KERNELRELEASE) $(mixed-build-prefix)
 
 modules_install:
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modinst

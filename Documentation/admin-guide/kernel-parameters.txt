@@ -2362,6 +2362,8 @@
 	kvm-arm.mode=
 			[KVM,ARM] Select one of KVM/arm64's modes of operation.
 
+			none: Forcefully disable KVM.
+
 			nvhe: Standard nVHE-based mode, without support for
 			      protected guests.
 
@@ -2583,6 +2585,12 @@
 			the same attribute, the last one is used.
 
 	memblock=debug	[KNL] Enable memblock debug messages.
+
+	android12_only.will_be_removed_soon.memblock_nomap_remove= [KNL]
+			Setting this to true through kernel command line will
+			call memblock_remove on the regions marked with no-map
+			property thereby saving memory by removing page structs
+			for those regions. By default this is set to false.
 
 	load_ramdisk=	[RAM] [Deprecated]
 

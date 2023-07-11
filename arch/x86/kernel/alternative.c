@@ -926,7 +926,6 @@ extern struct paravirt_patch_site __start_parainstructions[],
  *
  * See entry_{32,64}.S for more details.
  */
-
 static void __init __no_sanitize_address notrace int3_magic(unsigned int *ptr)
 {
 	*ptr = 1;

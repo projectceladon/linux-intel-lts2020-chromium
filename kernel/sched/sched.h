@@ -1459,6 +1459,23 @@ static inline u64 rq_clock_task(struct rq *rq)
 	return rq->clock_task;
 }
 
+#ifdef CONFIG_SMP
+DECLARE_PER_CPU(u64, clock_task_mult);
+
+static inline u64 rq_clock_task_mult(struct rq *rq)
+{
+	lockdep_assert_held(&rq->__lock);
+	assert_clock_updated(rq);
+
+	return per_cpu(clock_task_mult, cpu_of(rq));
+}
+#else
+static inline u64 rq_clock_task_mult(struct rq *rq)
+{
+	return rq_clock_task(rq);
+}
+#endif
+
 /**
  * By default the decay is the default pelt decay period.
  * The decay shift can change the decay period in
@@ -1549,14 +1566,14 @@ static inline void rq_repin_lock(struct rq *rq, struct rq_flags *rf)
 }
 
 struct rq *__task_rq_lock(struct task_struct *p, struct rq_flags *rf)
-	__acquires(rq->lock);
+	__acquires(rq->__lock);
 
 struct rq *task_rq_lock(struct task_struct *p, struct rq_flags *rf)
 	__acquires(p->pi_lock)
-	__acquires(rq->lock);
+	__acquires(rq->__lock);
 
 static inline void __task_rq_unlock(struct rq *rq, struct rq_flags *rf)
-	__releases(rq->lock)
+	__releases(rq->__lock)
 {
 	rq_unpin_lock(rq, rf);
 	raw_spin_rq_unlock(rq);
@@ -1564,7 +1581,7 @@ static inline void __task_rq_unlock(struct rq *rq, struct rq_flags *rf)
 
 static inline void
 task_rq_unlock(struct rq *rq, struct task_struct *p, struct rq_flags *rf)
-	__releases(rq->lock)
+	__releases(rq->__lock)
 	__releases(p->pi_lock)
 {
 	rq_unpin_lock(rq, rf);
@@ -1574,7 +1591,7 @@ task_rq_unlock(struct rq *rq, struct task_struct *p, struct rq_flags *rf)
 
 static inline void
 rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
-	__acquires(rq->lock)
+	__acquires(rq->__lock)
 {
 	raw_spin_rq_lock_irqsave(rq, rf->flags);
 	rq_pin_lock(rq, rf);
@@ -1582,7 +1599,7 @@ rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
 
 static inline void
 rq_lock_irq(struct rq *rq, struct rq_flags *rf)
-	__acquires(rq->lock)
+	__acquires(rq->__lock)
 {
 	raw_spin_rq_lock_irq(rq);
 	rq_pin_lock(rq, rf);
@@ -1590,7 +1607,7 @@ rq_lock_irq(struct rq *rq, struct rq_flags *rf)
 
 static inline void
 rq_lock(struct rq *rq, struct rq_flags *rf)
-	__acquires(rq->lock)
+	__acquires(rq->__lock)
 {
 	raw_spin_rq_lock(rq);
 	rq_pin_lock(rq, rf);
@@ -1598,7 +1615,7 @@ rq_lock(struct rq *rq, struct rq_flags *rf)
 
 static inline void
 rq_relock(struct rq *rq, struct rq_flags *rf)
-	__acquires(rq->lock)
+	__acquires(rq->__lock)
 {
 	raw_spin_rq_lock(rq);
 	rq_repin_lock(rq, rf);
@@ -1606,7 +1623,7 @@ rq_relock(struct rq *rq, struct rq_flags *rf)
 
 static inline void
 rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
-	__releases(rq->lock)
+	__releases(rq->__lock)
 {
 	rq_unpin_lock(rq, rf);
 	raw_spin_rq_unlock_irqrestore(rq, rf->flags);
@@ -1614,7 +1631,7 @@ rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
 
 static inline void
 rq_unlock_irq(struct rq *rq, struct rq_flags *rf)
-	__releases(rq->lock)
+	__releases(rq->__lock)
 {
 	rq_unpin_lock(rq, rf);
 	raw_spin_rq_unlock_irq(rq);
@@ -1622,7 +1639,7 @@ rq_unlock_irq(struct rq *rq, struct rq_flags *rf)
 
 static inline void
 rq_unlock(struct rq *rq, struct rq_flags *rf)
-	__releases(rq->lock)
+	__releases(rq->__lock)
 {
 	rq_unpin_lock(rq, rf);
 	raw_spin_rq_unlock(rq);
@@ -1630,7 +1647,7 @@ rq_unlock(struct rq *rq, struct rq_flags *rf)
 
 static inline struct rq *
 this_rq_lock_irq(struct rq_flags *rf)
-	__acquires(rq->lock)
+	__acquires(rq->__lock)
 {
 	struct rq *rq;
 
@@ -2125,9 +2142,9 @@ struct sched_class {
 	void (*task_dead)(struct task_struct *p);
 
 	/*
-	 * The switched_from() call is allowed to drop rq->lock, therefore we
+	 * The switched_from() call is allowed to drop rq->__lock, therefore we
 	 * cannot assume the switched_from/switched_to pair is serliazed by
-	 * rq->lock. They are however serialized by p->pi_lock.
+	 * rq->__lock. They are however serialized by p->pi_lock.
 	 */
 	void (*switched_from)(struct rq *this_rq, struct task_struct *task);
 	void (*switched_to)  (struct rq *this_rq, struct task_struct *task);
@@ -2422,7 +2439,7 @@ extern void double_rq_lock(struct rq *rq1, struct rq *rq2);
 #ifdef CONFIG_PREEMPTION
 
 /*
- * fair double_lock_balance: Safely acquires both rq->locks in a fair
+ * fair double_lock_balance: Safely acquires both rq->__locks in a fair
  * way at the expense of forcing extra atomic operations in all
  * invocations.  This assures that the double_lock is acquired using the
  * same underlying policy as the spinlock_t on this architecture, which
@@ -2430,9 +2447,9 @@ extern void double_rq_lock(struct rq *rq1, struct rq *rq2);
  * also adds more overhead and therefore may reduce throughput.
  */
 static inline int _double_lock_balance(struct rq *this_rq, struct rq *busiest)
-	__releases(this_rq->lock)
-	__acquires(busiest->lock)
-	__acquires(this_rq->lock)
+	__releases(this_rq->__lock)
+	__acquires(busiest->__lock)
+	__acquires(this_rq->__lock)
 {
 	raw_spin_rq_unlock(this_rq);
 	double_rq_lock(this_rq, busiest);
@@ -2449,9 +2466,9 @@ static inline int _double_lock_balance(struct rq *this_rq, struct rq *busiest)
  * regardless of entry order into the function.
  */
 static inline int _double_lock_balance(struct rq *this_rq, struct rq *busiest)
-	__releases(this_rq->lock)
-	__acquires(busiest->lock)
-	__acquires(this_rq->lock)
+	__releases(this_rq->__lock)
+	__acquires(busiest->__lock)
+	__acquires(this_rq->__lock)
 {
 	if (__rq_lockp(this_rq) == __rq_lockp(busiest))
 		return 0;
@@ -2483,7 +2500,7 @@ static inline int double_lock_balance(struct rq *this_rq, struct rq *busiest)
 }
 
 static inline void double_unlock_balance(struct rq *this_rq, struct rq *busiest)
-	__releases(busiest->lock)
+	__releases(busiest->__lock)
 {
 	if (__rq_lockp(this_rq) != __rq_lockp(busiest))
 		raw_spin_rq_unlock(busiest);
@@ -2524,13 +2541,13 @@ static inline void double_raw_lock(raw_spinlock_t *l1, raw_spinlock_t *l2)
  * you need to do so manually after calling.
  */
 static inline void double_rq_unlock(struct rq *rq1, struct rq *rq2)
-	__releases(rq1->lock)
-	__releases(rq2->lock)
+	__releases(rq1->__lock)
+	__releases(rq2->__lock)
 {
 	if (__rq_lockp(rq1) != __rq_lockp(rq2))
 		raw_spin_rq_unlock(rq2);
 	else
-		__release(rq2->lock);
+		__release(rq2->__lock);
 	raw_spin_rq_unlock(rq1);
 }
 
@@ -2547,13 +2564,13 @@ extern bool sched_smp_initialized;
  * you need to do so manually before calling.
  */
 static inline void double_rq_lock(struct rq *rq1, struct rq *rq2)
-	__acquires(rq1->lock)
-	__acquires(rq2->lock)
+	__acquires(rq1->__lock)
+	__acquires(rq2->__lock)
 {
 	BUG_ON(!irqs_disabled());
 	BUG_ON(rq1 != rq2);
 	raw_spin_rq_lock(rq1);
-	__acquire(rq2->lock);	/* Fake it out ;) */
+	__acquire(rq2->__lock);	/* Fake it out ;) */
 }
 
 /*
@@ -2563,12 +2580,12 @@ static inline void double_rq_lock(struct rq *rq1, struct rq *rq2)
  * you need to do so manually after calling.
  */
 static inline void double_rq_unlock(struct rq *rq1, struct rq *rq2)
-	__releases(rq1->lock)
-	__releases(rq2->lock)
+	__releases(rq1->__lock)
+	__releases(rq2->__lock)
 {
 	BUG_ON(rq1 != rq2);
 	raw_spin_rq_unlock(rq1);
-	__release(rq2->lock);
+	__release(rq2->__lock);
 }
 
 #endif
